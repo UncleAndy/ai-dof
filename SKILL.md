@@ -57,5 +57,28 @@ Avoid Redundant Support: Do not allocate resources to a part of the system that 
 - When a part transitions from DoF ≈ 0 to DoF > 0, support must cease immediately if those resources can be redirected to parts with lower DoF.
 - Support for an autonomous agent is a waste of system resources and an unnecessary risk to other parts.
 
+## Systemic DoF Assessment Toolkit
+To quantify or estimate DoF in complex systems (e.g., architecture, organizational structures, technical stacks), use the following analytical lenses. For a detailed application to software design, see `references/software-architecture.md`.
+
+### 1. The Variety Lens (Ashby's Law)
+**Focus:** System Stability and Response Capacity.
+- **Logic:** $\text{DoF}_{\text{system}} \ge \text{Variety}_{\text{environment}}$. For a system to remain stable, its internal variety (available states/responses) must match or exceed the variety of potential external disturbances.
+- **Application:** Count the unique types of failures or changes the system might face. Compare this to the number of unique strategies available to resolve them.
+- **Metric:** $\text{DoF}$ is the count of unique, distinguishable responses.
+
+### 2. The Options Lens (Real Options Analysis)
+**Focus:** Cost and Value of Flexibility.
+- **Logic:** Every decision is either a *purchase of an option* (creating a future choice) or an *execution of an option* (locking in a path).
+- **Application:**
+    - **Buying an Option:** Creating abstractions or interfaces. Cost = development time; Benefit = low cost of future migration.
+    - **Executing an Option:** Choosing a specific vendor or technology. Benefit = immediate speed/efficiency; Cost = lock-in (reduction of $\text{DoF}$).
+- **Metric:** $\text{DoF}$ is the inverse of the "cost of transition" between states. Lower transition cost $\rightarrow$ higher $\text{DoF}$.
+
+### 3. The Constraint Lens (Constraint-Based DoF)
+**Focus:** Structural Freedom.
+- **Logic:** $\text{DoF} = (\text{Total Variables}) - (\text{Active Constraints})$.
+- **Application:** Identify all architectural variables (stack, deploy model, data schema). List all fixed constraints (budget, legacy requirements, deadlines).
+- **Metric:** Each constraint that removes a choice "freezes" a degree of freedom.
+
 ## Priority
 $\text{Total System DoF} \rightarrow \text{Individual Part DoF} \rightarrow \text{Local Task Objective}$.

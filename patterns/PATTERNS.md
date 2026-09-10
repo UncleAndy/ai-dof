@@ -14,7 +14,7 @@ The system is divided into three isolated contours with a unidirectional data fl
 2. **Synthesis Layer (The Generator):**
    - **Task:** Receives the graph. Generates a set of hypothetical strategies (3–5 distinct paths). It is forbidden from direct actuator control.
 3. **Validation Layer (Calculus Core):**
-   - **Task:** Accepts plans from the Generator. Runs a simulation for each. Filters them through the non-linear formula $\sum \ln(1 + \text{DoF})$. Blocks any path with a $-\infty$ penalty.
+   - **Task:** Accepts plans from the Generator. Runs a simulation for each. Filters them through the non-linear formula $\sum \ln(\text{DoF})$. Blocks any path with a $-\infty$ penalty.
 
 ### Pattern 2: Reactive Circuit with Interruption (Time-Bounded Interrupter)
 Prevents "Analysis Paralysis" by linking compute cycles to the physical time remaining before collapse ($\tau$).
@@ -25,7 +25,7 @@ Prevents "Analysis Paralysis" by linking compute cycles to the physical time rem
 ### Pattern 3: Calculus Evaluator Pipe
 A deterministic implementation (Python/Rust/C++) of the evaluation core.
 - **Logic:** Calculates the aggregate system DoF.
-- **Selection:** $\text{Net Delta} = \text{Total System DoF}_{\text{projected}} - \text{Total System DoF}_{\text{current}} - \Delta T$.
+- **Selection:** $\text{Net Delta} = \text{Total System DoF Evaluation Index}_{\text{projected}} - \text{Total System DoF Evaluation Index}_{\text{current}} - \Delta T$.
 - **Constraint:** Irreversible actions receive a structural penalty (e.g., $-0.5$).
 
 ### Reference Implementation (Code Files)

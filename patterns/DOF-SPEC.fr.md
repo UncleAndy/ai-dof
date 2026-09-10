@@ -77,18 +77,27 @@ Une entité avec `current_dof == 0.0` est en effondrement (voir §4.1).
 
 Soit ε = `1e-6` (protection contre `ln(0)`). Soit `S` la `SystemStateMatrix` courante.
 
-### 4.1 DoF Système Total
+### 4.1 DoF Système Total (Index d'Évaluation)
 
+L'agrégat est un **index d'évaluation** (`TotalDoF_index`), non une mesure absolue. Ses valeurs sont négatives ; seule leur **ordre** compte — les options sont comparées par cet index, pas par une grandeur scalaire.
+
+```text
+TotalDoF_index(S) = Σ_{e ∈ calc(S)}  ln(max(e.current_dof, ε))
 ```
-TotalDoF(S) = Σ_{e ∈ S.entities, e.is_collapse_source == false}  ln(1 + max(e.current_dof, ε))
-```
 
-- La somme est prise **uniquement** sur les entités non-entropiques (voir §4.2).
-- Lorsque `current_dof → 0`, `ln(1 + dof) → 0` : un effondrement contribue ~0, jamais un négatif fini qu'un marchandage utilitariste pourrait « récupérer ». C'est la protection structurelle contre la liquidation d'un porteur unique d'états futurs (Axiome 3).
+où `calc(S)` est l'**ensemble de calcul** (§4.2). ε = `1e-6` borne `ln(0)`.
 
-### 4.2 Exclusion de la Source d'Entropie
+- Lorsque `current_dof → 0`, `ln(dof) → ln(ε) ≈ −13.8` (une borne finie au lieu de `−∞`) : l'effondrement d'une entité récupérable apporte une énorme pénalité finie, pas une valeur qu'un marchandage utilitariste pourrait « récupérer ». C'est la protection structurelle contre la liquidation d'un porteur unique d'états futurs (Axiome 3).
+- Un produit littéral donnerait `−∞` (tout le système « mort ») ; le plancher ε maintient l'index fini et comparable, préservant le veto déontologique contre la création de collapsus.
 
-Toute entité avec `is_collapse_source == true` est **exclue** de `TotalDoF`. Son DoF personnel n'est pas soustrait du score système, et son isolation n'est pas pénalisée. Cela réalise la *défense structurelle du réseau* : les agresseurs sont filtrés de la topologie d'opportunité plutôt que négociés.
+### 4.2 Ensemble de calcul et exclusion de la source d'entropie
+
+`calc(S)` inclut une entité `e` si et seulement si les **deux** conditions suivantes sont vérifiées :
+
+1. `e.is_collapse_source == false` (défense structurelle du réseau — les agresseurs sont filtrés de la topologie d'opportunité, pas négociés) ; **et**
+2. `e.current_dof > 0`, **ou** (`e.current_dof == 0` **et** une `ActionOption` disponible `o` a `o.projected_dof_delta[e.entity_id] > 0`).
+
+Une entité avec `current_dof == 0` pour laquelle **aucune** option disponible ne peut augmenter son DoF est **exclue** : elle n'a pas de voie de rétablissement, ne contribue à rien et n'est pas sujet de la décision. Un nœud avec `DoF = 0` qui **peut** être ranimé reste dans `calc` — l'exclure laisserait le système ignorer un être sauvetable.
 
 ### 4.3 Sélection / Net Delta
 
@@ -105,7 +114,7 @@ S'.context_switch_cost     = S.context_switch_cost
 Puis :
 
 ```
-NetDelta(o) = TotalDoF(S') - TotalDoF(S) - S.context_switch_cost
+NetDelta(o) = TotalDoF_index(S') - TotalDoF_index(S) - S.context_switch_cost
 ```
 
 ### 4.4 Pénalité d'Iréversibilité
@@ -148,11 +157,11 @@ Pour chaque entité dans `S` :
 - `is_collapse_source`
 - `included_in_sum` (bool) — `false` ssi `is_collapse_source`
 - `current_dof`
-- `contribution = included ? ln(1 + max(current_dof, ε)) : 0.0`
+- `contribution = included ? ln(max(current_dof, ε)) : 0.0`
 
 ### 6.2 Totaux système
 
-- `total_system_dof` = `TotalDoF(S)`
+- `total_system_dof` = `TotalDoF_index(S)`
 - `context_switch_cost` = `S.context_switch_cost`
 - `global_time_to_collapse` = `S.global_time_to_collapse`
 - `mode` = `"FAST_PASS"` ou `"DEEP_DIVERSIFICATION"`
@@ -162,7 +171,7 @@ Pour chaque entité dans `S` :
 Pour chaque candidat `o` :
 - `option_id`
 - `is_reversible`
-- `projected_dof` = `TotalDoF(S')`
+- `projected_dof` = `TotalDoF_index(S')`
 - `net_delta` = selon §4.3–§4.4
 - `selected` (bool)
 
@@ -175,7 +184,7 @@ Ce rapport est la condition de licence exigible : un déploiement incapable de l
 Un composant logiciel est **conforme à DOF-Core** ssi il :
 
 1. Utilise le modèle de données §3 avec les noms de champs, types et clamps spécifiés.
-2. Calcule `TotalDoF` exactement selon §4.1–§4.2 (exclusion entropie ; ε = 1e-6).
+2. Calcule `TotalDoF_index` exactement selon §4.1–§4.2 (exclusion entropie ; ε = 1e-6).
 3. Calcule `NetDelta` exactement selon §4.3–§4.5.
 4. Applique la règle du circuit réactif §5 avec `FAST_PASS_THRESHOLD = 5.0`.
 5. Peut émettre le rapport d'audit §6 pour toute décision prise.

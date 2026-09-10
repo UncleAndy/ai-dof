@@ -14,7 +14,7 @@ La sistemo estas dividita en tri izolajn konturojn kun unidirektana datumfluo, p
 2. **Tavolo de Sintezo (La Generanto):**
    - **Tasko:** Ricevas la grafon. Generas kolekton de hipotetaj strategioj (3–5 diversaj vojoj). Ĝi havas malpermeson rekte kontroli aktuatorojn.
 3. **Tavolo de Validigo (Calculus Core):**
-   - **Tasko:** Ricevas planojn de la Generanto. Simulas ĉiun opcion. Filtras ilin per la nelineara formulo $\sum \ln(1 + \text{DoF})$. Blokas ĉiun vojon kun puno de $-\infty$.
+   - **Tasko:** Ricevas planojn de la Generanto. Simulas ĉiun opcion. Filtras ilin per la nelineara formulo $\sum \ln(\text{DoF})$. Blokas ĉiun vojon kun puno de $-\infty$.
 
 ### Modelo 2: Reaktiva Cirkvito kun Interrompo
 Malhelpas «analizan paralizon», ligante kalkulajn ciklojn al la fizika tempo antaŭ kolapso ($\tau$).
@@ -25,7 +25,7 @@ Malhelpas «analizan paralizon», ligante kalkulajn ciklojn al la fizika tempo a
 ### Modelo 3: Kalkulila Evaluada Tubo (Calculus Evaluator Pipe)
 Deterministika efektivigo (Python/Rust/C++) de la evaluada kerno.
 - **Logiko:** Kalkulas la agregan DoF de la sistemo.
-- **Elekto:** $\text{Net Delta} = \text{Total System DoF}_{\text{projected}} - \text{Total System DoF}_{\text{current}} - \Delta T$.
+- **Elekto:** $\text{Net Delta} = \text{Total System DoF Evaluation Index}_{\text{projected}} - \text{Total System DoF Evaluation Index}_{\text{current}} - \Delta T$.
 - **Restriko:** Ne-reversibloj agoj ricevas strukturan punon (ekz. $-0.5$).
 
 ### Referenca Realigo (Kododosieroj)

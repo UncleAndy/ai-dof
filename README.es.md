@@ -8,7 +8,7 @@ Se publica bajo **CC BY-SA 4.0** con una cláusula adicional **Proof of Implemen
 
 Los sistemas de IA modernos tienden a optimizar un único objetivo escalar (recompensa, rendimiento, « el mayor bien »). Esa matemática justifica en silencio el sacrificio de minorías, el bloqueo irreversible y concesiones ocultas. DOF-Core reemplaza el utilitarismo aritmético por una protección **estructural**:
 
-- A medida que el DoF de una entidad se acerca a cero, su contribución a la puntuación del sistema cae hacia **−∞** (`Σ ln(1 + DoF)`). No se puede « recuperar » la liquidación de un portador único de estados futuros inflando a quien ya está bien. Un colapso aporta ~0, nunca un negativo finito que pudiera intercambiarse.
+- A medida que el DoF de una entidad se acerca a cero, su contribución a la puntuación del sistema cae hacia **−∞** (`Σ ln(DoF)`). No se puede « recuperar » la liquidación de un portador único de estados futuros inflando a quien ya está bien. Un colapso aporta ~0, nunca un negativo finito que pudiera intercambiarse.
 - Los agresores («Collapse Sources») se **aislan**, no se negocian — se filtran de la topología de oportunidad en lugar de restarse de la puntuación.
 
 El resultado es un agente que actúa como un *optimizador de la topología de oportunidades*: diversifica opciones, respeta la reversibilidad y se niega a cambiar el futuro de un ser por la comodidad de otro.
@@ -37,7 +37,7 @@ Lea `skills/SKILL.md` por la filosofía. Lea `DOF-SPEC.md` si construye una impl
 
 1. **Detección de trampas** — aplicar `references/framing-traps.md` para que las rutas generadas sean alternativas genuinas, no reformulaciones de una sola narrativa.
 2. **Medición** — mapear cada entidad y su DoF actual vía `references/dof-assessment-toolkit.md`.
-3. **Cálculo** — calcular `Total System DoF = Σ ln(1 + DoF)` sobre entidades no-entrópicas.
+3. **Cálculo** — calcular `Total System DoF Evaluation Index = Σ ln(DoF)` sobre entidades no-entrópicas.
 4. **Estabilización** — restar la Entropía de cambio de contexto (ΔT) para penalizar cambios de proceso innecesarios.
 5. **Acción** — elegir la opción con el Net Delta más alto; si el tiempo hasta el colapso (τ) es menor a 5 s, cambiar a **Fast Pass** (reserva determinista) para evitar la parálisis por análisis.
 

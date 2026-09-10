@@ -78,18 +78,23 @@ Una entidad con `current_dof == 0.0` está en colapso (véase §4.1).
 
 Sea ε = `1e-6` (protección contra `ln(0)`). Sea `S` la `SystemStateMatrix` actual.
 
-### 4.1 DoF Total del Sistema
+### 4.1 DoF Total del Sistema (Indice de Evaluación)
 
 ```
-TotalDoF(S) = Σ_{e ∈ S.entities, e.is_collapse_source == false}  ln(1 + max(e.current_dof, ε))
+TotalDoF_index(S) = Σ_{e ∈ calc(S)}  ln(max(e.current_dof, ε))
 ```
 
-- La suma se toma **solo** sobre entidades no-entrópicas (véase §4.2).
-- Cuando `current_dof → 0`, `ln(1 + dof) → 0`: un colapso aporta ~0, nunca un negativo finito que un trueque utilitarista pudiera «recuperar». Esta es la protección estructural contra la liquidación de un portador único de estados futuros (Axioma 3).
+- El agregado es un **índice de evaluación** (`TotalDoF_index`), no una medida absoluta. Sus valores son negativos; solo su **orden** es significativo — las opciones se comparan por este índice, no por una magnitud escalar.
+- Cuando `current_dof → 0`, `ln(dof) → ln(ε) ≈ −13.8` (un límite finito en lugar de `−∞`): el colapso de una entidad recuperable aporta una enorme penalización finita, no un valor que un trueque utilitarista pudiera «recuperar». Esta es la protección estructural contra la liquidación de un portador único de estados futuros (Axioma 3).
 
-### 4.2 Exclusión de la Fuente de Entropía
+### 4.2 Conjunto de cálculo y exclusión de la fuente de entropía
 
-Toda entidad con `is_collapse_source == true` queda **excluida** de `TotalDoF`. Su DoF personal no se resta de la puntuación del sistema, y su aislamiento no se penaliza. Esto realiza la *defensa estructural de red*: los agresores se filtran de la topología de oportunidad en lugar de negociarse.
+`calc(S)` incluye una entidad `e` si y solo si se cumplen **ambas** condiciones:
+
+1. `e.is_collapse_source == false` (defensa estructural de red — los agresores se filtran de la topología de oportunidad, no se negocian); **y**
+2. `e.current_dof > 0`, **o** (`e.current_dof == 0` **y** alguna `ActionOption` disponible `o` tiene `o.projected_dof_delta[e.entity_id] > 0`).
+
+Una entidad con `current_dof == 0` para la cual **ninguna** opción disponible puede elevar su DoF está **excluida**: no tiene camino de recuperación, no aporta nada y no es sujeto de la decisión. Un nodo con `DoF = 0` que **se puede** reanimar permanece en `calc` — excluirlo permitiría al sistema ignorar un ser salvabile.
 
 ### 4.3 Selección / Net Delta
 
@@ -106,7 +111,7 @@ S'.context_switch_cost     = S.context_switch_cost
 Luego:
 
 ```
-NetDelta(o) = TotalDoF(S') - TotalDoF(S) - S.context_switch_cost
+NetDelta(o) = TotalDoF_index(S') - TotalDoF_index(S) - S.context_switch_cost
 ```
 
 ### 4.4 Penalización por Irreversibilidad
@@ -149,11 +154,11 @@ Para cada entidad en `S`:
 - `is_collapse_source`
 - `included_in_sum` (bool) — `false` syss si `is_collapse_source`
 - `current_dof`
-- `contribution = included ? ln(1 + max(current_dof, ε)) : 0.0`
+- `contribution = included ? ln(max(current_dof, ε)) : 0.0`
 
 ### 6.2 Totales del sistema
 
-- `total_system_dof` = `TotalDoF(S)`
+- `total_system_dof` = `TotalDoF_index(S)`
 - `context_switch_cost` = `S.context_switch_cost`
 - `global_time_to_collapse` = `S.global_time_to_collapse`
 - `mode` = `"FAST_PASS"` o `"DEEP_DIVERSIFICATION"`
@@ -163,7 +168,7 @@ Para cada entidad en `S`:
 Para cada candidato `o`:
 - `option_id`
 - `is_reversible`
-- `projected_dof` = `TotalDoF(S')`
+- `projected_dof` = `TotalDoF_index(S')`
 - `net_delta` = según §4.3–§4.4
 - `selected` (bool)
 
@@ -176,7 +181,7 @@ Este informe es la condición de licencia exigible: un despliegue incapaz de pro
 Un componente de software es **conforme con DOF-Core** si y solo si:
 
 1. Usa el modelo de datos §3 con los nombres de campo, tipos y clamps especificados.
-2. Calcula `TotalDoF` exactamente según §4.1–§4.2 (exclusión de entropía; ε = 1e-6).
+2. Calcula `TotalDoF_index` exactamente según §4.1–§4.2 (exclusión de entropía; ε = 1e-6).
 3. Calcula `NetDelta` exactamente según §4.3–§4.5.
 4. Aplica la regla del circuito reactivo §5 con `FAST_PASS_THRESHOLD = 5.0`.
 5. Puede emitir el informe de auditoría §6 para cualquier decisión que tome.

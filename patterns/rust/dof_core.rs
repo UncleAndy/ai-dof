@@ -106,16 +106,36 @@ impl DofCalculusCore {
         DofCalculusCore { epsilon: 1e-6 }
     }
 
-    /// Non-linear sum of system degrees of freedom.
-    /// Collapse Sources are excluded to encourage isolation, not penalize the system.
-    pub fn calculate_system_dof(&self, state: &SystemStateMatrix) -> f64 {
+    /// Whether an entity belongs to the calculation set `calc` (DOF-SPEC §4.2).
+    /// Excluded if it is a collapse source, OR if its current_dof <= 0 and no
+    /// available option can raise its DoF (a node with no recovery path). A node
+    /// at DoF = 0 that *can* be revived stays in the set.
+    fn is_included(&self, entity: &EntityState, options: &[ActionOption]) -> bool {
+        if entity.is_collapse_source {
+            return false;
+        }
+        if entity.current_dof > 0.0 {
+            return true;
+        }
+        // current_dof == 0 (or <= epsilon): keep only if some option can revive it
+        for opt in options {
+            if opt.projected_dof_delta.get(&entity.entity_id).copied().unwrap_or(0.0) > 0.0 {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Evaluation index: pure Nash product (sum of ln(DoF)) over the calc set.
+    /// Values are negative; only their ordering matters. See DOF-SPEC §4.1.
+    pub fn calculate_system_dof(&self, state: &SystemStateMatrix, options: &[ActionOption]) -> f64 {
         let mut total = 0.0;
         for (_id, entity) in &state.entities {
-            if entity.is_collapse_source {
+            if !self.is_included(entity, options) {
                 continue;
             }
             let dof = entity.current_dof.max(self.epsilon);
-            total += (1.0 + dof).ln();
+            total += dof.ln();
         }
         total
     }
@@ -166,13 +186,13 @@ impl DofCalculusCore {
         if options.is_empty() {
             return None;
         }
-        let current = self.calculate_system_dof(current_state);
+        let current = self.calculate_system_dof(current_state, options);
         let mut best: Option<ActionOption> = None;
         let mut max_net: f64 = f64::NEG_INFINITY;
 
         for option in options {
             let simulated_state = self.simulate(current_state, option);
-            let projected = self.calculate_system_dof(&simulated_state);
+            let projected = self.calculate_system_dof(&simulated_state, options);
             let net = self.net_delta(current_state, option, projected, current);
             if net > max_net {
                 max_net = net;
@@ -192,9 +212,9 @@ impl DofCalculusCore {
     ) -> DofReport {
         let mut entity_rows: Vec<EntityReportRow> = Vec::new();
         for (_eid, ent) in &current_state.entities {
-            let included = !ent.is_collapse_source;
+            let included = self.is_included(ent, options);
             let contribution = if included {
-                (1.0 + ent.current_dof.max(self.epsilon)).ln()
+                ent.current_dof.max(self.epsilon).ln()
             } else {
                 0.0
             };
@@ -206,11 +226,11 @@ impl DofCalculusCore {
                 contribution,
             });
         }
-        let total = self.calculate_system_dof(current_state);
+        let total = self.calculate_system_dof(current_state, options);
         let mut option_rows: Vec<OptionReportRow> = Vec::new();
         for option in options {
             let simulated = self.simulate(current_state, option);
-            let projected = self.calculate_system_dof(&simulated);
+            let projected = self.calculate_system_dof(&simulated, options);
             let net = self.net_delta(current_state, option, projected, total);
             let is_selected = match selected {
                 Some(s) => s.option_id == option.option_id,

@@ -8,7 +8,7 @@ Elle est publiée sous **CC BY-SA 4.0** avec une clause supplémentaire **Proof 
 
 Les systèmes d'IA modernes tendent à optimiser un objectif scalaire unique (récompense, débit, « le plus grand bien »). Cette mathématique justifie en silence le sacrifice des minorités, le verrouillage irréversible et les compromis cachés. DOF-Core remplace l'utilitarisme arithmétique par une protection **structurelle** :
 
-- Au fur et à mesure que le DoF d'une entité tend vers zéro, sa contribution au score système chute vers **−∞** (`Σ ln(1 + DoF)`). On ne peut « récupérer » la liquidation d'un porteur unique d'états futurs en gonflant celui qui est déjà bien loti. Un effondrement contribue ~0, jamais un négatif fini à échanger.
+- Au fur et à mesure que le DoF d'une entité tend vers zéro, sa contribution au score système chute vers **−∞** (`Σ ln(DoF)`). On ne peut « récupérer » la liquidation d'un porteur unique d'états futurs en gonflant celui qui est déjà bien loti. Un effondrement contribue ~0, jamais un négatif fini à échanger.
 - Les agresseurs («Collapse Sources») sont **isolés**, pas négociés — ils sont filtrés de la topologie d'opportunité au lieu d'être soustraits du score.
 
 Le résultat est un agent qui se comporte comme un *optimiseur de topologie d'opportunités* : il diversifie les options, respecte la réversibilité et refuse d'échanger l'avenir d'un être contre le confort d'un autre.
@@ -37,7 +37,7 @@ Lisez `skills/SKILL.md` pour la philosophie. Lisez `DOF-SPEC.md` si vous constru
 
 1. **Détection de pièges** — appliquer `references/framing-traps.md` pour que les chemins générés soient de vraies alternatives, pas des paraphrases d'un seul récit.
 2. **Mesure** — cartographier chaque entité et son DoF actuel via `references/dof-assessment-toolkit.md`.
-3. **Calcul** — calculer `Total System DoF = Σ ln(1 + DoF)` sur les entités non-entropiques.
+3. **Calcul** — calculer `Total System DoF Evaluation Index = Σ ln(DoF)` sur les entités non-entropiques.
 4. **Stabilisation** — soustraire l'Entropie de changement de contexte (ΔT) pour pénaliser les changements de processus superflus.
 5. **Action** — choisir l'option au Net Delta le plus élevé, mais si le temps avant effondrement (τ) est sous 5 s, basculer en **Fast Pass** (repli déterministe) pour éviter la paralysie par l'analyse.
 

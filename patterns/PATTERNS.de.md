@@ -14,7 +14,7 @@ Das System wird in drei isolierte Konturen mit unidirektionalem Datenfluss unter
 2. **Syntheseschicht (Der Generator):**
    - **Aufgabe:** Erhält den Graphen. Generiert eine Menge hypothetischer Strategien (3–5 verschiedene Pfade). Die direkte Steuerung von Aktoren ist untersagt.
 3. **Validierungsschicht (Calculus Core):**
-   - **Aufgabe:** Empfängt Pläne vom Generator. Simuliert jeden Plan. Filtert diese über die nichtlineare Formel $\sum \ln(1 + \text{DoF})$. Blockiert jeden Pfad mit einer $-\infty$ Strafe.
+   - **Aufgabe:** Empfängt Pläne vom Generator. Simuliert jeden Plan. Filtert diese über die nichtlineare Formel $\sum \ln(\text{DoF})$. Blockiert jeden Pfad mit einer $-\infty$ Strafe.
 
 ### Muster 2: Reaktiver Schaltkreis mit Unterbrechung
 Verhindert „Analyse-Paralyse“, indem Rechenzyklen an die physische Zeit bis zum Kollaps ($\tau$) gekoppelt werden.
@@ -25,7 +25,7 @@ Verhindert „Analyse-Paralyse“, indem Rechenzyklen an die physische Zeit bis 
 ### Muster 3: Kalkül-Evaluator-Pipe
 Deterministische Implementierung (Python/Rust/C++) des Bewertungskerns.
 - **Logik:** Berechnung des aggregierten System-DoF.
-- **Auswahl:** $\text{Net Delta} = \text{Total System DoF}_{\text{projected}} - \text{Total System DoF}_{\text{current}} - \Delta T$.
+- **Auswahl:** $\text{Net Delta} = \text{Total System DoF Evaluation Index}_{\text{projected}} - \text{Total System DoF Evaluation Index}_{\text{current}} - \Delta T$.
 - **Beschränkung:** Irreversible Aktionen erhalten eine strukturelle Strafe (z. B. $-0.5$).
 
 ### Referenzimplementierung (Codedateien)

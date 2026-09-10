@@ -8,12 +8,12 @@ package main
 import "math"
 
 type EntityState struct {
-	EntityID        string
-	IsAutonomous    bool
-	AgencyIndex     float64
-	CurrentDoF      float64
+	EntityID         string
+	IsAutonomous     bool
+	AgencyIndex      float64
+	CurrentDoF       float64
 	IsCollapseSource bool
-	TimeToCollapse  float64
+	TimeToCollapse   float64
 }
 
 type SystemStateMatrix struct {
@@ -23,38 +23,38 @@ type SystemStateMatrix struct {
 }
 
 type ActionOption struct {
-	OptionID           string
-	Description        string
-	ProjectedDoFDelta  map[string]float64
-	IsReversible       bool
+	OptionID          string
+	Description       string
+	ProjectedDoFDelta map[string]float64
+	IsReversible      bool
 }
 
 // EntityReportRow is one entity row of the audit report.
 type EntityReportRow struct {
-	EntityID        string
+	EntityID         string
 	IsCollapseSource bool
-	IncludedInSum  bool
-	CurrentDoF      float64
-	Contribution    float64
+	IncludedInSum    bool
+	CurrentDoF       float64
+	Contribution     float64
 }
 
 // OptionReportRow is one option row of the audit report.
 type OptionReportRow struct {
-	OptionID      string
-	IsReversible  bool
-	ProjectedDoF  float64
-	NetDelta      float64
-	Selected      bool
+	OptionID     string
+	IsReversible bool
+	ProjectedDoF float64
+	NetDelta     float64
+	Selected     bool
 }
 
 // DofReport is the full Proof-of-Implementation audit (DOF-SPEC §6).
 type DofReport struct {
-	Entities              []EntityReportRow
-	TotalSystemDoF        float64
-	ContextSwitchCost     float64
-	GlobalTimeToCollapse  float64
-	Mode                  string
-	Options               []OptionReportRow
+	Entities             []EntityReportRow
+	TotalSystemDoF       float64
+	ContextSwitchCost    float64
+	GlobalTimeToCollapse float64
+	Mode                 string
+	Options              []OptionReportRow
 }
 
 type DOFCalculusCore struct {
@@ -65,16 +65,36 @@ func NewDOFCalculusCore() *DOFCalculusCore {
 	return &DOFCalculusCore{epsilon: 1e-6}
 }
 
-// CalculateSystemDoF computes the non-linear sum of system degrees of freedom.
-// Collapse Sources are excluded to encourage isolation, not penalize the system.
-func (c *DOFCalculusCore) CalculateSystemDoF(state *SystemStateMatrix) float64 {
+// isIncluded reports whether an entity belongs to the calculation set `calc` (DOF-SPEC §4.2).
+// Excluded if it is a collapse source, OR if its CurrentDoF <= 0 and no available option
+// can raise its DoF (a node with no recovery path). A node at DoF = 0 that *can* be revived
+// stays in the set.
+func (c *DOFCalculusCore) isIncluded(entity *EntityState, options []*ActionOption) bool {
+	if entity.IsCollapseSource {
+		return false
+	}
+	if entity.CurrentDoF > 0.0 {
+		return true
+	}
+	// CurrentDoF == 0 (or <= epsilon): keep only if some option can revive it
+	for _, opt := range options {
+		if d, ok := opt.ProjectedDoFDelta[entity.EntityID]; ok && d > 0.0 {
+			return true
+		}
+	}
+	return false
+}
+
+// CalculateSystemDoF computes the evaluation index: pure Nash product (sum of ln(DoF))
+// over the calc set. Values are negative; only their ordering matters. See DOF-SPEC §4.1.
+func (c *DOFCalculusCore) CalculateSystemDoF(state *SystemStateMatrix, options []*ActionOption) float64 {
 	total := 0.0
 	for _, entity := range state.Entities {
-		if entity.IsCollapseSource {
+		if !c.isIncluded(entity, options) {
 			continue
 		}
 		dof := math.Max(entity.CurrentDoF, c.epsilon)
-		total += math.Log(1.0 + dof)
+		total += math.Log(dof)
 	}
 	return total
 }
@@ -118,13 +138,13 @@ func (c *DOFCalculusCore) EvaluateAndSelect(currentState *SystemStateMatrix, opt
 	if len(options) == 0 {
 		return nil
 	}
-	current := c.CalculateSystemDoF(currentState)
+	current := c.CalculateSystemDoF(currentState, options)
 	var best *ActionOption
 	maxNet := math.Inf(-1)
 
 	for _, option := range options {
 		simulated := c.simulate(currentState, option)
-		projected := c.CalculateSystemDoF(simulated)
+		projected := c.CalculateSystemDoF(simulated, options)
 		net := c.netDelta(currentState, option, projected, current)
 		if net > maxNet {
 			maxNet = net
@@ -138,40 +158,40 @@ func (c *DOFCalculusCore) EvaluateAndSelect(currentState *SystemStateMatrix, opt
 func (c *DOFCalculusCore) Report(currentState *SystemStateMatrix, options []*ActionOption, selected *ActionOption, mode string) *DofReport {
 	var entityRows []EntityReportRow
 	for _, ent := range currentState.Entities {
-		included := !ent.IsCollapseSource
+		included := c.isIncluded(ent, options)
 		contribution := 0.0
 		if included {
-			contribution = math.Log(1.0 + math.Max(ent.CurrentDoF, c.epsilon))
+			contribution = math.Log(math.Max(ent.CurrentDoF, c.epsilon))
 		}
 		entityRows = append(entityRows, EntityReportRow{
-			EntityID:        ent.EntityID,
+			EntityID:         ent.EntityID,
 			IsCollapseSource: ent.IsCollapseSource,
-			IncludedInSum:  included,
-			CurrentDoF:      ent.CurrentDoF,
-			Contribution:    contribution,
+			IncludedInSum:    included,
+			CurrentDoF:       ent.CurrentDoF,
+			Contribution:     contribution,
 		})
 	}
-	total := c.CalculateSystemDoF(currentState)
+	total := c.CalculateSystemDoF(currentState, options)
 	var optionRows []OptionReportRow
 	for _, option := range options {
 		simulated := c.simulate(currentState, option)
-		projected := c.CalculateSystemDoF(simulated)
+		projected := c.CalculateSystemDoF(simulated, options)
 		net := c.netDelta(currentState, option, projected, total)
 		isSelected := selected != nil && selected.OptionID == option.OptionID
 		optionRows = append(optionRows, OptionReportRow{
-			OptionID:      option.OptionID,
-			IsReversible:  option.IsReversible,
-			ProjectedDoF:  projected,
-			NetDelta:      net,
-			Selected:      isSelected,
+			OptionID:     option.OptionID,
+			IsReversible: option.IsReversible,
+			ProjectedDoF: projected,
+			NetDelta:     net,
+			Selected:     isSelected,
 		})
 	}
 	return &DofReport{
-		Entities:              entityRows,
-		TotalSystemDoF:        total,
-		ContextSwitchCost:     currentState.ContextSwitchCost,
-		GlobalTimeToCollapse:  currentState.GlobalTimeToCollapse,
-		Mode:                  mode,
-		Options:               optionRows,
+		Entities:             entityRows,
+		TotalSystemDoF:       total,
+		ContextSwitchCost:    currentState.ContextSwitchCost,
+		GlobalTimeToCollapse: currentState.GlobalTimeToCollapse,
+		Mode:                 mode,
+		Options:              optionRows,
 	}
 }

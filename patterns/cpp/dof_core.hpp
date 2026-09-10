@@ -65,15 +65,31 @@ class DOFCalculusCore {
 public:
     DOFCalculusCore(double epsilon = 1e-6) : epsilon_(epsilon) {}
 
-    // Non-linear sum of system degrees of freedom.
-    // Collapse Sources are excluded to encourage isolation, not penalize the system.
-    double calculate_system_dof(const SystemStateMatrix& state) const {
+    // Whether an entity belongs to the calculation set `calc` (DOF-SPEC §4.2).
+    // Excluded if it is a collapse source, OR if its current_dof <= 0 and no available
+    // option can raise its DoF (a node with no recovery path). A node at DoF = 0 that
+    // *can* be revived stays in the set.
+    bool is_included(const EntityState& e, const std::vector<ActionOption>& options) const {
+        if (e.is_collapse_source) return false;
+        if (e.current_dof > 0.0) return true;
+        // current_dof == 0 (or <= epsilon): keep only if some option can revive it
+        for (const auto& opt : options) {
+            auto it = opt.projected_dof_delta.find(e.entity_id);
+            if (it != opt.projected_dof_delta.end() && it->second > 0.0) return true;
+        }
+        return false;
+    }
+
+    // Evaluation index: pure Nash product (sum of ln(DoF)) over the calc set.
+    // Values are negative; only their ordering matters. See DOF-SPEC §4.1.
+    double calculate_system_dof(const SystemStateMatrix& state,
+                                const std::vector<ActionOption>& options) const {
         double total = 0.0;
         for (const auto& kv : state.entities) {
             const EntityState& e = kv.second;
-            if (e.is_collapse_source) continue;
+            if (!is_included(e, options)) continue;
             double dof = std::max(e.current_dof, epsilon_);
-            total += std::log(1.0 + dof);
+            total += std::log(dof);
         }
         return total;
     }
@@ -107,13 +123,13 @@ public:
         const std::vector<ActionOption>& options) const
     {
         if (options.empty()) return std::nullopt;
-        double current = calculate_system_dof(current_state);
+        double current = calculate_system_dof(current_state, options);
         std::optional<ActionOption> best;
         double max_net = -std::numeric_limits<double>::infinity();
 
         for (const auto& option : options) {
             SystemStateMatrix sim = simulate(current_state, option);
-            double projected = calculate_system_dof(sim);
+            double projected = calculate_system_dof(sim, options);
             double net = net_delta(current_state, option, projected, current);
             if (net > max_net) {
                 max_net = net;
@@ -132,14 +148,14 @@ public:
         DofReport rep;
         for (const auto& kv : current_state.entities) {
             const EntityState& e = kv.second;
-            bool included = !e.is_collapse_source;
-            double contribution = included ? std::log(1.0 + std::max(e.current_dof, epsilon_)) : 0.0;
+            bool included = is_included(e, options);
+            double contribution = included ? std::log(std::max(e.current_dof, epsilon_)) : 0.0;
             rep.entities.push_back(EntityReportRow{e.entity_id, e.is_collapse_source, included, e.current_dof, contribution});
         }
-        double total = calculate_system_dof(current_state);
+        double total = calculate_system_dof(current_state, options);
         for (const auto& option : options) {
             SystemStateMatrix sim = simulate(current_state, option);
-            double projected = calculate_system_dof(sim);
+            double projected = calculate_system_dof(sim, options);
             double net = net_delta(current_state, option, projected, total);
             bool is_selected = selected.has_value() && selected->option_id == option.option_id;
             rep.options.push_back(OptionReportRow{option.option_id, option.is_reversible, projected, net, is_selected});

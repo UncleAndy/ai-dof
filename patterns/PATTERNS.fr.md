@@ -14,7 +14,7 @@ Le système est divisé en trois contours isolés avec un flux de données unidi
 2. **Couche de Synthèse (Le Générateur) :**
    - **Tâche :** Reçoit le graphe. Génère un ensemble de stratégies hypothétiques (3 à 5 chemins distincts). Le contrôle direct des actionneurs lui est interdit.
 3. **Couche de Validation (Calculus Core) :**
-   - **Tâche :** Reçoit les plans du Générateur. Simule chaque option. Les filtre via la formule non linéaire $\sum \ln(1 + \text{DoF})$. Bloque toute option avec une pénalité de $-\infty$.
+   - **Tâche :** Reçoit les plans du Générateur. Simule chaque option. Les filtre via la formule non linéaire $\sum \ln(\text{DoF})$. Bloque toute option avec une pénalité de $-\infty$.
 
 ### Modèle 2 : Cercle Réactif avec Interruption
 Évite la « paralysie par l'analyse » en liant les cycles de calcul au temps physique restant avant l'effondrement ($\tau$).
@@ -25,7 +25,7 @@ Le système est divisé en trois contours isolés avec un flux de données unidi
 ### Modèle 3 : Tuyau d'Évaluation du Calcul (Calculus Evaluator Pipe)
 Implémentation déterministe (Python/Rust/C++) du noyau d'évaluation.
 - **Logique :** Calcul du DoF global du système.
-- **Sélection :** $\text{Net Delta} = \text{Total System DoF}_{\text{projected}} - \text{Total System DoF}_{\text{current}} - \Delta T$.
+- **Sélection :** $\text{Net Delta} = \text{Total System DoF Evaluation Index}_{\text{projected}} - \text{Total System DoF Evaluation Index}_{\text{current}} - \Delta T$.
 - **Contrainte :** Les actions irréversibles reçoivent une pénalité structurelle (ex: $-0.5$).
 
 ### Implémentation de Référence (Fichiers de Code)

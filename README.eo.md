@@ -8,7 +8,7 @@
 
 Modernaj IA-sistemoj emas optimumigi unuopan skalaran celon (premio, trairebleco, « la plej granda bono »). Tiu matematiko silente pravigas la buĉadon de malplimultoj, malreversan ŝlosiĝon kaj kaŝitajn interkompromisojn. DOF-Core anstataŭigas aritmetikan utiligismon per **struktura** gardo:
 
-- Ju pli la DoF de ento alproksimiĝas al nulo, des pli ĝia kontribuo al la sistema poentaro falas al **−∞** (`Σ ln(1 + DoF)`). Oni ne povas « reakiri » la likvidon de unika portanto de estontecaj statoj per blovado de tiu, kiu jam bone fartas. Kolapso kontribuas ~0, neniam finitan negativon interŝanĝeblan.
+- Ju pli la DoF de ento alproksimiĝas al nulo, des pli ĝia kontribuo al la sistema poentaro falas al **−∞** (`Σ ln(DoF)`). Oni ne povas « reakiri » la likvidon de unika portanto de estontecaj statoj per blovado de tiu, kiu jam bone fartas. Kolapso kontribuas ~0, neniam finitan negativon interŝanĝeblan.
 - Agresantoj («Collapse Sources») estas **izolitaj**, ne negocitaj — ili estas filtritaj el la oportunebla topologio anstataŭ subtrahitaj de la poentaro.
 
 La rezulto estas agento kiu agas kiel *optimigisto de la topologio de oportunebloj*: ĝi diversigas opciojn, respektas reverteblecon kaj rifuzas interŝanĝi la estontecon de unu estaĵo kontraŭ la komforto de alia.
@@ -37,7 +37,7 @@ Legu `skills/SKILL.md` por la filozofio. Legu `DOF-SPEC.md` se vi konstruas konf
 
 1. **Kaptilo-detekto** — apliki `references/framing-traps.md` por ke la generitaj vojoj estu veraj alternativoj, ne refrazoj de unu soleca rakonto.
 2. **Mezurado** — mapigi ĉiun enton kaj ĝian nunan DoF per `references/dof-assessment-toolkit.md`.
-3. **Kalkulo** — kalkuli `Total System DoF = Σ ln(1 + DoF)` super ne-entropiaj entoj.
+3. **Kalkulo** — kalkuli `Total System DoF Evaluation Index = Σ ln(DoF)` super ne-entropiaj entoj.
 4. **Stabiligo** — subtrahi la Entropion de Kuntekst-Ŝanĝo (ΔT) por puni nedeziratajn proces-ŝanĝojn.
 5. **Ago** — elekti la opcion kun la plej alta Net Delta; se la tempo ĝis kolapso (τ) estas sub 5 s, ŝalti al **Fast Pass** (determinisma rezervo) por eviti Analizan Paralizon.
 

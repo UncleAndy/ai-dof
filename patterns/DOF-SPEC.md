@@ -77,24 +77,33 @@ An entity with `current_dof == 0.0` is at collapse (see §4.1).
 
 Let ε = `1e-6` (protection against `ln(0)`). Let `S` be the current `SystemStateMatrix`.
 
-### 4.1 Total System DoF
+### 4.1 Total System DoF Evaluation Index
 
+The aggregate is an **evaluation index** (`TotalDoF_index`), not an absolute measure. Its values are negative; only their **ordering** is meaningful — options are compared by this index, not by reading a scalar magnitude.
+
+```text
+TotalDoF_index(S) = Σ_{e ∈ calc(S)}  ln(max(e.current_dof, ε))
 ```
-TotalDoF(S) = Σ_{e ∈ S.entities, e.is_collapse_source == false}  ln(1 + max(e.current_dof, ε))
-```
 
-- The sum is taken **only** over non-collapse-source entities (see §4.2).
-- As `current_dof → 0`, `ln(1 + dof) → 0`: a collapse contributes ~0, never a finite negative that a utilitarianism-style trade could "earn back". This is the structural guard against liquidating a unique future-state carrier (Axiom 3).
+where `calc(S)` is the **calculation set** (§4.2). ε = `1e-6` floors `ln(0)`.
 
-### 4.2 Collapse-Source Exclusion
+- As `current_dof → 0`, `ln(dof) → ln(ε) ≈ −13.8` (a finite floor against `−∞`): a collapse of a revivable entity contributes an enormous finite penalty, never a value a utilitarianism-style trade could "earn back". This is the structural guard against liquidating a unique future-state carrier (Axiom 3).
+- A literal product would give `−∞` (whole system "dead"); the ε-floor keeps the index finite and comparable while preserving the deontological veto on creating collapse.
 
-Any entity with `is_collapse_source == true` is **excluded** from `TotalDoF`. Its personal DoF is not subtracted from the system score, and its isolation is not penalized. This realizes *structural network defense*: aggressors are filtered from the opportunity topology rather than negotiated with.
+### 4.2 Calculation Set & Collapse-Source Exclusion
+
+`calc(S)` includes an entity `e` iff **all** of:
+
+1. `e.is_collapse_source == false` (structural network defense — aggressors are filtered from the opportunity topology, not negotiated with); **and**
+2. `e.current_dof > 0`, **or** (`e.current_dof == 0` **and** some available `ActionOption` `o` has `o.projected_dof_delta[e.entity_id] > 0`).
+
+An entity at `current_dof == 0` with **no** available option that can raise its DoF is **excluded**: it has no recovery path, contributes nothing, and is not a subject of the decision. A node at `DoF = 0` that *can* be revived stays in `calc` — excluding it would let the system ignore a salvageable being.
 
 ### 4.3 Selection / Net Delta
 
 For each candidate `ActionOption` `o`, build the **simulated** matrix `S'` by applying `o.projected_dof_delta` to every entity's `current_dof`, clamped to `[0.0, 1.0]`:
 
-```
+```text
 for each entity e in S.entities:
     nd = clamp(e.current_dof + o.projected_dof_delta.get(e.entity_id, 0.0), 0.0, 1.0)
     S'.entities[e.entity_id].current_dof = nd
@@ -102,11 +111,13 @@ S'.global_time_to_collapse = S.global_time_to_collapse
 S'.context_switch_cost     = S.context_switch_cost
 ```
 
-Then:
+Then compute `TotalDoF_index(S')` over `calc(S')` and:
 
+```text
+NetDelta_index(o) = TotalDoF_index(S') - TotalDoF_index(S) - S.context_switch_cost
 ```
-NetDelta(o) = TotalDoF(S') - TotalDoF(S) - S.context_switch_cost
-```
+
+`NetDelta_index` is read only as a sign/ordering, never as an absolute gain.
 
 ### 4.4 Irreversibility Penalty
 
@@ -148,11 +159,11 @@ For each entity in `S`:
 - `is_collapse_source`
 - `included_in_sum` (bool) — `false` iff `is_collapse_source`
 - `current_dof`
-- `contribution = included ? ln(1 + max(current_dof, ε)) : 0.0`
+- `contribution = included ? ln(max(current_dof, ε)) : 0.0` (an evaluation-index contribution, negative in magnitude)
 
 ### 6.2 System totals
 
-- `total_system_dof` = `TotalDoF(S)`
+- `total_system_dof` = `TotalDoF_index(S)` (the evaluation index of the current state)
 - `context_switch_cost` = `S.context_switch_cost`
 - `global_time_to_collapse` = `S.global_time_to_collapse`
 - `mode` = `"FAST_PASS"` or `"DEEP_DIVERSIFICATION"`
@@ -162,7 +173,7 @@ For each entity in `S`:
 For each candidate `o`:
 - `option_id`
 - `is_reversible`
-- `projected_dof` = `TotalDoF(S')`
+- `projected_dof` = `TotalDoF_index(S')` (evaluation index after applying `o`)
 - `net_delta` = per §4.3–§4.4
 - `selected` (bool)
 
@@ -175,7 +186,7 @@ This report is the enforceable license condition: a deployment that cannot produ
 A software component is **DOF-Core conformant** iff it:
 
 1. Uses the data model of §3 with the specified field names, types, and clamps.
-2. Computes `TotalDoF` exactly per §4.1–§4.2 (collapse-source exclusion; ε = 1e-6).
+2. Computes `TotalDoF_index` exactly per §4.1–§4.2 (calculation set `calc`; collapse-source exclusion; ε = 1e-6).
 3. Computes `NetDelta` exactly per §4.3–§4.5.
 4. Applies the reactive-circuit rule of §5 with `FAST_PASS_THRESHOLD = 5.0`.
 5. Can emit the audit report of §6 for any decision it makes.

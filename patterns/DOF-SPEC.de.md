@@ -77,18 +77,27 @@ Eine Entität mit `current_dof == 0.0` befindet sich im Kollaps (siehe §4.1).
 
 Sei ε = `1e-6` (Schutz vor `ln(0)`). Sei `S` die aktuelle `SystemStateMatrix`.
 
-### 4.1 Gesamtsystem-DoF
+### 4.1 Gesamtsystem-DoF Evaluation Index
 
+Das Aggregat ist ein **Bewertungsindex** (`TotalDoF_index`), keine absolute Maßzahl. Seine Werte sind negativ; nur ihre **Reihenfolge** ist bedeutsam — Optionen werden anhand dieses Index verglichen, nicht anhand eines Skalarbetrags.
+
+```text
+TotalDoF_index(S) = Σ_{e ∈ calc(S)}  ln(max(e.current_dof, ε))
 ```
-TotalDoF(S) = Σ_{e ∈ S.entities, e.is_collapse_source == false}  ln(1 + max(e.current_dof, ε))
-```
 
-- Die Summe wird **nur** über nicht-entropische Entitäten gebildet (siehe §4.2).
-- Für `current_dof → 0` gilt `ln(1 + dof) → 0`: ein Kollaps trägt ~0 bei, nie ein endliches Negatives, das ein utilitarianischer Handel «zurückgewinnen» könnte. Dies ist der strukturelle Schutz vor der Liquidation eines einzigartigen Trägers zukünftiger Zustände (Axiom 3).
+wobei `calc(S)` die **Berechnungsmenge** ist (§4.2). ε = `1e-6` begrenzt `ln(0)`.
 
-### 4.2 Ausschluss der Entropie-Quelle
+- Für `current_dof → 0` gilt `ln(dof) → ln(ε) ≈ −13.8` (ein endlicher Schwellenwert statt `−∞`): der Kollaps einer wiederbelebaren Entität erzeugt eine enorme endliche Strafe, nicht einen Wert, den ein utilitarianischer Handel «zurückgewinnen» könnte. Dies ist der strukturelle Schutz vor der Liquidation eines einzigartigen Trägers zukünftiger Zustände (Axiom 3).
+- Ein buchstäbliches Produkt ergäbe `−∞` (das ganze System «tot»); der ε-Boden hält den Index endlich und vergleichbar und bewahrt das deontologische Veto gegen das Erzeugen von Kollaps.
 
-Jede Entität mit `is_collapse_source == true` ist von `TotalDoF` **ausgeschlossen**. Ihr persönlicher DoF wird nicht vom Systemwert abgezogen, und ihre Isolation wird nicht bestraft. Dies verwirklicht die *strukturelle Netzwerkverteidigung*: Aggressoren werden aus der Möglichkeits-Topologie herausgefiltert, statt verhandelt.
+### 4.2 Berechnungsmenge und Ausschluss der Entropie-Quelle
+
+`calc(S)` enthält eine Entität `e` genau dann, wenn **beide** Bedingungen gelten:
+
+1. `e.is_collapse_source == false` (strukturelle Netzwerkverteidigung — Aggressoren werden aus der Möglichkeits-Topologie herausgefiltert, statt verhandelt); **und**
+2. `e.current_dof > 0`, **oder** (`e.current_dof == 0` **und** eine verfügbare `ActionOption` `o` hat `o.projected_dof_delta[e.entity_id] > 0`).
+
+Eine Entität mit `current_dof == 0`, für die **keine** verfügbare Option ihren DoF heben kann, ist **ausgeschlossen**: sie hat keinen Wiederherstellungspfad, trägt nichts bei und ist kein Subjekt der Entscheidung. Ein Knoten mit `DoF = 0`, der **wiederbelebt** werden kann, bleibt in `calc` — sein Ausschluss ließe das System ein rettbares Wesen ignorieren.
 
 ### 4.3 Auswahl / Net Delta
 
@@ -105,7 +114,7 @@ S'.context_switch_cost     = S.context_switch_cost
 Dann:
 
 ```
-NetDelta(o) = TotalDoF(S') - TotalDoF(S) - S.context_switch_cost
+NetDelta(o) = TotalDoF_index(S') - TotalDoF_index(S) - S.context_switch_cost
 ```
 
 ### 4.4 Irreversibilitätsstrafe
@@ -148,11 +157,11 @@ Für jede Entität in `S`:
 - `is_collapse_source`
 - `included_in_sum` (bool) — `false` genau dann, wenn `is_collapse_source`
 - `current_dof`
-- `contribution = included ? ln(1 + max(current_dof, ε)) : 0.0`
+- `contribution = included ? ln(max(current_dof, ε)) : 0.0`
 
 ### 6.2 Systemsummen
 
-- `total_system_dof` = `TotalDoF(S)`
+- `total_system_dof` = `TotalDoF_index(S)`
 - `context_switch_cost` = `S.context_switch_cost`
 - `global_time_to_collapse` = `S.global_time_to_collapse`
 - `mode` = `"FAST_PASS"` oder `"DEEP_DIVERSIFICATION"`
@@ -162,7 +171,7 @@ Für jede Entität in `S`:
 Für jeden Kandidaten `o`:
 - `option_id`
 - `is_reversible`
-- `projected_dof` = `TotalDoF(S')`
+- `projected_dof` = `TotalDoF_index(S')`
 - `net_delta` = gemäß §4.3–§4.4
 - `selected` (bool)
 
@@ -175,7 +184,7 @@ Dieser Bericht ist die durchsetzbare Lizenzbedingung: Ein Deployment, das ihn ni
 Eine Softwarekomponente ist **DOF-Core-konform** genau dann, wenn sie:
 
 1. Das Datenmodell §3 mit den angegebenen Feldnamen, Typen und Clamps verwendet.
-2. `TotalDoF` exakt gemäß §4.1–§4.2 berechnet (Entropie-Ausschluss; ε = 1e-6).
+2. `TotalDoF_index` exakt gemäß §4.1–§4.2 berechnet (Entropie-Ausschluss; ε = 1e-6).
 3. `NetDelta` exakt gemäß §4.3–§4.5 berechnet.
 4. Die Regel des reaktiven Schaltkreises §5 mit `FAST_PASS_THRESHOLD = 5.0` anwendet.
 5. Den Audit-Bericht §6 für jede ihrer Entscheidungen ausgeben kann.

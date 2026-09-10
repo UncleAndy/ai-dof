@@ -33,4 +33,4 @@ This toolkit provides a set of analytical "lenses" to quantify and estimate Degr
 - **Metric:** $\text{DoF}$ is the count of remaining unconstrained variables.
 
 ---
-**Integration Note:** These lenses provide the raw $\text{DoF}$ values required for the $\sum \ln(1 + \text{DoF})$ calculation in the Decision Calculus.
+**Integration Note:** These lenses provide the raw $\text{DoF}$ values required for the $\sum \ln(\text{DoF})$ calculation in the Decision Calculus.

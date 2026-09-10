@@ -14,7 +14,7 @@ El sistema se divide en tres contornos aislados con un flujo de datos unidirecci
 2. **Capa de Síntesis (El Generador):**
    - **Tarea:** Recibe el grafo. Genera un conjunto de estrategias hipotéticas (3–5 caminos distintos). Tiene prohibido el control directo de los actuadores.
 3. **Capa de Validación (Calculus Core):**
-   - **Tarea:** Recibe los planes del Generador. Simula cada opción. Las filtra mediante la fórmula no lineal $\sum \ln(1 + \text{DoF})$. Bloquea cualquier opción con una penalización de $-\infty$.
+   - **Tarea:** Recibe los planes del Generador. Simula cada opción. Las filtra mediante la fórmula no lineal $\sum \ln(\text{DoF})$. Bloquea cualquier opción con una penalización de $-\infty$.
 
 ### Patrón 2: Circuito Reactivo con Interrupción
 Evita la «parálisis por análisis» vinculando los ciclos de cálculo al tiempo físico restante antes del colapso ($\tau$).
@@ -25,7 +25,7 @@ Evita la «parálisis por análisis» vinculando los ciclos de cálculo al tiemp
 ### Patrón 3: Tubería de Evaluación del Cálculo (Calculus Evaluator Pipe)
 Implementación determinista (Python/Rust/C++) del núcleo de evaluación.
 - **Lógica:** Cálculo del DoF global del sistema.
-- **Selección:** $\text{Net Delta} = \text{Total System DoF}_{\text{projected}} - \text{Total System DoF}_{\text{current}} - \Delta T$.
+- **Selección:** $\text{Net Delta} = \text{Total System DoF Evaluation Index}_{\text{projected}} - \text{Total System DoF Evaluation Index}_{\text{current}} - \Delta T$.
 - **Restricción:** Las acciones irreversibles reciben una penalización estructural (ej. $-0.5$).
 
 ### Implementación de Referencia (Archivos de Código)

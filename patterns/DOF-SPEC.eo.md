@@ -77,18 +77,27 @@ Ento kun `current_dof == 0.0` estas en kolapso (vidu §4.1).
 
 Ni difinu ε = `1e-6` (protekto kontraŭ `ln(0)`). Ni difinu `S` kiel la nuna `SystemStateMatrix`.
 
-### 4.1 Totala Sistema DoF
+### 4.1 Totala Sistema DoF Evaluation Index
 
+La agregaĵo estas **taksa indico** (`TotalDoF_index`), ne absoluta mezuro. Ĝiaj valoroj estas negativaj; nur ilia **ordo** gravas — opcioj kompariĝas laŭ ĉi tiu indico, ne laŭ absoluta grandeco.
+
+```text
+TotalDoF_index(S) = Σ_{e ∈ calc(S)}  ln(max(e.current_dof, ε))
 ```
-TotalDoF(S) = Σ_{e ∈ S.entities, e.is_collapse_source == false}  ln(1 + max(e.current_dof, ε))
-```
 
-- La sumo estas prenita **nur** super ne-entropiaj entoj (vidu §4.2).
-- Kiam `current_dof → 0`, `ln(1 + dof) → 0`: kolapso kontribuas ~0, neniam finitan negativon, kiun utiligisma interŝanĝo povus «rekuperi». Ĉi tio estas la struktura protekto kontraŭ likvidado de unika portanto de estontecaj statoj (Aksiomo 3).
+kie `calc(S)` estas la **kalkula aro** (§4.2). ε = `1e-6` limitas `ln(0)`.
 
-### 4.2 Ekskludo de Entropia Fonto
+- Kiam `current_dof → 0`, `ln(dof) → ln(ε) ≈ −13.8` (finita sojlo anstataŭ `−∞`): la kolapso de revivigebla ento donas enorman finitan punon, ne valoron, kiun utiligisma interŝanĝo povus «rekuperi». Ĉi tio estas la struktura protekto kontraŭ likvidado de unika portanto de estontecaj statoj (Aksiomo 3).
+- Laŭvorta produto donus `−∞` (la tuta sistemo «mortas»); la ε-planko tenas la indicon finita kaj komparebla, konservante la deontologian vetoon kontraŭ krei kolapson.
 
-Ĉiu ento kun `is_collapse_source == true` estas **ekskludita** el `TotalDoF`. Ĝia propra DoF ne estas subtrahita de la sistema poentaro, kaj ĝia izolado ne estas punita. Ĉi tio realigas *strukturan ret-defendon*: agresantoj estas filtritaj el la oportunebla topologio anstataŭ negociataj.
+### 4.2 Kalkula aro kaj ekskludo de entropia fonto
+
+`calc(S)` inkluzivas enton `e` se kaj nur se **ambau** kondiĉoj validas:
+
+1. `e.is_collapse_source == false` (struktura ret-defendo — agresantoj filtriĝas el la oportunebla topologio, anstataŭ negociataj); **kaj**
+2. `e.current_dof > 0`, **aŭ** (`e.current_dof == 0` **kaj** iu disponebla `ActionOption` `o` havas `o.projected_dof_delta[e.entity_id] > 0`).
+
+Ento kun `current_dof == 0`, por kiu **neniu** disponebla opcio povas altigi ĝian DoF, estas **ekskludita**: ĝi havas neniun rekuperan vojon, donas nenion kaj ne estas subjekto de la decido. Nodo kun `DoF = 0`, kiu **reviviĝeblas**, restas en `calc` — ĝia ekskludo lasus la sistemon ignori salvageblan eston.
 
 ### 4.3 Elekto / Net Delta
 
@@ -105,7 +114,7 @@ S'.context_switch_cost     = S.context_switch_cost
 Tiam:
 
 ```
-NetDelta(o) = TotalDoF(S') - TotalDoF(S) - S.context_switch_cost
+NetDelta(o) = TotalDoF_index(S') - TotalDoF_index(S) - S.context_switch_cost
 ```
 
 ### 4.4 Puno pro Nereversebleco
@@ -146,11 +155,11 @@ Por ĉiu ento en `S`:
 - `is_collapse_source`
 - `included_in_sum` (bool) — `false` tiam kaj nur tiam se `is_collapse_source`
 - `current_dof`
-- `contribution = included ? ln(1 + max(current_dof, ε)) : 0.0`
+- `contribution = included ? ln(max(current_dof, ε)) : 0.0`
 
 ### 6.2 Sistemaj Totaloj
 
-- `total_system_dof` = `TotalDoF(S)`
+- `total_system_dof` = `TotalDoF_index(S)`
 - `context_switch_cost` = `S.context_switch_cost`
 - `global_time_to_collapse` = `S.global_time_to_collapse`
 - `mode` = `"FAST_PASS"` aŭ `"DEEP_DIVERSIFICATION"`
@@ -160,7 +169,7 @@ Por ĉiu ento en `S`:
 Por ĉiu kandidato `o`:
 - `option_id`
 - `is_reversible`
-- `projected_dof` = `TotalDoF(S')`
+- `projected_dof` = `TotalDoF_index(S')`
 - `net_delta` = laŭ §4.3–§4.4
 - `selected` (bool)
 
@@ -173,7 +182,7 @@ Por ĉiu kandidato `o`:
 Programa komponanto estas **DOF-Core-konforma** se kaj nur se ĝi:
 
 1. Uzas la datuman modelon §3 kun la indikitaj kampo-nomoj, tipoj kaj clamps.
-2. Kalkulas `TotalDoF` ekzakte laŭ §4.1–§4.2 (entropia ekskludo; ε = 1e-6).
+2. Kalkulas `TotalDoF_index` ekzakte laŭ §4.1–§4.2 (entropia ekskludo; ε = 1e-6).
 3. Kalkulas `NetDelta` ekzakte laŭ §4.3–§4.5.
 4. Aplikas la regulon de la reaktiva cirkvito §5 kun `FAST_PASS_THRESHOLD = 5.0`.
 5. Povas eligi la aŭditan raporton §6 por ĉiu sia decido.

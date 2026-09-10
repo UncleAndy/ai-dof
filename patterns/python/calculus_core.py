@@ -39,16 +39,35 @@ class DOFCalculusCore:
     def __init__(self, epsilon: float = 1e-6):
         self.epsilon = epsilon  # Protection against division by zero during logarithm
 
-    def calculate_system_dof(self, state: SystemStateMatrix) -> float:
-        """Mathematical core: non-linear sum of system degrees of freedom."""
+    def _is_included(self, entity: EntityState, options) -> bool:
+        """Whether an entity belongs to the calculation set `calc` (DOF-SPEC §4.2).
+
+        Excluded if it is a collapse source, OR if its current_dof <= 0 and no
+        available option can raise its DoF (a node with no recovery path). A node
+        at DoF = 0 that *can* be revived stays in the set.
+        """
+        if entity.is_collapse_source:
+            return False
+        if entity.current_dof > 0.0:
+            return True
+        # current_dof == 0 (or <= epsilon): keep only if some option can revive it
+        if options:
+            for opt in options:
+                if opt.projected_dof_delta.get(entity.entity_id, 0.0) > 0.0:
+                    return True
+        return False
+
+    def calculate_system_dof(self, state: SystemStateMatrix, options=None) -> float:
+        """Evaluation index: pure Nash product (sum of ln(DoF)) over the calc set.
+
+        Values are negative; only their ordering matters. See DOF-SPEC §4.1.
+        """
         total_score = 0.0
         for entity in state.entities.values():
-            # Collapse Source isolation: its personal DoF drop does not penalize
-            # the system, and its isolation is encouraged.
-            if entity.is_collapse_source:
+            if not self._is_included(entity, options):
                 continue
             dof_value = max(entity.current_dof, self.epsilon)
-            total_score += math.log(1.0 + dof_value)
+            total_score += math.log(dof_value)
         return total_score
 
     def _simulate(self, current_state: SystemStateMatrix, option: ActionOption) -> SystemStateMatrix:
@@ -83,12 +102,12 @@ class DOFCalculusCore:
         """Selection pattern with context-switch penalty (ΔT)."""
         if not options:
             return None
-        current_system_dof = self.calculate_system_dof(current_state)
+        current_system_dof = self.calculate_system_dof(current_state, options)
         best_option = None
         max_net_delta = -float('inf')
         for option in options:
             simulated_state = self._simulate(current_state, option)
-            projected_dof = self.calculate_system_dof(simulated_state)
+            projected_dof = self.calculate_system_dof(simulated_state, options)
             net_delta = self._net_delta(current_state, option, projected_dof, current_system_dof)
             if net_delta > max_net_delta:
                 max_net_delta = net_delta
@@ -100,8 +119,8 @@ class DOFCalculusCore:
         """Transparent audit (DOF-SPEC §6). Required by the license (PoI)."""
         entity_rows: List[Dict[str, object]] = []
         for e_id, ent in current_state.entities.items():
-            included = not ent.is_collapse_source
-            contribution = math.log(1.0 + max(ent.current_dof, self.epsilon)) if included else 0.0
+            included = self._is_included(ent, options)
+            contribution = math.log(max(ent.current_dof, self.epsilon)) if included else 0.0
             entity_rows.append({
                 "entity_id": e_id,
                 "is_collapse_source": ent.is_collapse_source,
@@ -109,11 +128,11 @@ class DOFCalculusCore:
                 "current_dof": ent.current_dof,
                 "contribution": contribution,
             })
-        total = self.calculate_system_dof(current_state)
+        total = self.calculate_system_dof(current_state, options)
         option_rows: List[Dict[str, object]] = []
         for option in options:
             simulated_state = self._simulate(current_state, option)
-            projected_dof = self.calculate_system_dof(simulated_state)
+            projected_dof = self.calculate_system_dof(simulated_state, options)
             net_delta = self._net_delta(current_state, option, projected_dof, total)
             is_selected = (selected is not None and option.option_id == selected.option_id)
             option_rows.append({

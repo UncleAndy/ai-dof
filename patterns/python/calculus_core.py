@@ -8,7 +8,7 @@ class EntityState(BaseModel):
     is_autonomous: bool = True
     agency_index: float = Field(..., ge=0.0, le=1.0)  # Measure of controllability
     current_dof: float = Field(..., ge=0.0, le=1.0)  # Degree of freedom of the node
-    is_entropy_source: bool = False                 # Virus/aggressor flag
+    is_collapse_source: bool = False                 # Virus/aggressor flag
     time_to_collapse: float                          # Local node timer (in sec)
 
 
@@ -43,9 +43,9 @@ class DOFCalculusCore:
         """Mathematical core: non-linear sum of system degrees of freedom."""
         total_score = 0.0
         for entity in state.entities.values():
-            # Entropy Source isolation: its personal DoF drop does not penalize
+            # Collapse Source isolation: its personal DoF drop does not penalize
             # the system, and its isolation is encouraged.
-            if entity.is_entropy_source:
+            if entity.is_collapse_source:
                 continue
             dof_value = max(entity.current_dof, self.epsilon)
             total_score += math.log(1.0 + dof_value)
@@ -62,7 +62,7 @@ class DOFCalculusCore:
                 is_autonomous=e_state.is_autonomous,
                 agency_index=e_state.agency_index,
                 current_dof=new_dof,
-                is_entropy_source=e_state.is_entropy_source,
+                is_collapse_source=e_state.is_collapse_source,
                 time_to_collapse=e_state.time_to_collapse,
             )
         return SystemStateMatrix(
@@ -100,11 +100,11 @@ class DOFCalculusCore:
         """Transparent audit (DOF-SPEC §6). Required by the license (PoI)."""
         entity_rows: List[Dict[str, object]] = []
         for e_id, ent in current_state.entities.items():
-            included = not ent.is_entropy_source
+            included = not ent.is_collapse_source
             contribution = math.log(1.0 + max(ent.current_dof, self.epsilon)) if included else 0.0
             entity_rows.append({
                 "entity_id": e_id,
-                "is_entropy_source": ent.is_entropy_source,
+                "is_collapse_source": ent.is_collapse_source,
                 "included_in_sum": included,
                 "current_dof": ent.current_dof,
                 "contribution": contribution,

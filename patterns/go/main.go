@@ -14,21 +14,21 @@ func main() {
 			IsAutonomous:    true,
 			AgencyIndex:     0.9,
 			CurrentDoF:      0.8,
-			IsEntropySource: false,
+			IsCollapseSource: false,
 			TimeToCollapse:  100.0,
 		},
 		"child": {
 			IsAutonomous:    false,
 			AgencyIndex:     0.1,
 			CurrentDoF:      0.05,
-			IsEntropySource: false,
+			IsCollapseSource: false,
 			TimeToCollapse:  4.0,
 		},
 		"aggressor": {
 			IsAutonomous:    true,
 			AgencyIndex:     0.5,
 			CurrentDoF:      0.6,
-			IsEntropySource: true,
+			IsCollapseSource: true,
 			TimeToCollapse:  100.0,
 		},
 	}
@@ -45,7 +45,7 @@ func main() {
 
 	obs2 := map[string]*RawObservation{
 		"adult":     obs["adult"],
-		"child":     {IsAutonomous: false, AgencyIndex: 0.1, CurrentDoF: 0.05, IsEntropySource: false, TimeToCollapse: 2.0},
+		"child":     {IsAutonomous: false, AgencyIndex: 0.1, CurrentDoF: 0.05, IsCollapseSource: false, TimeToCollapse: 2.0},
 		"aggressor": obs["aggressor"],
 	}
 	sel2, rep2 := orch.StepWithReport(obs2)

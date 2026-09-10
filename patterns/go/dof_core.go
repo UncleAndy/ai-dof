@@ -1,6 +1,6 @@
 // DOF-Core calculus kernel (Go port).
 // Mirrors patterns/calculus_core.py: non-linear sum of system DoF,
-// logarithmic filter, Entropy-Source isolation, Delta-T-aware selection,
+// logarithmic filter, Collapse-Source isolation, Delta-T-aware selection,
 // and the Proof-of-Implementation audit report (DOF-SPEC §6).
 
 package main
@@ -12,7 +12,7 @@ type EntityState struct {
 	IsAutonomous    bool
 	AgencyIndex     float64
 	CurrentDoF      float64
-	IsEntropySource bool
+	IsCollapseSource bool
 	TimeToCollapse  float64
 }
 
@@ -32,7 +32,7 @@ type ActionOption struct {
 // EntityReportRow is one entity row of the audit report.
 type EntityReportRow struct {
 	EntityID        string
-	IsEntropySource bool
+	IsCollapseSource bool
 	IncludedInSum  bool
 	CurrentDoF      float64
 	Contribution    float64
@@ -66,11 +66,11 @@ func NewDOFCalculusCore() *DOFCalculusCore {
 }
 
 // CalculateSystemDoF computes the non-linear sum of system degrees of freedom.
-// Entropy Sources are excluded to encourage isolation, not penalize the system.
+// Collapse Sources are excluded to encourage isolation, not penalize the system.
 func (c *DOFCalculusCore) CalculateSystemDoF(state *SystemStateMatrix) float64 {
 	total := 0.0
 	for _, entity := range state.Entities {
-		if entity.IsEntropySource {
+		if entity.IsCollapseSource {
 			continue
 		}
 		dof := math.Max(entity.CurrentDoF, c.epsilon)
@@ -138,14 +138,14 @@ func (c *DOFCalculusCore) EvaluateAndSelect(currentState *SystemStateMatrix, opt
 func (c *DOFCalculusCore) Report(currentState *SystemStateMatrix, options []*ActionOption, selected *ActionOption, mode string) *DofReport {
 	var entityRows []EntityReportRow
 	for _, ent := range currentState.Entities {
-		included := !ent.IsEntropySource
+		included := !ent.IsCollapseSource
 		contribution := 0.0
 		if included {
 			contribution = math.Log(1.0 + math.Max(ent.CurrentDoF, c.epsilon))
 		}
 		entityRows = append(entityRows, EntityReportRow{
 			EntityID:        ent.EntityID,
-			IsEntropySource: ent.IsEntropySource,
+			IsCollapseSource: ent.IsCollapseSource,
 			IncludedInSum:  included,
 			CurrentDoF:      ent.CurrentDoF,
 			Contribution:    contribution,

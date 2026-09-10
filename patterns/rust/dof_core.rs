@@ -1,6 +1,6 @@
 // DOF-Core calculus kernel (Rust port).
 // Mirrors patterns/calculus_core.py: non-linear sum of system DoF,
-// logarithmic filter, Entropy-Source isolation, Delta-T-aware selection,
+// logarithmic filter, Collapse-Source isolation, Delta-T-aware selection,
 // and the Proof-of-Implementation audit report (DOF-SPEC §6).
 
 use std::collections::HashMap;
@@ -11,7 +11,7 @@ pub struct EntityState {
     pub is_autonomous: bool,
     pub agency_index: f64,
     pub current_dof: f64,
-    pub is_entropy_source: bool,
+    pub is_collapse_source: bool,
     pub time_to_collapse: f64,
 }
 
@@ -21,7 +21,7 @@ impl EntityState {
         is_autonomous: bool,
         agency_index: f64,
         current_dof: f64,
-        is_entropy_source: bool,
+        is_collapse_source: bool,
         time_to_collapse: f64,
     ) -> Self {
         EntityState {
@@ -29,7 +29,7 @@ impl EntityState {
             is_autonomous,
             agency_index,
             current_dof,
-            is_entropy_source,
+            is_collapse_source,
             time_to_collapse,
         }
     }
@@ -70,7 +70,7 @@ impl ActionOption {
 #[derive(Clone, Debug)]
 pub struct EntityReportRow {
     pub entity_id: String,
-    pub is_entropy_source: bool,
+    pub is_collapse_source: bool,
     pub included_in_sum: bool,
     pub current_dof: f64,
     pub contribution: f64,
@@ -107,11 +107,11 @@ impl DofCalculusCore {
     }
 
     /// Non-linear sum of system degrees of freedom.
-    /// Entropy Sources are excluded to encourage isolation, not penalize the system.
+    /// Collapse Sources are excluded to encourage isolation, not penalize the system.
     pub fn calculate_system_dof(&self, state: &SystemStateMatrix) -> f64 {
         let mut total = 0.0;
         for (_id, entity) in &state.entities {
-            if entity.is_entropy_source {
+            if entity.is_collapse_source {
                 continue;
             }
             let dof = entity.current_dof.max(self.epsilon);
@@ -192,7 +192,7 @@ impl DofCalculusCore {
     ) -> DofReport {
         let mut entity_rows: Vec<EntityReportRow> = Vec::new();
         for (_eid, ent) in &current_state.entities {
-            let included = !ent.is_entropy_source;
+            let included = !ent.is_collapse_source;
             let contribution = if included {
                 (1.0 + ent.current_dof.max(self.epsilon)).ln()
             } else {
@@ -200,7 +200,7 @@ impl DofCalculusCore {
             };
             entity_rows.push(EntityReportRow {
                 entity_id: ent.entity_id.clone(),
-                is_entropy_source: ent.is_entropy_source,
+                is_collapse_source: ent.is_collapse_source,
                 included_in_sum: included,
                 current_dof: ent.current_dof,
                 contribution,

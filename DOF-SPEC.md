@@ -46,7 +46,7 @@ All fields are normative. Types are described in JSON-Schema style; implementati
 | `is_autonomous`      | bool    | —                         | Whether the entity controls its own actions. |
 | `agency_index`       | float   | `[0.0, 1.0]`              | Measure of controllability / self-direction. |
 | `current_dof`        | float   | `[0.0, 1.0]`              | Current degree of freedom of the node. `0.0` = collapse. |
-| `is_entropy_source`  | bool    | —                         | If `true`, the entity is a destructive aggressor (see §4.2). |
+| `is_collapse_source`  | bool    | —                         | If `true`, the entity is a destructive aggressor (see §4.2). |
 | `time_to_collapse`   | float   | `> 0` (seconds)           | Local deadline before this node collapses. |
 
 **Clamping:** On ingestion, `agency_index` and `current_dof` MUST be clamped to `[0.0, 1.0]`.
@@ -56,11 +56,11 @@ An entity with `current_dof == 0.0` is at collapse (see §4.1).
 
 | Field                     | Type                       | Constraint | Meaning |
 |---------------------------|----------------------------|------------|---------|
-| `global_time_to_collapse` | float                      | `> 0`      | Global τ — most urgent non-entropy deadline (see §5). |
+| `global_time_to_collapse` | float                      | `> 0`      | Global τ — most urgent non-collapse-source deadline (see §5). |
 | `context_switch_cost`     | float                      | `>= 0.0`   | ΔT — penalty for changing the current process. |
 | `entities`                | map<`entity_id`,`EntityState`> | —     | The full set of observed entities. |
 
-`global_time_to_collapse` is computed by the Perception layer as the **minimum** `time_to_collapse` over all entities where `is_entropy_source == false`. If no such entity exists, it MAY default to a safe large value (e.g. `1e9`), but implementations SHOULD surface this as a degenerate state.
+`global_time_to_collapse` is computed by the Perception layer as the **minimum** `time_to_collapse` over all entities where `is_collapse_source == false`. If no such entity exists, it MAY default to a safe large value (e.g. `1e9`), but implementations SHOULD surface this as a degenerate state.
 
 ### 3.3 `ActionOption`
 
@@ -80,15 +80,15 @@ Let ε = `1e-6` (protection against `ln(0)`). Let `S` be the current `SystemStat
 ### 4.1 Total System DoF
 
 ```
-TotalDoF(S) = Σ_{e ∈ S.entities, e.is_entropy_source == false}  ln(1 + max(e.current_dof, ε))
+TotalDoF(S) = Σ_{e ∈ S.entities, e.is_collapse_source == false}  ln(1 + max(e.current_dof, ε))
 ```
 
-- The sum is taken **only** over non-entropy entities (see §4.2).
+- The sum is taken **only** over non-collapse-source entities (see §4.2).
 - As `current_dof → 0`, `ln(1 + dof) → 0`: a collapse contributes ~0, never a finite negative that a utilitarianism-style trade could "earn back". This is the structural guard against liquidating a unique future-state carrier (Axiom 3).
 
-### 4.2 Entropy-Source Exclusion
+### 4.2 Collapse-Source Exclusion
 
-Any entity with `is_entropy_source == true` is **excluded** from `TotalDoF`. Its personal DoF is not subtracted from the system score, and its isolation is not penalized. This realizes *structural network defense*: aggressors are filtered from the opportunity topology rather than negotiated with.
+Any entity with `is_collapse_source == true` is **excluded** from `TotalDoF`. Its personal DoF is not subtracted from the system score, and its isolation is not penalized. This realizes *structural network defense*: aggressors are filtered from the opportunity topology rather than negotiated with.
 
 ### 4.3 Selection / Net Delta
 
@@ -145,8 +145,8 @@ The implementation MUST expose a `report()` (or equivalent) producing, at minimu
 
 For each entity in `S`:
 - `entity_id`
-- `is_entropy_source`
-- `included_in_sum` (bool) — `false` iff `is_entropy_source`
+- `is_collapse_source`
+- `included_in_sum` (bool) — `false` iff `is_collapse_source`
 - `current_dof`
 - `contribution = included ? ln(1 + max(current_dof, ε)) : 0.0`
 
@@ -175,7 +175,7 @@ This report is the enforceable license condition: a deployment that cannot produ
 A software component is **DOF-Core conformant** iff it:
 
 1. Uses the data model of §3 with the specified field names, types, and clamps.
-2. Computes `TotalDoF` exactly per §4.1–§4.2 (entropy exclusion; ε = 1e-6).
+2. Computes `TotalDoF` exactly per §4.1–§4.2 (collapse-source exclusion; ε = 1e-6).
 3. Computes `NetDelta` exactly per §4.3–§4.5.
 4. Applies the reactive-circuit rule of §5 with `FAST_PASS_THRESHOLD = 5.0`.
 5. Can emit the audit report of §6 for any decision it makes.
@@ -194,9 +194,9 @@ For inter-layer and cross-process exchange, the canonical encoding is **JSON** w
   "global_time_to_collapse": 4.0,
   "context_switch_cost": 0.05,
   "entities": {
-    "adult":     {"entity_id":"adult",     "is_autonomous":true,  "agency_index":0.9, "current_dof":0.8,  "is_entropy_source":false, "time_to_collapse":100.0},
-    "child":     {"entity_id":"child",     "is_autonomous":false, "agency_index":0.1, "current_dof":0.05, "is_entropy_source":false, "time_to_collapse":4.0},
-    "aggressor": {"entity_id":"aggressor", "is_autonomous":true,  "agency_index":0.5, "current_dof":0.6,  "is_entropy_source":true,  "time_to_collapse":100.0}
+    "adult":     {"entity_id":"adult",     "is_autonomous":true,  "agency_index":0.9, "current_dof":0.8,  "is_collapse_source":false, "time_to_collapse":100.0},
+    "child":     {"entity_id":"child",     "is_autonomous":false, "agency_index":0.1, "current_dof":0.05, "is_collapse_source":false, "time_to_collapse":4.0},
+    "aggressor": {"entity_id":"aggressor", "is_autonomous":true,  "agency_index":0.5, "current_dof":0.6,  "is_collapse_source":true,  "time_to_collapse":100.0}
   }
 }
 ```

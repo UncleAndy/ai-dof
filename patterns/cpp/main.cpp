@@ -14,7 +14,7 @@ struct ReportPrinter {
         std::cout << "  entities:\n";
         for (const auto& e : r.entities) {
             std::cout << "    " << e.entity_id
-                      << " entropy=" << (e.is_entropy_source ? "Y" : "N")
+                      << " collapse_source=" << (e.is_collapse_source ? "Y" : "N")
                       << " included=" << (e.included_in_sum ? "Y" : "N")
                       << " dof=" << e.current_dof
                       << " contrib=" << e.contribution << "\n";

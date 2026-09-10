@@ -1,6 +1,6 @@
 // DOF-Core calculus kernel (C++ port).
 // Mirrors patterns/calculus_core.py: non-linear sum of system DoF,
-// logarithmic filter, Entropy-Source isolation, Delta-T-aware selection,
+// logarithmic filter, Collapse-Source isolation, Delta-T-aware selection,
 // and the Proof-of-Implementation audit report (DOF-SPEC §6).
 
 #pragma once
@@ -17,7 +17,7 @@ struct EntityState {
     bool is_autonomous = true;
     double agency_index = 0.0;   // 0..1
     double current_dof = 0.0;     // 0..1
-    bool is_entropy_source = false;
+    bool is_collapse_source = false;
     double time_to_collapse = 0.0;
 };
 
@@ -37,7 +37,7 @@ struct ActionOption {
 // Audit report rows and container (DOF-SPEC §6)
 struct EntityReportRow {
     std::string entity_id;
-    bool is_entropy_source = false;
+    bool is_collapse_source = false;
     bool included_in_sum = false;
     double current_dof = 0.0;
     double contribution = 0.0;
@@ -66,12 +66,12 @@ public:
     DOFCalculusCore(double epsilon = 1e-6) : epsilon_(epsilon) {}
 
     // Non-linear sum of system degrees of freedom.
-    // Entropy Sources are excluded to encourage isolation, not penalize the system.
+    // Collapse Sources are excluded to encourage isolation, not penalize the system.
     double calculate_system_dof(const SystemStateMatrix& state) const {
         double total = 0.0;
         for (const auto& kv : state.entities) {
             const EntityState& e = kv.second;
-            if (e.is_entropy_source) continue;
+            if (e.is_collapse_source) continue;
             double dof = std::max(e.current_dof, epsilon_);
             total += std::log(1.0 + dof);
         }
@@ -132,9 +132,9 @@ public:
         DofReport rep;
         for (const auto& kv : current_state.entities) {
             const EntityState& e = kv.second;
-            bool included = !e.is_entropy_source;
+            bool included = !e.is_collapse_source;
             double contribution = included ? std::log(1.0 + std::max(e.current_dof, epsilon_)) : 0.0;
-            rep.entities.push_back(EntityReportRow{e.entity_id, e.is_entropy_source, included, e.current_dof, contribution});
+            rep.entities.push_back(EntityReportRow{e.entity_id, e.is_collapse_source, included, e.current_dof, contribution});
         }
         double total = calculate_system_dof(current_state);
         for (const auto& option : options) {

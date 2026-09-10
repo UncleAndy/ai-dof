@@ -2,9 +2,9 @@ import json
 from orchestrator import DOFOrchestrator
 
 obs = {
-    "adult":     {"is_autonomous": True,  "agency_index": 0.9, "current_dof": 0.8, "is_entropy_source": False, "time_to_collapse": 100.0},
-    "child":     {"is_autonomous": False, "agency_index": 0.1, "current_dof": 0.05, "is_entropy_source": False, "time_to_collapse": 4.0},
-    "aggressor": {"is_autonomous": True, "agency_index": 0.5, "current_dof": 0.6, "is_entropy_source": True,  "time_to_collapse": 100.0},
+    "adult":     {"is_autonomous": True,  "agency_index": 0.9, "current_dof": 0.8, "is_collapse_source": False, "time_to_collapse": 100.0},
+    "child":     {"is_autonomous": False, "agency_index": 0.1, "current_dof": 0.05, "is_collapse_source": False, "time_to_collapse": 4.0},
+    "aggressor": {"is_autonomous": True, "agency_index": 0.5, "current_dof": 0.6, "is_collapse_source": True,  "time_to_collapse": 100.0},
 }
 
 orch = DOFOrchestrator(context_switch_cost=0.05)

@@ -18,7 +18,7 @@ fn main() {
             is_autonomous: true,
             agency_index: 0.9,
             current_dof: 0.8,
-            is_entropy_source: false,
+            is_collapse_source: false,
             time_to_collapse: 100.0,
         },
     );
@@ -28,7 +28,7 @@ fn main() {
             is_autonomous: false,
             agency_index: 0.1,
             current_dof: 0.05,
-            is_entropy_source: false,
+            is_collapse_source: false,
             time_to_collapse: 4.0,
         },
     );
@@ -38,7 +38,7 @@ fn main() {
             is_autonomous: true,
             agency_index: 0.5,
             current_dof: 0.6,
-            is_entropy_source: true,
+            is_collapse_source: true,
             time_to_collapse: 100.0,
         },
     );

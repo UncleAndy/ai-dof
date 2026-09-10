@@ -9,7 +9,7 @@ pub struct RawObservation {
     pub is_autonomous: bool,
     pub agency_index: f64,
     pub current_dof: f64,
-    pub is_entropy_source: bool,
+    pub is_collapse_source: bool,
     pub time_to_collapse: f64,
 }
 
@@ -32,10 +32,10 @@ impl GraphMapper {
                 obs.is_autonomous,
                 obs.agency_index.max(0.0).min(1.0),
                 obs.current_dof.max(0.0).min(1.0),
-                obs.is_entropy_source,
+                obs.is_collapse_source,
                 obs.time_to_collapse,
             );
-            if !ent.is_entropy_source && obs.time_to_collapse < min_ttc {
+            if !ent.is_collapse_source && obs.time_to_collapse < min_ttc {
                 min_ttc = obs.time_to_collapse;
             }
             entities.insert(eid.clone(), ent);

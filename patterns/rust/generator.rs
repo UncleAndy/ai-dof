@@ -20,7 +20,7 @@ impl Generator {
         let candidates: Vec<&EntityState> = state
             .entities
             .values()
-            .filter(|e| !e.is_entropy_source)
+            .filter(|e| !e.is_collapse_source)
             .collect();
         let n = if n_options > 0 { n_options } else { 1 };
 

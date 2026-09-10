@@ -10,7 +10,7 @@ struct RawObservation {
     bool is_autonomous = true;
     double agency_index = 0.0;
     double current_dof = 0.0;
-    bool is_entropy_source = false;
+    bool is_collapse_source = false;
     double time_to_collapse = 0.0;
 };
 
@@ -34,9 +34,9 @@ public:
             ent.is_autonomous = obs.is_autonomous;
             ent.agency_index = std::max(0.0, std::min(1.0, obs.agency_index));
             ent.current_dof = std::max(0.0, std::min(1.0, obs.current_dof));
-            ent.is_entropy_source = obs.is_entropy_source;
+            ent.is_collapse_source = obs.is_collapse_source;
             ent.time_to_collapse = obs.time_to_collapse;
-            if (!ent.is_entropy_source && obs.time_to_collapse < min_ttc) {
+            if (!ent.is_collapse_source && obs.time_to_collapse < min_ttc) {
                 min_ttc = obs.time_to_collapse;
             }
             entities[eid] = ent;

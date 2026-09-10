@@ -17,7 +17,7 @@ func (g *Generator) SafeFallback(state *SystemStateMatrix, nOptions int) []*Acti
 	var opts []*ActionOption
 	var candidates []*EntityState
 	for _, e := range state.Entities {
-		if !e.IsEntropySource {
+		if !e.IsCollapseSource {
 			candidates = append(candidates, e)
 		}
 	}

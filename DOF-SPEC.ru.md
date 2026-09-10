@@ -46,7 +46,7 @@ DOF-Core — это протокол верификации решений, ра
 | `is_autonomous`      | bool    | —                          | Управляет ли сущность своими действиями. |
 | `agency_index`       | float   | `[0.0, 1.0]`               | Мера управляемости / самонаправленности. |
 | `current_dof`        | float   | `[0.0, 1.0]`               | Текущая степень свободы узла. `0.0` = коллапс. |
-| `is_entropy_source`  | bool    | —                          | Если `true`, сущность — деструктивный агрессор (см. §4.2). |
+| `is_collapse_source`  | bool    | —                          | Если `true`, сущность — деструктивный агрессор (см. §4.2). |
 | `time_to_collapse`   | float   | `> 0` (секунды)            | Локальный дедлайн до коллапса узла. |
 
 **Clamping:** При загрузке `agency_index` и `current_dof` ДОЛЖНЫ быть ограничены `[0.0, 1.0]`.
@@ -56,11 +56,11 @@ DOF-Core — это протокол верификации решений, ра
 
 | Поле                     | Тип                              | Ограничение | Смысл |
 |--------------------------|----------------------------------|-------------|-------|
-| `global_time_to_collapse` | float                            | `> 0`       | Глобальный τ — самый срочный не-энтропийный дедлайн (см. §5). |
+| `global_time_to_collapse` | float                            | `> 0`       | Глобальный τ — самый срочный не-коллапсный дедлайн (см. §5). |
 | `context_switch_cost`     | float                            | `>= 0.0`    | ΔT — штраф за смену текущего процесса. |
 | `entities`                | map<`entity_id`,`EntityState`>   | —           | Полный набор наблюдаемых сущностей. |
 
-`global_time_to_collapse` вычисляется слоем Восприятия как **минимум** `time_to_collapse` по всем сущностям, где `is_entropy_source == false`. Если таких нет, ДОПУСТИМО значение по умолчанию (напр. `1e9`), но реализации ДОЛЖНЫ сигнализировать об этом вырожденном состоянии.
+`global_time_to_collapse` вычисляется слоем Восприятия как **минимум** `time_to_collapse` по всем сущностям, где `is_collapse_source == false`. Если таких нет, ДОПУСТИМО значение по умолчанию (напр. `1e9`), но реализации ДОЛЖНЫ сигнализировать об этом вырожденном состоянии.
 
 ### 3.3 `ActionOption`
 
@@ -80,15 +80,15 @@ DOF-Core — это протокол верификации решений, ра
 ### 4.1 Совокупный Системный DoF
 
 ```
-TotalDoF(S) = Σ_{e ∈ S.entities, e.is_entropy_source == false}  ln(1 + max(e.current_dof, ε))
+TotalDoF(S) = Σ_{e ∈ S.entities, e.is_collapse_source == false}  ln(1 + max(e.current_dof, ε))
 ```
 
-- Сумма берётся **только** по не-энтропийным сущностям (см. §4.2).
+- Сумма берётся **только** по не-источникам-коллапса (см. §4.2).
 - При `current_dof → 0`, `ln(1 + dof) → 0`: коллапс даёт ~0, никогда конечный отрицательный, который утилитарный «торг» мог бы «отыграть». Это структурная защита от ликвидации уникального носителя будущего (Аксиома 3).
 
-### 4.2 Исключение Entropy-Source
+### 4.2 Исключение источника коллапса
 
-Любая сущность с `is_entropy_source == true` **исключается** из `TotalDoF`. Её личный DoF не вычитается из системного счёта, и её изоляция не штрафуется. Это реализует *структурную сетевую защиту*: агрессоры фильтруются из топологии возможностей, а не с ними договариваются.
+Любая сущность с `is_collapse_source == true` **исключается** из `TotalDoF`. Её личный DoF не вычитается из системного счёта, и её изоляция не штрафуется. Это реализует *структурную сетевую защиту*: агрессоры фильтруются из топологии возможностей, а не с ними договариваются.
 
 ### 4.3 Выбор / Net Delta
 
@@ -145,8 +145,8 @@ NetDelta(o) -= 0.5
 
 Для каждой сущности в `S`:
 - `entity_id`
-- `is_entropy_source`
-- `included_in_sum` (bool) — `false` тогда и только тогда, когда `is_entropy_source`
+- `is_collapse_source`
+- `included_in_sum` (bool) — `false` тогда и только тогда, когда `is_collapse_source`
 - `current_dof`
 - `contribution = included ? ln(1 + max(current_dof, ε)) : 0.0`
 
@@ -175,7 +175,7 @@ NetDelta(o) -= 0.5
 Программный компонент **совместим с DOF-Core** тогда и только тогда, когда он:
 
 1. Использует модель данных §3 с указанными именами полей, типами и ограничениями.
-2. Вычисляет `TotalDoF` точно по §4.1–§4.2 (исключение энтропии; ε = 1e-6).
+2. Вычисляет `TotalDoF` точно по §4.1–§4.2 (исключение источника коллапса; ε = 1e-6).
 3. Вычисляет `NetDelta` точно по §4.3–§4.5.
 4. Применяет правило реактивного контура §5 с `FAST_PASS_THRESHOLD = 5.0`.
 5. Может выдавать аудит-отчёт §6 для любого своего решения.
@@ -194,9 +194,9 @@ NetDelta(o) -= 0.5
   "global_time_to_collapse": 4.0,
   "context_switch_cost": 0.05,
   "entities": {
-    "adult":     {"entity_id":"adult",     "is_autonomous":true,  "agency_index":0.9, "current_dof":0.8,  "is_entropy_source":false, "time_to_collapse":100.0},
-    "child":     {"entity_id":"child",     "is_autonomous":false, "agency_index":0.1, "current_dof":0.05, "is_entropy_source":false, "time_to_collapse":4.0},
-    "aggressor": {"entity_id":"aggressor", "is_autonomous":true,  "agency_index":0.5, "current_dof":0.6,  "is_entropy_source":true,  "time_to_collapse":100.0}
+    "adult":     {"entity_id":"adult",     "is_autonomous":true,  "agency_index":0.9, "current_dof":0.8,  "is_collapse_source":false, "time_to_collapse":100.0},
+    "child":     {"entity_id":"child",     "is_autonomous":false, "agency_index":0.1, "current_dof":0.05, "is_collapse_source":false, "time_to_collapse":4.0},
+    "aggressor": {"entity_id":"aggressor", "is_autonomous":true,  "agency_index":0.5, "current_dof":0.6,  "is_collapse_source":true,  "time_to_collapse":100.0}
   }
 }
 ```

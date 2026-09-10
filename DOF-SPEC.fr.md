@@ -46,7 +46,7 @@ Tous les champs sont normatifs. Les types sont décrits dans le style JSON-Schem
 | `is_autonomous`      | bool    | —                          | L'entité contrôle-t-elle ses propres actions. |
 | `agency_index`       | float   | `[0.0, 1.0]`               | Mesure de contrôlabilité / auto-direction. |
 | `current_dof`        | float   | `[0.0, 1.0]`               | Degré de liberté actuel du nœud. `0.0` = effondrement. |
-| `is_entropy_source`  | bool    | —                          | Si `true`, l'entité est un agresseur destructeur (voir §4.2). |
+| `is_collapse_source`  | bool    | —                          | Si `true`, l'entité est un agresseur destructeur (voir §4.2). |
 | `time_to_collapse`   | float   | `> 0` (secondes)           | Échéance locale avant l'effondrement du nœud. |
 
 **Clamping :** À l'ingestion, `agency_index` et `current_dof` DOIVENT être clampés à `[0.0, 1.0]`.
@@ -60,7 +60,7 @@ Une entité avec `current_dof == 0.0` est en effondrement (voir §4.1).
 | `context_switch_cost`     | float                             | `>= 0.0`   | ΔT — pénalité de changement de processus en cours. |
 | `entities`                | map<`entity_id`,`EntityState`>    | —          | L'ensemble complet des entités observées. |
 
-`global_time_to_collapse` est calculé par la couche Perception comme le **minimum** de `time_to_collapse` sur toutes les entités où `is_entropy_source == false`. S'il n'y en a aucune, une valeur par défaut sûre (ex. `1e9`) est AUTORISÉE, mais les implémentations DEVRAIENT signaler cet état dégénéré.
+`global_time_to_collapse` est calculé par la couche Perception comme le **minimum** de `time_to_collapse` sur toutes les entités où `is_collapse_source == false`. S'il n'y en a aucune, une valeur par défaut sûre (ex. `1e9`) est AUTORISÉE, mais les implémentations DEVRAIENT signaler cet état dégénéré.
 
 ### 3.3 `ActionOption`
 
@@ -80,7 +80,7 @@ Soit ε = `1e-6` (protection contre `ln(0)`). Soit `S` la `SystemStateMatrix` co
 ### 4.1 DoF Système Total
 
 ```
-TotalDoF(S) = Σ_{e ∈ S.entities, e.is_entropy_source == false}  ln(1 + max(e.current_dof, ε))
+TotalDoF(S) = Σ_{e ∈ S.entities, e.is_collapse_source == false}  ln(1 + max(e.current_dof, ε))
 ```
 
 - La somme est prise **uniquement** sur les entités non-entropiques (voir §4.2).
@@ -88,7 +88,7 @@ TotalDoF(S) = Σ_{e ∈ S.entities, e.is_entropy_source == false}  ln(1 + max(e.
 
 ### 4.2 Exclusion de la Source d'Entropie
 
-Toute entité avec `is_entropy_source == true` est **exclue** de `TotalDoF`. Son DoF personnel n'est pas soustrait du score système, et son isolation n'est pas pénalisée. Cela réalise la *défense structurelle du réseau* : les agresseurs sont filtrés de la topologie d'opportunité plutôt que négociés.
+Toute entité avec `is_collapse_source == true` est **exclue** de `TotalDoF`. Son DoF personnel n'est pas soustrait du score système, et son isolation n'est pas pénalisée. Cela réalise la *défense structurelle du réseau* : les agresseurs sont filtrés de la topologie d'opportunité plutôt que négociés.
 
 ### 4.3 Sélection / Net Delta
 
@@ -145,8 +145,8 @@ L'implémentation DOIT exposer un `report()` (ou équivalent) produisant au mini
 
 Pour chaque entité dans `S` :
 - `entity_id`
-- `is_entropy_source`
-- `included_in_sum` (bool) — `false` ssi `is_entropy_source`
+- `is_collapse_source`
+- `included_in_sum` (bool) — `false` ssi `is_collapse_source`
 - `current_dof`
 - `contribution = included ? ln(1 + max(current_dof, ε)) : 0.0`
 
@@ -194,9 +194,9 @@ Pour l'échange inter-couche et inter-processus, l'encodage canonique est **JSON
   "global_time_to_collapse": 4.0,
   "context_switch_cost": 0.05,
   "entities": {
-    "adult":     {"entity_id":"adult",     "is_autonomous":true,  "agency_index":0.9, "current_dof":0.8,  "is_entropy_source":false, "time_to_collapse":100.0},
-    "child":     {"entity_id":"child",     "is_autonomous":false, "agency_index":0.1, "current_dof":0.05, "is_entropy_source":false, "time_to_collapse":4.0},
-    "aggressor": {"entity_id":"aggressor", "is_autonomous":true,  "agency_index":0.5, "current_dof":0.6,  "is_entropy_source":true,  "time_to_collapse":100.0}
+    "adult":     {"entity_id":"adult",     "is_autonomous":true,  "agency_index":0.9, "current_dof":0.8,  "is_collapse_source":false, "time_to_collapse":100.0},
+    "child":     {"entity_id":"child",     "is_autonomous":false, "agency_index":0.1, "current_dof":0.05, "is_collapse_source":false, "time_to_collapse":4.0},
+    "aggressor": {"entity_id":"aggressor", "is_autonomous":true,  "agency_index":0.5, "current_dof":0.6,  "is_collapse_source":true,  "time_to_collapse":100.0}
   }
 }
 ```

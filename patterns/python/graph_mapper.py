@@ -19,7 +19,7 @@ class GraphMapper:
 
         raw_observations: dict of entity_id -> dict with keys:
             is_autonomous (bool), agency_index (float 0..1),
-            current_dof (float 0..1), is_entropy_source (bool),
+            current_dof (float 0..1), is_collapse_source (bool),
             time_to_collapse (float seconds).
         """
         entities: Dict[str, EntityState] = {}
@@ -31,12 +31,12 @@ class GraphMapper:
                 is_autonomous=obs.get("is_autonomous", True),
                 agency_index=max(0.0, min(1.0, float(obs.get("agency_index", 0.0)))),
                 current_dof=max(0.0, min(1.0, float(obs.get("current_dof", 0.0)))),
-                is_entropy_source=obs.get("is_entropy_source", False),
+                is_collapse_source=obs.get("is_collapse_source", False),
                 time_to_collapse=float(obs.get("time_to_collapse", float("inf"))),
             )
             entities[eid] = ent
-            # Global tau is driven by the most urgent non-entropy entity
-            if not ent.is_entropy_source:
+            # Global tau is driven by the most urgent non-collapse-source entity
+            if not ent.is_collapse_source:
                 min_ttc = min(min_ttc, ent.time_to_collapse)
 
         global_ttc = min_ttc if min_ttc != float("inf") else 1e9

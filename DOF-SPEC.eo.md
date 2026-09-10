@@ -46,7 +46,7 @@ DOF-Core estas decido-verifikada protokolo kiu apartigas generan kreivecon (*Gen
 | `is_autonomous`      | bool    | —                          | Ĉu la ento regas siajn proprajn agojn. |
 | `agency_index`       | float   | `[0.0, 1.0]`               | Mezuro de regilegebleco / memdirekto. |
 | `current_dof`        | float   | `[0.0, 1.0]`               | Nuna grado de libereco de la nodo. `0.0` = kolapso. |
-| `is_entropy_source`  | bool    | —                          | Se `true`, la ento estas detrua agresanto (vidu §4.2). |
+| `is_collapse_source`  | bool    | —                          | Se `true`, la ento estas detrua agresanto (vidu §4.2). |
 | `time_to_collapse`   | float   | `> 0` (sekundoj)           | Loka limdato antaŭ kolapso de la nodo. |
 
 **Clamping:** Dum enigo, `agency_index` kaj `current_dof` DEVAS esti limititaj al `[0.0, 1.0]`.
@@ -60,7 +60,7 @@ Ento kun `current_dof == 0.0` estas en kolapso (vidu §4.1).
 | `context_switch_cost`     | float                            | `>= 0.0`  | ΔT — puno pro ŝanĝo de la nuna procezo. |
 | `entities`                | map<`entity_id`,`EntityState`>   | —         | La plena aro de observitaj entoj. |
 
-`global_time_to_collapse` estas kalkulita de la Percepta tavolo kiel la **minimumo** de `time_to_collapse` super ĉiuj entoj kie `is_entropy_source == false`. Se neniu ekzistas, sekura defaŭlto (ekz. `1e9`) estas PERMESITA, sed realigoj DEVAS signali ĉi tiun degeneran staton.
+`global_time_to_collapse` estas kalkulita de la Percepta tavolo kiel la **minimumo** de `time_to_collapse` super ĉiuj entoj kie `is_collapse_source == false`. Se neniu ekzistas, sekura defaŭlto (ekz. `1e9`) estas PERMESITA, sed realigoj DEVAS signali ĉi tiun degeneran staton.
 
 ### 3.3 `ActionOption`
 
@@ -80,7 +80,7 @@ Ni difinu ε = `1e-6` (protekto kontraŭ `ln(0)`). Ni difinu `S` kiel la nuna `S
 ### 4.1 Totala Sistema DoF
 
 ```
-TotalDoF(S) = Σ_{e ∈ S.entities, e.is_entropy_source == false}  ln(1 + max(e.current_dof, ε))
+TotalDoF(S) = Σ_{e ∈ S.entities, e.is_collapse_source == false}  ln(1 + max(e.current_dof, ε))
 ```
 
 - La sumo estas prenita **nur** super ne-entropiaj entoj (vidu §4.2).
@@ -88,7 +88,7 @@ TotalDoF(S) = Σ_{e ∈ S.entities, e.is_entropy_source == false}  ln(1 + max(e.
 
 ### 4.2 Ekskludo de Entropia Fonto
 
-Ĉiu ento kun `is_entropy_source == true` estas **ekskludita** el `TotalDoF`. Ĝia propra DoF ne estas subtrahita de la sistema poentaro, kaj ĝia izolado ne estas punita. Ĉi tio realigas *strukturan ret-defendon*: agresantoj estas filtritaj el la oportunebla topologio anstataŭ negociataj.
+Ĉiu ento kun `is_collapse_source == true` estas **ekskludita** el `TotalDoF`. Ĝia propra DoF ne estas subtrahita de la sistema poentaro, kaj ĝia izolado ne estas punita. Ĉi tio realigas *strukturan ret-defendon*: agresantoj estas filtritaj el la oportunebla topologio anstataŭ negociataj.
 
 ### 4.3 Elekto / Net Delta
 
@@ -143,8 +143,8 @@ Laŭ `skills/references/license.md`, ĉiu konforma realigo DEVAS povi eligi **tr
 
 Por ĉiu ento en `S`:
 - `entity_id`
-- `is_entropy_source`
-- `included_in_sum` (bool) — `false` tiam kaj nur tiam se `is_entropy_source`
+- `is_collapse_source`
+- `included_in_sum` (bool) — `false` tiam kaj nur tiam se `is_collapse_source`
 - `current_dof`
 - `contribution = included ? ln(1 + max(current_dof, ε)) : 0.0`
 
@@ -192,9 +192,9 @@ Por inter-tavola kaj inter-procesa interŝanĝo, la kanona kodado estas **JSON**
   "global_time_to_collapse": 4.0,
   "context_switch_cost": 0.05,
   "entities": {
-    "adult":     {"entity_id":"adult",     "is_autonomous":true,  "agency_index":0.9, "current_dof":0.8,  "is_entropy_source":false, "time_to_collapse":100.0},
-    "child":     {"entity_id":"child",     "is_autonomous":false, "agency_index":0.1, "current_dof":0.05, "is_entropy_source":false, "time_to_collapse":4.0},
-    "aggressor": {"entity_id":"aggressor", "is_autonomous":true,  "agency_index":0.5, "current_dof":0.6,  "is_entropy_source":true,  "time_to_collapse":100.0}
+    "adult":     {"entity_id":"adult",     "is_autonomous":true,  "agency_index":0.9, "current_dof":0.8,  "is_collapse_source":false, "time_to_collapse":100.0},
+    "child":     {"entity_id":"child",     "is_autonomous":false, "agency_index":0.1, "current_dof":0.05, "is_collapse_source":false, "time_to_collapse":4.0},
+    "aggressor": {"entity_id":"aggressor", "is_autonomous":true,  "agency_index":0.5, "current_dof":0.6,  "is_collapse_source":true,  "time_to_collapse":100.0}
   }
 }
 ```

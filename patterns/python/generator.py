@@ -35,7 +35,7 @@ class Generator:
     def safe_fallback(self, state: SystemStateMatrix, n_options: int = 1) -> List[ActionOption]:
         """Deterministic minimal-risk options used during Fast Pass / offline."""
         opts: List[ActionOption] = []
-        candidates = [e for e in state.entities.values() if not e.is_entropy_source]
+        candidates = [e for e in state.entities.values() if not e.is_collapse_source]
         for i in range(max(1, n_options)):
             delta = {}
             if candidates:

@@ -16,7 +16,7 @@ public:
         std::vector<ActionOption> opts;
         std::vector<const EntityState*> candidates;
         for (const auto& kv : state.entities) {
-            if (!kv.second.is_entropy_source) candidates.push_back(&kv.second);
+            if (!kv.second.is_collapse_source) candidates.push_back(&kv.second);
         }
         int n = (n_options > 0) ? n_options : 1;
 

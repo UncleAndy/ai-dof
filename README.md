@@ -11,7 +11,7 @@ Modern AI systems tend to optimize a single scalar objective (reward, throughput
 **structural** safeguard:
 
 - As an entity's DoF approaches zero, its contribution to the system score drops toward **−∞** (`Σ ln(1 + DoF)`). You cannot "earn back" the liquidation of a unique future-state carrier by inflating someone already well-off. A collapse contributes ~0, never a finite negative to be traded away.
-- Aggressors ("Entropy Sources") are **isolated**, not negotiated with — they are filtered out of the opportunity topology instead of being subtracted from the score.
+- Aggressors ("Collapse Sources") are **isolated**, not negotiated with — they are filtered out of the opportunity topology instead of being subtracted from the score.
 
 The result is an agent that behaves like an *optimizer of opportunity topology*: it diversifies options, respects reversibility, and refuses to trade one being's future for another's comfort.
 
@@ -39,7 +39,7 @@ Read `skills/SKILL.md` for the philosophy. Read `DOF-SPEC.md` if you are buildin
 
 1. **Trap Detection** — apply `references/framing-traps.md` so generated paths are genuine alternatives, not rephrasings of one narrative.
 2. **Measurement** — map every entity and its current DoF via `references/dof-assessment-toolkit.md`.
-3. **Calculation** — compute `Total System DoF = Σ ln(1 + DoF)` over non-entropy entities.
+3. **Calculation** — compute `Total System DoF = Σ ln(1 + DoF)` over non-collapse-source entities.
 4. **Stabilization** — subtract the Context-Switch Entropy (ΔT) to penalize needless process switching.
 5. **Action** — pick the option with the highest Net Delta, but if time-to-collapse (τ) is under 5 s, switch to **Fast Pass** (deterministic fallback) to avoid analysis paralysis.
 

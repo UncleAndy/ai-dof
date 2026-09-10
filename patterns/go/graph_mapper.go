@@ -9,7 +9,7 @@ type RawObservation struct {
 	IsAutonomous    bool
 	AgencyIndex     float64
 	CurrentDoF      float64
-	IsEntropySource bool
+	IsCollapseSource bool
 	TimeToCollapse  float64
 }
 
@@ -33,10 +33,10 @@ func (m *GraphMapper) PollEnvironment(raw map[string]*RawObservation) *SystemSta
 			IsAutonomous:    obs.IsAutonomous,
 			AgencyIndex:     agency,
 			CurrentDoF:      dof,
-			IsEntropySource: obs.IsEntropySource,
+			IsCollapseSource: obs.IsCollapseSource,
 			TimeToCollapse:  obs.TimeToCollapse,
 		}
-		if !ent.IsEntropySource && obs.TimeToCollapse < minTTC {
+		if !ent.IsCollapseSource && obs.TimeToCollapse < minTTC {
 			minTTC = obs.TimeToCollapse
 		}
 		entities[eid] = ent

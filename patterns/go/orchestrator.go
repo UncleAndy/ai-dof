@@ -29,3 +29,21 @@ func (o *DOFOrchestrator) Step(raw map[string]*RawObservation) *ActionOption {
 	}
 	return o.core.EvaluateAndSelect(state, options)
 }
+
+// StepWithReport is like Step, but also returns the Proof-of-Implementation audit.
+func (o *DOFOrchestrator) StepWithReport(raw map[string]*RawObservation) (*ActionOption, *DofReport) {
+	state := o.mapper.PollEnvironment(raw)
+	mode := "DEEP_DIVERSIFICATION"
+	if state.GlobalTimeToCollapse < o.FastPassThreshold {
+		mode = "FAST_PASS"
+	}
+	var options []*ActionOption
+	if state.GlobalTimeToCollapse < o.FastPassThreshold {
+		options = o.generator.SafeFallback(state, 1)
+	} else {
+		options = o.generator.Synthesize(state, 5)
+	}
+	selected := o.core.EvaluateAndSelect(state, options)
+	report := o.core.Report(state, options, selected, mode)
+	return selected, report
+}

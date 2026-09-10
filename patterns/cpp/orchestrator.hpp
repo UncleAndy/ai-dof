@@ -31,4 +31,22 @@ public:
         }
         return core_.evaluate_and_select(state, options);
     }
+
+    // Like step(), but also returns the Proof-of-Implementation audit.
+    std::pair<std::optional<ActionOption>, DofReport> step_with_report(
+        const std::unordered_map<std::string, RawObservation>& raw) const
+    {
+        SystemStateMatrix state = mapper_.poll_environment(raw);
+        double tau = state.global_time_to_collapse;
+        std::string mode = (tau < fast_pass_threshold) ? "FAST_PASS" : "DEEP_DIVERSIFICATION";
+        std::vector<ActionOption> options;
+        if (tau < fast_pass_threshold) {
+            options = generator_.safe_fallback(state, 1);
+        } else {
+            options = generator_.synthesize(state, 5);
+        }
+        auto selected = core_.evaluate_and_select(state, options);
+        DofReport rep = core_.report(state, options, selected, mode);
+        return {selected, rep};
+    }
 };

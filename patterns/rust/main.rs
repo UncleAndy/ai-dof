@@ -44,20 +44,22 @@ fn main() {
     );
 
     let orch = DofOrchestrator::new(0.05);
-    let sel = orch.step(&obs);
+    let (sel, rep) = orch.step_with_report(&obs);
     println!(
         "DEEP SELECTED: {}",
         sel.as_ref().map(|o| o.option_id.clone()).unwrap_or_default()
     );
+    println!("REPORT: {:?}", rep);
 
     let mut obs2 = obs.clone();
     if let Some(c) = obs2.get_mut("child") {
         c.time_to_collapse = 2.0;
     }
-    let sel2 = orch.step(&obs2);
+    let (sel2, rep2) = orch.step_with_report(&obs2);
     println!(
         "FAST-PASS SELECTED: {}",
         sel2.as_ref().map(|o| o.option_id.clone()).unwrap_or_default()
     );
+    println!("REPORT: {:?}", rep2);
     println!("OK");
 }

@@ -2,7 +2,7 @@
 // Ties the three layers; switches FAST PASS / DEEP by τ.
 
 use std::collections::HashMap;
-use crate::dof_core::{ActionOption, DofCalculusCore, SystemStateMatrix};
+use crate::dof_core::{ActionOption, DofCalculusCore, DofReport, SystemStateMatrix};
 use crate::generator::Generator;
 use crate::graph_mapper::{GraphMapper, RawObservation};
 
@@ -32,5 +32,27 @@ impl DofOrchestrator {
             self.generator.synthesize(&state, 5)
         };
         self.core.evaluate_and_select(&state, &options)
+    }
+
+    /// Like step(), but also returns the Proof-of-Implementation audit.
+    pub fn step_with_report(
+        &self,
+        raw: &HashMap<String, RawObservation>,
+    ) -> (Option<ActionOption>, DofReport) {
+        let state: SystemStateMatrix = self.mapper.poll_environment(raw);
+        let tau = state.global_time_to_collapse;
+        let mode = if tau < self.fast_pass_threshold {
+            "FAST_PASS"
+        } else {
+            "DEEP_DIVERSIFICATION"
+        };
+        let options = if tau < self.fast_pass_threshold {
+            self.generator.safe_fallback(&state, 1)
+        } else {
+            self.generator.synthesize(&state, 5)
+        };
+        let selected = self.core.evaluate_and_select(&state, &options);
+        let report = self.core.report(&state, &options, &selected, mode);
+        (selected, report)
     }
 }

@@ -3,7 +3,10 @@
 
 package main
 
-import "fmt"
+import (
+	"encoding/json"
+	"fmt"
+)
 
 func main() {
 	obs := map[string]*RawObservation{
@@ -31,23 +34,27 @@ func main() {
 	}
 
 	orch := NewDOFOrchestrator(0.05)
-	sel := orch.Step(obs)
+	sel, rep := orch.StepWithReport(obs)
 	selID := ""
 	if sel != nil {
 		selID = sel.OptionID
 	}
 	fmt.Println("DEEP SELECTED:", selID)
+	repJSON, _ := json.Marshal(rep)
+	fmt.Println("REPORT:", string(repJSON))
 
 	obs2 := map[string]*RawObservation{
 		"adult":     obs["adult"],
 		"child":     {IsAutonomous: false, AgencyIndex: 0.1, CurrentDoF: 0.05, IsEntropySource: false, TimeToCollapse: 2.0},
 		"aggressor": obs["aggressor"],
 	}
-	sel2 := orch.Step(obs2)
+	sel2, rep2 := orch.StepWithReport(obs2)
 	sel2ID := ""
 	if sel2 != nil {
 		sel2ID = sel2.OptionID
 	}
 	fmt.Println("FAST-PASS SELECTED:", sel2ID)
+	rep2JSON, _ := json.Marshal(rep2)
+	fmt.Println("REPORT:", string(rep2JSON))
 	fmt.Println("OK")
 }

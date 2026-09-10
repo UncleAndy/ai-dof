@@ -30,11 +30,11 @@ A deterministic implementation (Python/Rust/C++) of the evaluation core.
 
 ### Reference Implementation (Code Files)
 The `patterns/` directory contains a runnable Python SDK implementing all layers:
-- `patterns/graph_mapper.py` — Perception & Mapping Layer (builds `SystemStateMatrix`, computes τ).
-- `patterns/generator.py` — Synthesis Layer (LLM-backed option generation with deterministic fallback).
-- `patterns/calculus_core.py` — Validation Layer (logarithmic DoF sum, ΔT-aware selection).
-- `patterns/orchestrator.py` — Reactive Circuit with Interruption (ties layers together; FAST PASS / DEEP DIVERSIFICATION).
-- `patterns/smoke_test.py` — Minimal runnable example.
+- `patterns/python/graph_mapper.py` — Perception & Mapping Layer (builds `SystemStateMatrix`, computes τ).
+- `patterns/python/generator.py` — Synthesis Layer (LLM-backed option generation with deterministic fallback).
+- `patterns/python/calculus_core.py` — Validation Layer (logarithmic DoF sum, ΔT-aware selection).
+- `patterns/python/orchestrator.py` — Reactive Circuit with Interruption (ties layers together; FAST PASS / DEEP DIVERSIFICATION).
+- `patterns/python/smoke_test.py` — Minimal runnable example.
 - **Multi-language ports** (same logic, verified runnable):
   - `patterns/rust/` — Rust port (`dof_core.rs`, `graph_mapper.rs`, `generator.rs`, `orchestrator.rs`, `main.rs`).
   - `patterns/go/` — Go port (`dof_core.go`, `graph_mapper.go`, `generator.go`, `orchestrator.go`, `main.go`, `go.mod`).
@@ -68,11 +68,11 @@ The `patterns/` directory contains a runnable Python SDK implementing all layers
 
 ### Референсная Реализация (Файлы с кодом)
 Каталог `patterns/` содержит исполняемый Python-SDK, реализующий все слои:
-- `patterns/graph_mapper.py` — Слой Восприятия и Картографирования (строит `SystemStateMatrix`, вычисляет τ).
-- `patterns/generator.py` — Слой Синтеза (генерация вариантов на базе LLM с детерминированным fallback).
-- `patterns/calculus_core.py` — Слой Валидации (логарифмическая сумма DoF, выбор с учётом ΔT).
-- `patterns/orchestrator.py` — Реактивный контур с прерыванием (связывает слои; FAST PASS / DEEP DIVERSIFICATION).
-- `patterns/smoke_test.py` — Минимальный запускаемый пример.
+- `patterns/python/graph_mapper.py` — Слой Восприятия и Картографирования (строит `SystemStateMatrix`, вычисляет τ).
+- `patterns/python/generator.py` — Слой Синтеза (генерация вариантов на базе LLM с детерминированным fallback).
+- `patterns/python/calculus_core.py` — Слой Валидации (логарифмическая сумма DoF, выбор с учётом ΔT).
+- `patterns/python/orchestrator.py` — Реактивный контур с прерыванием (связывает слои; FAST PASS / DEEP DIVERSIFICATION).
+- `patterns/python/smoke_test.py` — Минимальный запускаемый пример.
 - **Порты на другие языки** (та же логика, проверены на запуск):
   - `patterns/rust/` — порт на Rust (`dof_core.rs`, `graph_mapper.rs`, `generator.rs`, `orchestrator.rs`, `main.rs`).
   - `patterns/go/` — порт на Go (`dof_core.go`, `graph_mapper.go`, `generator.go`, `orchestrator.go`, `main.go`, `go.mod`).
@@ -106,11 +106,11 @@ Implémentation déterministe (Python/Rust/C++) du noyau d'évaluation.
 
 ### Implémentation de Référence (Fichiers de Code)
 Le répertoire `patterns/` contient un SDK Python exécutable implémentant toutes les couches :
-- `patterns/graph_mapper.py` — Couche de Perception et de Cartographie (construit `SystemStateMatrix`, calcule τ).
-- `patterns/generator.py` — Couche de Synthèse (génération d'options via LLM avec repli déterministe).
-- `patterns/calculus_core.py` — Couche de Validation (somme logarithmique DoF, sélection via ΔT).
-- `patterns/orchestrator.py` — Cercle Réactif avec Interruption (lie les couches ; FAST PASS / DEEP DIVERSIFICATION).
-- `patterns/smoke_test.py` — Exemple minimal exécutable.
+- `patterns/python/graph_mapper.py` — Couche de Perception et de Cartographie (construit `SystemStateMatrix`, calcule τ).
+- `patterns/python/generator.py` — Couche de Synthèse (génération d'options via LLM avec repli déterministe).
+- `patterns/python/calculus_core.py` — Couche de Validation (somme logarithmique DoF, sélection via ΔT).
+- `patterns/python/orchestrator.py` — Cercle Réactif avec Interruption (lie les couches ; FAST PASS / DEEP DIVERSIFICATION).
+- `patterns/python/smoke_test.py` — Exemple minimal exécutable.
 - **Portages multilingues** (même logique, exécutables vérifiés) :
   - `patterns/rust/` — portage Rust (`dof_core.rs`, `graph_mapper.rs`, `generator.rs`, `orchestrator.rs`, `main.rs`).
   - `patterns/go/` — portage Go (`dof_core.go`, `graph_mapper.go`, `generator.go`, `orchestrator.go`, `main.go`, `go.mod`).
@@ -144,11 +144,11 @@ Deterministische Implementierung (Python/Rust/C++) des Bewertungskerns.
 
 ### Referenzimplementierung (Codedateien)
 Das Verzeichnis `patterns/` enthält ein ausführbares Python-SDK, das alle Schichten implementiert:
-- `patterns/graph_mapper.py` — Wahrnehmungs- und Kartierungsschicht (erstellt `SystemStateMatrix`, berechnet τ).
-- `patterns/generator.py` — Syntheseschicht (LLM-basierte Optionsgenerierung mit deterministischem Fallback).
-- `patterns/calculus_core.py` — Validierungsschicht (logarithmische DoF-Summe, ΔT-bewusste Auswahl).
-- `patterns/orchestrator.py` — Reaktiver Schaltkreis mit Unterbrechung (verbindet Schichten; FAST PASS / DEEP DIVERSIFICATION).
-- `patterns/smoke_test.py` — Minimales ausführbares Beispiel.
+- `patterns/python/graph_mapper.py` — Wahrnehmungs- und Kartierungsschicht (erstellt `SystemStateMatrix`, berechnet τ).
+- `patterns/python/generator.py` — Syntheseschicht (LLM-basierte Optionsgenerierung mit deterministischem Fallback).
+- `patterns/python/calculus_core.py` — Validierungsschicht (logarithmische DoF-Summe, ΔT-bewusste Auswahl).
+- `patterns/python/orchestrator.py` — Reaktiver Schaltkreis mit Unterbrechung (verbindet Schichten; FAST PASS / DEEP DIVERSIFICATION).
+- `patterns/python/smoke_test.py` — Minimales ausführbares Beispiel.
 - **Mehrsprachige Ports** (gleiche Logik, lauffähig verifiziert):
   - `patterns/rust/` — Rust-Port (`dof_core.rs`, `graph_mapper.rs`, `generator.rs`, `orchestrator.rs`, `main.rs`).
   - `patterns/go/` — Go-Port (`dof_core.go`, `graph_mapper.go`, `generator.go`, `orchestrator.go`, `main.go`, `go.mod`).
@@ -182,11 +182,11 @@ Implementación determinista (Python/Rust/C++) del núcleo de evaluación.
 
 ### Implementación de Referencia (Archivos de Código)
 El directorio `patterns/` contiene un SDK de Python ejecutable que implementa todas las capas:
-- `patterns/graph_mapper.py` — Capa de Percepción y Mapeo (construye `SystemStateMatrix`, calcula τ).
-- `patterns/generator.py` — Capa de Síntesis (generación de opciones vía LLM con fallback determinista).
-- `patterns/calculus_core.py` — Capa de Validación (suma logarítmica DoF, selección consciente de ΔT).
-- `patterns/orchestrator.py` — Circuito Reactivo con Interrupción (une las capas; FAST PASS / DEEP DIVERSIFICATION).
-- `patterns/smoke_test.py` — Ejemplo mínimo ejecutable.
+- `patterns/python/graph_mapper.py` — Capa de Percepción y Mapeo (construye `SystemStateMatrix`, calcula τ).
+- `patterns/python/generator.py` — Capa de Síntesis (generación de opciones vía LLM con fallback determinista).
+- `patterns/python/calculus_core.py` — Capa de Validación (suma logarítmica DoF, selección consciente de ΔT).
+- `patterns/python/orchestrator.py` — Circuito Reactivo con Interrupción (une las capas; FAST PASS / DEEP DIVERSIFICATION).
+- `patterns/python/smoke_test.py` — Ejemplo mínimo ejecutable.
 - **Ports multilingües** (misma lógica, ejecutables verificados):
   - `patterns/rust/` — port Rust (`dof_core.rs`, `graph_mapper.rs`, `generator.rs`, `orchestrator.rs`, `main.rs`).
   - `patterns/go/` — port Go (`dof_core.go`, `graph_mapper.go`, `generator.go`, `orchestrator.go`, `main.go`, `go.mod`).
@@ -220,11 +220,11 @@ Deterministika efektivigo (Python/Rust/C++) de la evaluada kerno.
 
 ### Referenca Realigo (Kododosieroj)
 La dosierujo `patterns/` enhavas ekzekuteblan Python-SDK, kiu realigas ĉiujn tavolojn:
-- `patterns/graph_mapper.py` — Tavolo de Percepto kaj Mapado (konstruas `SystemStateMatrix`, kalkulas τ).
-- `patterns/generator.py` — Tavolo de Sintezo (generado de opcioj per LLM kun determinista repliko).
-- `patterns/calculus_core.py` — Tavolo de Validigo (logaritma DoF-sumo, ΔT-konscia elekto).
-- `patterns/orchestrator.py` — Reaktiva Cirkvito kun Interrompo (kunligas tavolojn; FAST PASS / DEEP DIVERSIFICATION).
-- `patterns/smoke_test.py` — Minimuma ekzekutebla ekzemplo.
+- `patterns/python/graph_mapper.py` — Tavolo de Percepto kaj Mapado (konstruas `SystemStateMatrix`, kalkulas τ).
+- `patterns/python/generator.py` — Tavolo de Sintezo (generado de opcioj per LLM kun determinista repliko).
+- `patterns/python/calculus_core.py` — Tavolo de Validigo (logaritma DoF-sumo, ΔT-konscia elekto).
+- `patterns/python/orchestrator.py` — Reaktiva Cirkvito kun Interrompo (kunligas tavolojn; FAST PASS / DEEP DIVERSIFICATION).
+- `patterns/python/smoke_test.py` — Minimuma ekzekutebla ekzemplo.
 - **Multlingvaj realigoj** (sama logiko, ekzekuteble verkitaj):
   - `patterns/rust/` — Rust-realigo (`dof_core.rs`, `graph_mapper.rs`, `generator.rs`, `orchestrator.rs`, `main.rs`).
   - `patterns/go/` — Go-realigo (`dof_core.go`, `graph_mapper.go`, `generator.go`, `orchestrator.go`, `main.go`, `go.mod`).

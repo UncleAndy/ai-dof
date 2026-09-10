@@ -8,11 +8,13 @@ obs = {
 }
 
 orch = DOFOrchestrator(context_switch_cost=0.05)
-sel = orch.step(obs)
+sel, rep = orch.step_with_report(obs)
 print("DEEP SELECTED:", sel.option_id if sel else None)
+print("REPORT:", rep.model_dump_json())
 
 obs2 = dict(obs)
 obs2["child"]["time_to_collapse"] = 2.0
-sel2 = orch.step(obs2)
+sel2, rep2 = orch.step_with_report(obs2)
 print("FAST-PASS SELECTED:", sel2.option_id if sel2 else None)
+print("REPORT:", rep2.model_dump_json())
 print("OK")

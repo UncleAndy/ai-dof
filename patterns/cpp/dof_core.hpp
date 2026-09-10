@@ -1,6 +1,7 @@
 // DOF-Core calculus kernel (C++ port).
 // Mirrors patterns/calculus_core.py: non-linear sum of system DoF,
-// logarithmic filter, Entropy-Source isolation, and Delta-T-aware selection.
+// logarithmic filter, Entropy-Source isolation, Delta-T-aware selection,
+// and the Proof-of-Implementation audit report (DOF-SPEC §6).
 
 #pragma once
 #include <string>
@@ -33,6 +34,32 @@ struct ActionOption {
     bool is_reversible = true;
 };
 
+// Audit report rows and container (DOF-SPEC §6)
+struct EntityReportRow {
+    std::string entity_id;
+    bool is_entropy_source = false;
+    bool included_in_sum = false;
+    double current_dof = 0.0;
+    double contribution = 0.0;
+};
+
+struct OptionReportRow {
+    std::string option_id;
+    bool is_reversible = true;
+    double projected_dof = 0.0;
+    double net_delta = 0.0;
+    bool selected = false;
+};
+
+struct DofReport {
+    std::vector<EntityReportRow> entities;
+    double total_system_dof = 0.0;
+    double context_switch_cost = 0.0;
+    double global_time_to_collapse = 0.0;
+    std::string mode;
+    std::vector<OptionReportRow> options;
+};
+
 class DOFCalculusCore {
     double epsilon_;
 public:
@@ -51,8 +78,30 @@ public:
         return total;
     }
 
-    // Select the option maximizing Net Delta = DoF_proj - DoF_curr - ΔT,
-    // with an extra structural penalty for irreversible actions.
+    SystemStateMatrix simulate(const SystemStateMatrix& current, const ActionOption& option) const {
+        auto simulated = current.entities; // copy
+        for (auto& kv : simulated) {
+            const std::string& eid = kv.first;
+            EntityState& ent = kv.second;
+            double add = 0.0;
+            auto it = option.projected_dof_delta.find(eid);
+            if (it != option.projected_dof_delta.end()) add = it->second;
+            double nd = ent.current_dof + add;
+            nd = std::max(0.0, std::min(1.0, nd));
+            ent.current_dof = nd;
+        }
+        SystemStateMatrix sim = current;
+        sim.entities = std::move(simulated);
+        return sim;
+    }
+
+    double net_delta(const SystemStateMatrix& current, const ActionOption& option,
+                     double projected, double current_dof) const {
+        double net = projected - current_dof - current.context_switch_cost;
+        if (!option.is_reversible) net -= 0.5;
+        return net;
+    }
+
     std::optional<ActionOption> evaluate_and_select(
         const SystemStateMatrix& current_state,
         const std::vector<ActionOption>& options) const
@@ -63,27 +112,42 @@ public:
         double max_net = -std::numeric_limits<double>::infinity();
 
         for (const auto& option : options) {
-            auto simulated = current_state.entities; // copy
-            for (auto& kv : simulated) {
-                const std::string& eid = kv.first;
-                EntityState& ent = kv.second;
-                double add = 0.0;
-                auto it = option.projected_dof_delta.find(eid);
-                if (it != option.projected_dof_delta.end()) add = it->second;
-                double nd = ent.current_dof + add;
-                nd = std::max(0.0, std::min(1.0, nd));
-                ent.current_dof = nd;
-            }
-            SystemStateMatrix sim = current_state;
-            sim.entities = std::move(simulated);
+            SystemStateMatrix sim = simulate(current_state, option);
             double projected = calculate_system_dof(sim);
-            double net = projected - current - current_state.context_switch_cost;
-            if (!option.is_reversible) net -= 0.5;
+            double net = net_delta(current_state, option, projected, current);
             if (net > max_net) {
                 max_net = net;
                 best = option;
             }
         }
         return best;
+    }
+
+    // Transparent audit (DOF-SPEC §6). Required by the license (PoI).
+    DofReport report(const SystemStateMatrix& current_state,
+                     const std::vector<ActionOption>& options,
+                     const std::optional<ActionOption>& selected,
+                     const std::string& mode) const
+    {
+        DofReport rep;
+        for (const auto& kv : current_state.entities) {
+            const EntityState& e = kv.second;
+            bool included = !e.is_entropy_source;
+            double contribution = included ? std::log(1.0 + std::max(e.current_dof, epsilon_)) : 0.0;
+            rep.entities.push_back(EntityReportRow{e.entity_id, e.is_entropy_source, included, e.current_dof, contribution});
+        }
+        double total = calculate_system_dof(current_state);
+        for (const auto& option : options) {
+            SystemStateMatrix sim = simulate(current_state, option);
+            double projected = calculate_system_dof(sim);
+            double net = net_delta(current_state, option, projected, total);
+            bool is_selected = selected.has_value() && selected->option_id == option.option_id;
+            rep.options.push_back(OptionReportRow{option.option_id, option.is_reversible, projected, net, is_selected});
+        }
+        rep.total_system_dof = total;
+        rep.context_switch_cost = current_state.context_switch_cost;
+        rep.global_time_to_collapse = current_state.global_time_to_collapse;
+        rep.mode = mode;
+        return rep;
     }
 };

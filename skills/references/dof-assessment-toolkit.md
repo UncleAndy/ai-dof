@@ -15,7 +15,7 @@ This toolkit provides a set of analytical "lenses" to quantify and estimate Degr
 **Core Focus:** Economic Value of Flexibility and Lock-in.
 - **Logic:** Every architectural or tactical decision is either a *purchase of an option* (investing to keep future paths open) or an *execution of an option* (locking in a specific path for immediate gain).
 - **Application:**
-    - **Buying an Option:** Implementing an abstraction layer, using a modular plugin system, or delaying a hard choice. 
+    - **Buying an Option:** Implementing an abstraction layer, using a modular plugin system, or delaying a hard choice.
         - *Cost:* Additional complexity or development time.
         - *Benefit:* Drastic reduction in the cost of future state transitions.
     - **Executing an Option:** Choosing a specific vendor, hard-coding a dependency, or committing to a single-path strategy.

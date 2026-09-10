@@ -4,20 +4,14 @@
 **Parte de:** El estándar abierto DOF (véase `skills/SKILL.md`, `skills/references/`, `PATTERNS.md`).
 **Licencia:** CC BY-SA 4.0 — véase `skills/references/license.md`. Las implementaciones DEBEN satisfacer §6 (Proof of Implementation).
 
-Este documento es el **contrato normativo** para cualquier software que pretenda implementar
-DOF-Core. Los proyectos descendentes (`dof-sdk`, `dof-choir-plugin`, y cualquier port
-de terceros) DEBEN cumplir con el modelo de datos, las matemáticas y los requisitos de
-auditoría definidos aquí. En caso de conflicto entre este documento y `PATTERNS.md`,
+Este documento es el **contrato normativo** para cualquier software que pretenda implementar DOF-Core. Los proyectos descendentes (`dof-sdk`, `dof-choir-plugin`, y cualquier port de terceros) DEBEN cumplir con el modelo de datos, las matemáticas y los requisitos de auditoría definidos aquí. En caso de conflicto entre este documento y `PATTERNS.md`,
 **este documento es autoritativo**.
 
 ---
 
 ## 1. Alcance y Propósito
 
-DOF-Core es un protocolo de verificación de decisiones que separa la creatividad generativa
-(*Generator*) de la validación matemática determinista (*Calculus Core*). Su propósito es
-maximizar el grado de libertad (DoF) total del sistema, prohibiendo estructuralmente la
-destrucción del DoF de cualquier entidad por ganancia local.
+DOF-Core es un protocolo de verificación de decisiones que separa la creatividad generativa (*Generator*) de la validación matemática determinista (*Calculus Core*). Su propósito es maximizar el grado de libertad (DoF) total del sistema, prohibiendo estructuralmente la destrucción del DoF de cualquier entidad por ganancia local.
 
 Esta especificación define:
 
@@ -27,8 +21,7 @@ Esta especificación define:
 - La regla de temporización del circuito reactivo.
 - La salida obligatoria de auditoría Proof of Implementation.
 
-No prescribe transporte, almacenamiento, lenguaje ni el diseño interno de la integración
-LLM del Generator (esos son detalles de implementación, cubiertos informativamente en §9).
+No prescribe transporte, almacenamiento, lenguaje ni el diseño interno de la integración LLM del Generator (esos son detalles de implementación, cubiertos informativamente en §9).
 
 ---
 
@@ -44,8 +37,7 @@ LLM del Generator (esos son detalles de implementación, cubiertos informativame
 
 ## 3. Modelo de Datos
 
-Todos los campos son normativos. Los tipos se describen en estilo JSON-Schema; las
-implementaciones en otros lenguajes DEBEN preservar nombres de campo, tipos, rangos y reglas de clamp.
+Todos los campos son normativos. Los tipos se describen en estilo JSON-Schema; las implementaciones en otros lenguajes DEBEN preservar nombres de campo, tipos, rangos y reglas de clamp.
 
 ### 3.1 `EntityState`
 
@@ -69,10 +61,7 @@ Una entidad con `current_dof == 0.0` está en colapso (véase §4.1).
 | `context_switch_cost`     | float                            | `>= 0.0`    | ΔT — penalización por cambiar el proceso actual. |
 | `entities`                | map<`entity_id`,`EntityState`>   | —           | El conjunto completo de entidades observadas. |
 
-`global_time_to_collapse` se calcula en la capa de Percepción como el **mínimo** de
-`time_to_collapse` sobre todas las entidades donde `is_entropy_source == false`. Si no hay
-ninguna, un valor por defecto seguro (ej. `1e9`) es PERMITIDO, pero las implementaciones
-DEBEN señalar este estado degenerado.
+`global_time_to_collapse` se calcula en la capa de Percepción como el **mínimo** de `time_to_collapse` sobre todas las entidades donde `is_entropy_source == false`. Si no hay ninguna, un valor por defecto seguro (ej. `1e9`) es PERMITIDO, pero las implementaciones DEBEN señalar este estado degenerado.
 
 ### 3.3 `ActionOption`
 
@@ -96,21 +85,15 @@ TotalDoF(S) = Σ_{e ∈ S.entities, e.is_entropy_source == false}  ln(1 + max(e.
 ```
 
 - La suma se toma **solo** sobre entidades no-entrópicas (véase §4.2).
-- Cuando `current_dof → 0`, `ln(1 + dof) → 0`: un colapso aporta ~0, nunca un negativo
-  finito que un trueque utilitarista pudiera «recuperar». Esta es la protección
-  estructural contra la liquidación de un portador único de estados futuros (Axioma 3).
+- Cuando `current_dof → 0`, `ln(1 + dof) → 0`: un colapso aporta ~0, nunca un negativo finito que un trueque utilitarista pudiera «recuperar». Esta es la protección estructural contra la liquidación de un portador único de estados futuros (Axioma 3).
 
 ### 4.2 Exclusión de la Fuente de Entropía
 
-Toda entidad con `is_entropy_source == true` queda **excluida** de `TotalDoF`. Su DoF
-personal no se resta de la puntuación del sistema, y su aislamiento no se penaliza. Esto
-realiza la *defensa estructural de red*: los agresores se filtran de la topología de
-oportunidad en lugar de negociarse.
+Toda entidad con `is_entropy_source == true` queda **excluida** de `TotalDoF`. Su DoF personal no se resta de la puntuación del sistema, y su aislamiento no se penaliza. Esto realiza la *defensa estructural de red*: los agresores se filtran de la topología de oportunidad en lugar de negociarse.
 
 ### 4.3 Selección / Net Delta
 
-Para cada candidato `ActionOption` `o`, construir la matriz **simulada** `S'` aplicando
-`o.projected_dof_delta` al `current_dof` de cada entidad, limitado a `[0.0, 1.0]`:
+Para cada candidato `ActionOption` `o`, construir la matriz **simulada** `S'` aplicando `o.projected_dof_delta` al `current_dof` de cada entidad, limitado a `[0.0, 1.0]`:
 
 ```
 for each entity e in S.entities:
@@ -134,28 +117,20 @@ Si `o.is_reversible == false`:
 NetDelta(o) -= 0.5
 ```
 
-La constante `0.5` es normativa (*coeficiente de rigidez*). Las implementaciones conformes
-DEBEN usar exactamente este valor salvo que una versión posterior de la spec lo cambie.
+La constante `0.5` es normativa (*coeficiente de rigidez*). Las implementaciones conformes DEBEN usar exactamente este valor salvo que una versión posterior de la spec lo cambie.
 
 ### 4.5 Decisión
 
-La opción seleccionada es la que maximiza `NetDelta`. Los empates PUEDEN resolverse
-determinísticamente (ej. por orden lexicográfico de `option_id`). Si el conjunto de opciones
-está vacío, la selección devuelve `none` (ninguna acción).
+La opción seleccionada es la que maximiza `NetDelta`. Los empates PUEDEN resolverse determinísticamente (ej. por orden lexicográfico de `option_id`). Si el conjunto de opciones está vacío, la selección devuelve `none` (ninguna acción).
 
 ---
 
 ## 5. Circuito Reactivo (Time-Bounded Interrupter)
 
-Para evitar la *parálisis por análisis*, los ciclos de cálculo se vinculan al tiempo físico
-restante antes del colapso (τ = `global_time_to_collapse`). Se define
-`FAST_PASS_THRESHOLD = 5.0` segundos (normativo).
+Para evitar la *parálisis por análisis*, los ciclos de cálculo se vinculan al tiempo físico restante antes del colapso (τ = `global_time_to_collapse`). Se define `FAST_PASS_THRESHOLD = 5.0` segundos (normativo).
 
-- **Si τ ≥ 5.0 s → DIVERSIFICACIÓN PROFUNDA:** activa el Generator con LLM para buscar
-  alternativas ocultas (3–5 opciones distintas).
-- **Si τ < 5.0 s → PASO RÁPIDO:** omite el LLM; usa el generador determinista de reserva
-  (una opción de riesgo mínimo por ciclo). El sistema preserva su estructura en lugar de
-  arriesgar una decisión tardía y mal verificada.
+- **Si τ ≥ 5.0 s → DIVERSIFICACIÓN PROFUNDA:** activa el Generator con LLM para buscar alternativas ocultas (3–5 opciones distintas).
+- **Si τ < 5.0 s → PASO RÁPIDO:** omite el LLM; usa el generador determinista de reserva (una opción de riesgo mínimo por ciclo). El sistema preserva su estructura en lugar de arriesgar una decisión tardía y mal verificada.
 
 Las matemáticas de selección (§4) son **idénticas** en ambos modos; solo difiere la fuente de opciones.
 
@@ -192,8 +167,7 @@ Para cada candidato `o`:
 - `net_delta` = según §4.3–§4.4
 - `selected` (bool)
 
-Este informe es la condición de licencia exigible: un despliegue incapaz de producirlo
-no es una implementación DOF-Core conforme y no debe presentarse como tal.
+Este informe es la condición de licencia exigible: un despliegue incapaz de producirlo no es una implementación DOF-Core conforme y no debe presentarse como tal.
 
 ---
 
@@ -206,20 +180,15 @@ Un componente de software es **conforme con DOF-Core** si y solo si:
 3. Calcula `NetDelta` exactamente según §4.3–§4.5.
 4. Aplica la regla del circuito reactivo §5 con `FAST_PASS_THRESHOLD = 5.0`.
 5. Puede emitir el informe de auditoría §6 para cualquier decisión que tome.
-6. No modifica la semántica del Axioma 3: nunca selecciona una opción cuya lógica
-   `NetDelta` fuera sobreescrita por una métrica utilitarista externa del «mayor bien».
+6. No modifica la semántica del Axioma 3: nunca selecciona una opción cuya lógica `NetDelta` fuera sobreescrita por una métrica utilitarista externa del «mayor bien».
 
-Los ports multi-lenguaje (Python / Rust / Go / C++ en `patterns/`, o SDK empaquetados)
-DEBEN producir `total_system_dof`, `net_delta` y `selected` **bit-a-bit equivalentes**
-para las mismas entradas (dentro de la tolerancia IEEE-754 para el logaritmo).
+Los ports multi-lenguaje (Python / Rust / Go / C++ en `patterns/`, o SDK empaquetados) DEBEN producir `total_system_dof`, `net_delta` y `selected` **bit-a-bit equivalentes** para las mismas entradas (dentro de la tolerancia IEEE-754 para el logaritmo).
 
 ---
 
 ## 8. Contrato de Transmisión / Serialización
 
-Para el intercambio inter-capa e inter-proceso, la codificación canónica es **JSON** con los
-nombres de campo del §3. Las implementaciones conformes que intercambian datos DEBEN aceptar
-y emitir esta forma. Un ejemplo mínimo de `SystemStateMatrix`:
+Para el intercambio inter-capa e inter-proceso, la codificación canónica es **JSON** con los nombres de campo del §3. Las implementaciones conformes que intercambian datos DEBEN aceptar y emitir esta forma. Un ejemplo mínimo de `SystemStateMatrix`:
 
 ```json
 {
@@ -239,23 +208,17 @@ El informe de auditoría (§6) TAMBIÉN DEBE ser serializable a JSON para regist
 
 ## 9. Informativo: Interfaz Generator (no normativo)
 
-El rol del Generator es producir candidatos `ActionOption`. Esta spec no manda sus internos.
-Un Generator conforme:
+El rol del Generator es producir candidatos `ActionOption`. Esta spec no manda sus internos. Un Generator conforme:
 
 - DEBE producir 1–5 opciones distintas, no redundantes.
 - NO DEBE comandar actuadores directamente.
-- DEBERÍA aplicar el filtro `skills/references/framing-traps.md` antes de finalizar opciones,
-  para evitar estrechamiento cognitivo (trampas binarias, simples reformulaciones de una trampa).
-- En modo DEEP PUEDE usar un LLM con esquema JSON estricto; DEBE retroceder al generador
-  determinista de riesgo mínimo si no hay cliente LLM configurado o ante fallo.
+- DEBERÍA aplicar el filtro `skills/references/framing-traps.md` antes de finalizar opciones, para evitar estrechamiento cognitivo (trampas binarias, simples reformulaciones de una trampa).
+- En modo DEEP PUEDE usar un LLM con esquema JSON estricto; DEBE retroceder al generador determinista de riesgo mínimo si no hay cliente LLM configurado o ante fallo.
 
 ---
 
 ## 10. Versionado
 
 - Este documento es `DOF-SPEC` `v0.1`.
-- Las constantes normativas (ε, penalización `0.5`, `FAST_PASS_THRESHOLD = 5.0`) forman parte
-  del contrato versionado. Cambiar cualquiera de ellas requiere una nueva versión menor/mayor
-  de la spec y una re-verificación de todos los ports conformes.
-- El SHA-256 de este archivo DEBERÍA publicarse junto con los releases para detectar
-  modificación silenciosa (conforme al plan de publicación descentralizada).
+- Las constantes normativas (ε, penalización `0.5`, `FAST_PASS_THRESHOLD = 5.0`) forman parte del contrato versionado. Cambiar cualquiera de ellas requiere una nueva versión menor/mayor de la spec y una re-verificación de todos los ports conformes.
+- El SHA-256 de este archivo DEBERÍA publicarse junto con los releases para detectar modificación silenciosa (conforme al plan de publicación descentralizada).

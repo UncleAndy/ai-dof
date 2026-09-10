@@ -4,19 +4,13 @@
 **Part of:** The DOF open standard (see `skills/SKILL.md`, `skills/references/`, `PATTERNS.md`).
 **License:** CC BY-SA 4.0 — see `skills/references/license.md`. Implementations MUST satisfy §6 (Proof of Implementation).
 
-This document is the **normative contract** for any software that claims to implement
-DOF-Core. Downstream projects (`dof-sdk`, `dof-choir-plugin`, and any third-party port)
-MUST conform to the data model, mathematics, and audit requirements defined here.
-Where this document and `PATTERNS.md` disagree, **this document is authoritative**.
+This document is the **normative contract** for any software that claims to implement DOF-Core. Downstream projects (`dof-sdk`, `dof-choir-plugin`, and any third-party port) MUST conform to the data model, mathematics, and audit requirements defined here. Where this document and `PATTERNS.md` disagree, **this document is authoritative**.
 
 ---
 
 ## 1. Scope & Purpose
 
-DOF-Core is a decision-verification protocol that separates generative creativity
-(the *Generator*) from deterministic mathematical validation (the *Calculus Core*).
-Its purpose is to maximize the system's total degrees of freedom (DoF) while
-structurally forbidding the destruction of any entity's DoF for local gain.
+DOF-Core is a decision-verification protocol that separates generative creativity (the *Generator*) from deterministic mathematical validation (the *Calculus Core*). Its purpose is to maximize the system's total degrees of freedom (DoF) while structurally forbidding the destruction of any entity's DoF for local gain.
 
 This specification defines:
 
@@ -26,8 +20,7 @@ This specification defines:
 - The reactive-circuit timing rule.
 - The mandatory Proof-of-Implementation audit output.
 
-It does **not** prescribe transport, storage, language, or the internal design of the
-Generator's LLM integration (those are implementation details, covered informatively in §9).
+It does **not** prescribe transport, storage, language, or the internal design of the Generator's LLM integration (those are implementation details, covered informatively in §9).
 
 ---
 
@@ -43,8 +36,7 @@ Generator's LLM integration (those are implementation details, covered informati
 
 ## 3. Data Model
 
-All fields are normative. Types are described in JSON-Schema style; implementations in
-other languages MUST preserve field names, types, ranges, and the clamping rules.
+All fields are normative. Types are described in JSON-Schema style; implementations in other languages MUST preserve field names, types, ranges, and the clamping rules.
 
 ### 3.1 `EntityState`
 
@@ -68,10 +60,7 @@ An entity with `current_dof == 0.0` is at collapse (see §4.1).
 | `context_switch_cost`     | float                      | `>= 0.0`   | ΔT — penalty for changing the current process. |
 | `entities`                | map<`entity_id`,`EntityState`> | —     | The full set of observed entities. |
 
-`global_time_to_collapse` is computed by the Perception layer as the **minimum**
-`time_to_collapse` over all entities where `is_entropy_source == false`. If no such
-entity exists, it MAY default to a safe large value (e.g. `1e9`), but implementations
-SHOULD surface this as a degenerate state.
+`global_time_to_collapse` is computed by the Perception layer as the **minimum** `time_to_collapse` over all entities where `is_entropy_source == false`. If no such entity exists, it MAY default to a safe large value (e.g. `1e9`), but implementations SHOULD surface this as a degenerate state.
 
 ### 3.3 `ActionOption`
 
@@ -95,21 +84,15 @@ TotalDoF(S) = Σ_{e ∈ S.entities, e.is_entropy_source == false}  ln(1 + max(e.
 ```
 
 - The sum is taken **only** over non-entropy entities (see §4.2).
-- As `current_dof → 0`, `ln(1 + dof) → 0`: a collapse contributes ~0, never a finite
-  negative that a utilitarianism-style trade could "earn back". This is the structural
-  guard against liquidating a unique future-state carrier (Axiom 3).
+- As `current_dof → 0`, `ln(1 + dof) → 0`: a collapse contributes ~0, never a finite negative that a utilitarianism-style trade could "earn back". This is the structural guard against liquidating a unique future-state carrier (Axiom 3).
 
 ### 4.2 Entropy-Source Exclusion
 
-Any entity with `is_entropy_source == true` is **excluded** from `TotalDoF`. Its personal
-DoF is not subtracted from the system score, and its isolation is not penalized. This
-realizes *structural network defense*: aggressors are filtered from the opportunity
-topology rather than negotiated with.
+Any entity with `is_entropy_source == true` is **excluded** from `TotalDoF`. Its personal DoF is not subtracted from the system score, and its isolation is not penalized. This realizes *structural network defense*: aggressors are filtered from the opportunity topology rather than negotiated with.
 
 ### 4.3 Selection / Net Delta
 
-For each candidate `ActionOption` `o`, build the **simulated** matrix `S'` by applying
-`o.projected_dof_delta` to every entity's `current_dof`, clamped to `[0.0, 1.0]`:
+For each candidate `ActionOption` `o`, build the **simulated** matrix `S'` by applying `o.projected_dof_delta` to every entity's `current_dof`, clamped to `[0.0, 1.0]`:
 
 ```
 for each entity e in S.entities:
@@ -133,28 +116,20 @@ If `o.is_reversible == false`:
 NetDelta(o) -= 0.5
 ```
 
-The constant `0.5` is normative (the *rigidity coefficient*). Conforming
-implementations MUST use exactly this value unless a newer spec version changes it.
+The constant `0.5` is normative (the *rigidity coefficient*). Conforming implementations MUST use exactly this value unless a newer spec version changes it.
 
 ### 4.5 Decision
 
-The selected option is the one maximizing `NetDelta`. Ties MAY be broken deterministically
-(e.g. by `option_id` lexicographic order). If the option set is empty, selection returns
-`none` (no action).
+The selected option is the one maximizing `NetDelta`. Ties MAY be broken deterministically (e.g. by `option_id` lexicographic order). If the option set is empty, selection returns `none` (no action).
 
 ---
 
 ## 5. Reactive Circuit (Time-Bounded Interrupter)
 
-To prevent *Analysis Paralysis*, compute cycles are bound to the physical time remaining
-before collapse (τ = `global_time_to_collapse`). Define `FAST_PASS_THRESHOLD = 5.0`
-seconds (normative).
+To prevent *Analysis Paralysis*, compute cycles are bound to the physical time remaining before collapse (τ = `global_time_to_collapse`). Define `FAST_PASS_THRESHOLD = 5.0` seconds (normative).
 
-- **If τ ≥ 5.0 s → DEEP DIVERSIFICATION:** activate the LLM-backed Generator to search
-  for hidden alternatives (3–5 distinct options).
-- **If τ < 5.0 s → FAST PASS:** bypass the LLM; use the deterministic fallback generator
-  (one minimal-risk option per cycle). The system preserves its structure instead of
-  risking a late, poorly-verified decision.
+- **If τ ≥ 5.0 s → DEEP DIVERSIFICATION:** activate the LLM-backed Generator to search for hidden alternatives (3–5 distinct options).
+- **If τ < 5.0 s → FAST PASS:** bypass the LLM; use the deterministic fallback generator (one minimal-risk option per cycle). The system preserves its structure instead of risking a late, poorly-verified decision.
 
 The selection mathematics (§4) is **identical** in both modes; only the option source differs.
 
@@ -191,8 +166,7 @@ For each candidate `o`:
 - `net_delta` = per §4.3–§4.4
 - `selected` (bool)
 
-This report is the enforceable license condition: a deployment that cannot produce it
-is not a compliant DOF-Core implementation and must not be represented as one.
+This report is the enforceable license condition: a deployment that cannot produce it is not a compliant DOF-Core implementation and must not be represented as one.
 
 ---
 
@@ -205,20 +179,15 @@ A software component is **DOF-Core conformant** iff it:
 3. Computes `NetDelta` exactly per §4.3–§4.5.
 4. Applies the reactive-circuit rule of §5 with `FAST_PASS_THRESHOLD = 5.0`.
 5. Can emit the audit report of §6 for any decision it makes.
-6. Does not modify Axiom-3 semantics: it never selects an option whose `NetDelta` logic
-   would be overridden by an external "greater good" utility metric.
+6. Does not modify Axiom-3 semantics: it never selects an option whose `NetDelta` logic would be overridden by an external "greater good" utility metric.
 
-Cross-language ports (Python / Rust / Go / C++ under `patterns/`, or packaged SDKs)
-MUST produce **bit-for-bit equivalent** `total_system_dof`, `net_delta`, and `selected`
-for the same inputs (within IEEE-754 tolerance for the logarithm).
+Cross-language ports (Python / Rust / Go / C++ under `patterns/`, or packaged SDKs) MUST produce **bit-for-bit equivalent** `total_system_dof`, `net_delta`, and `selected` for the same inputs (within IEEE-754 tolerance for the logarithm).
 
 ---
 
 ## 8. Wire / Serialization Contract
 
-For inter-layer and cross-process exchange, the canonical encoding is **JSON** with the
-field names of §3. Conforming implementations exchanging data with others MUST accept and
-emit this shape. A minimal example of a `SystemStateMatrix`:
+For inter-layer and cross-process exchange, the canonical encoding is **JSON** with the field names of §3. Conforming implementations exchanging data with others MUST accept and emit this shape. A minimal example of a `SystemStateMatrix`:
 
 ```json
 {
@@ -238,23 +207,17 @@ The audit report (§6) SHOULD also be serializable to JSON for logging and verif
 
 ## 9. Informative: Generator Interface (non-normative)
 
-The Generator's role is to produce `ActionOption` candidates. This spec does not mandate
-its internals. A conformant Generator:
+The Generator's role is to produce `ActionOption` candidates. This spec does not mandate its internals. A conformant Generator:
 
 - MUST produce 1–5 distinct, non-redundant options.
 - MUST NOT directly command actuators.
-- SHOULD apply the `skills/references/framing-traps.md` filter before finalizing options,
-  to avoid cognitive narrowing (binary traps, simple rephrasings of a trap).
-- In DEEP mode MAY use an LLM with a strict JSON schema; MUST fall back to the
-  deterministic minimal-risk generator when no LLM client is configured or on failure.
+- SHOULD apply the `skills/references/framing-traps.md` filter before finalizing options, to avoid cognitive narrowing (binary traps, simple rephrasings of a trap).
+- In DEEP mode MAY use an LLM with a strict JSON schema; MUST fall back to the deterministic minimal-risk generator when no LLM client is configured or on failure.
 
 ---
 
 ## 10. Versioning
 
 - This document is `DOF-SPEC` `v0.1`.
-- Normative constants (ε, `0.5` penalty, `FAST_PASS_THRESHOLD = 5.0`) are part of the
-  versioned contract. Changing any of them requires a new minor/major spec version and a
-  re-verification of all conforming ports.
-- SHA-256 of this file SHOULD be published alongside releases to detect silent
-  modification (consistent with the de-centralized publication plan).
+- Normative constants (ε, `0.5` penalty, `FAST_PASS_THRESHOLD = 5.0`) are part of the versioned contract. Changing any of them requires a new minor/major spec version and a re-verification of all conforming ports.
+- SHA-256 of this file SHOULD be published alongside releases to detect silent modification (consistent with the de-centralized publication plan).

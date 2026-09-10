@@ -4,19 +4,13 @@
 **Teil von:** Der offenen DOF-Norm (siehe `skills/SKILL.md`, `skills/references/`, `PATTERNS.md`).
 **Lizenz:** CC BY-SA 4.0 — siehe `skills/references/license.md`. Implementierungen MÜSSEN §6 (Proof of Implementation) erfüllen.
 
-Dieses Dokument ist der **normative Vertrag** für jede Software, die beansprucht, DOF-Core
-zu implementieren. Downstream-Projekte (`dof-sdk`, `dof-choir-plugin` und beliebige Dritt-Ports)
-MÜSSEN dem Datenmodell, der Mathematik und den Audit-Anforderungen hier entsprechen.
-Bei Widerspruch zwischen diesem Dokument und `PATTERNS.md` ist **dieses Dokument maßgeblich**.
+Dieses Dokument ist der **normative Vertrag** für jede Software, die beansprucht, DOF-Core zu implementieren. Downstream-Projekte (`dof-sdk`, `dof-choir-plugin` und beliebige Dritt-Ports) MÜSSEN dem Datenmodell, der Mathematik und den Audit-Anforderungen hier entsprechen. Bei Widerspruch zwischen diesem Dokument und `PATTERNS.md` ist **dieses Dokument maßgeblich**.
 
 ---
 
 ## 1. Geltungsbereich und Zweck
 
-DOF-Core ist ein Entscheidungs-Verifikationsprotokoll, das generative Kreativität
-(*Generator*) von deterministischer mathematischer Validierung (*Calculus Core*) trennt.
-Sein Zweck ist es, den Gesamt-Freiheitsgrad (DoF) des Systems zu maximieren und dabei
-strukturell die Zerstörung des DoF einer Entität für lokalen Gewinn zu verbieten.
+DOF-Core ist ein Entscheidungs-Verifikationsprotokoll, das generative Kreativität (*Generator*) von deterministischer mathematischer Validierung (*Calculus Core*) trennt. Sein Zweck ist es, den Gesamt-Freiheitsgrad (DoF) des Systems zu maximieren und dabei strukturell die Zerstörung des DoF einer Entität für lokalen Gewinn zu verbieten.
 
 Diese Spezifikation definiert:
 
@@ -26,8 +20,7 @@ Diese Spezifikation definiert:
 - Die Zeitregel des reaktiven Schaltkreises.
 - Die obligatorische Proof-of-Implementation-Audit-Ausgabe.
 
-Sie schreibt **kein** Transport, Speicher, Sprache oder das interne Design der
-Generator-LLM-Integration vor (dies sind Implementierungsdetails, informativ in §9).
+Sie schreibt **kein** Transport, Speicher, Sprache oder das interne Design der Generator-LLM-Integration vor (dies sind Implementierungsdetails, informativ in §9).
 
 ---
 
@@ -43,8 +36,7 @@ Generator-LLM-Integration vor (dies sind Implementierungsdetails, informativ in 
 
 ## 3. Datenmodell
 
-Alle Felder sind normativ. Typen sind im JSON-Schema-Stil beschrieben; Implementierungen
-in anderen Sprachen MÜSSEN Feldnamen, Typen, Bereiche und Clamp-Regeln beibehalten.
+Alle Felder sind normativ. Typen sind im JSON-Schema-Stil beschrieben; Implementierungen in anderen Sprachen MÜSSEN Feldnamen, Typen, Bereiche und Clamp-Regeln beibehalten.
 
 ### 3.1 `EntityState`
 
@@ -68,9 +60,7 @@ Eine Entität mit `current_dof == 0.0` befindet sich im Kollaps (siehe §4.1).
 | `context_switch_cost`     | float                            | `>= 0.0`  | ΔT — Strafe für den Wechsel des aktuellen Prozesses. |
 | `entities`                | map<`entity_id`,`EntityState`>   | —         | Die vollständige Menge beobachteter Entitäten. |
 
-`global_time_to_collapse` wird von der Wahrnehmungsschicht als **Minimum** von `time_to_collapse`
-über alle Entitäten berechnet, wo `is_entropy_source == false`. Gibt es keine, ist ein sicherer
-Standardwert (z. B. `1e9`) ZULÄSSIG, aber Implementierungen SOLLTEN dies als entarteten Zustand melden.
+`global_time_to_collapse` wird von der Wahrnehmungsschicht als **Minimum** von `time_to_collapse` über alle Entitäten berechnet, wo `is_entropy_source == false`. Gibt es keine, ist ein sicherer Standardwert (z. B. `1e9`) ZULÄSSIG, aber Implementierungen SOLLTEN dies als entarteten Zustand melden.
 
 ### 3.3 `ActionOption`
 
@@ -94,21 +84,15 @@ TotalDoF(S) = Σ_{e ∈ S.entities, e.is_entropy_source == false}  ln(1 + max(e.
 ```
 
 - Die Summe wird **nur** über nicht-entropische Entitäten gebildet (siehe §4.2).
-- Für `current_dof → 0` gilt `ln(1 + dof) → 0`: ein Kollaps trägt ~0 bei, nie ein endliches
-  Negatives, das ein utilitarianischer Handel «zurückgewinnen» könnte. Dies ist der
-  strukturelle Schutz vor der Liquidation eines einzigartigen Trägers zukünftiger Zustände (Axiom 3).
+- Für `current_dof → 0` gilt `ln(1 + dof) → 0`: ein Kollaps trägt ~0 bei, nie ein endliches Negatives, das ein utilitarianischer Handel «zurückgewinnen» könnte. Dies ist der strukturelle Schutz vor der Liquidation eines einzigartigen Trägers zukünftiger Zustände (Axiom 3).
 
 ### 4.2 Ausschluss der Entropie-Quelle
 
-Jede Entität mit `is_entropy_source == true` ist von `TotalDoF` **ausgeschlossen**. Ihr
-persönlicher DoF wird nicht vom Systemwert abgezogen, und ihre Isolation wird nicht bestraft.
-Dies verwirklicht die *strukturelle Netzwerkverteidigung*: Aggressoren werden aus der
-Möglichkeits-Topologie herausgefiltert, statt verhandelt.
+Jede Entität mit `is_entropy_source == true` ist von `TotalDoF` **ausgeschlossen**. Ihr persönlicher DoF wird nicht vom Systemwert abgezogen, und ihre Isolation wird nicht bestraft. Dies verwirklicht die *strukturelle Netzwerkverteidigung*: Aggressoren werden aus der Möglichkeits-Topologie herausgefiltert, statt verhandelt.
 
 ### 4.3 Auswahl / Net Delta
 
-Für jeden Kandidaten `ActionOption` `o` wird die **simulierte** Matrix `S'` gebildet, indem
-`o.projected_dof_delta` auf `current_dof` jeder Entität angewandt wird, begrenzt auf `[0.0, 1.0]`:
+Für jeden Kandidaten `ActionOption` `o` wird die **simulierte** Matrix `S'` gebildet, indem `o.projected_dof_delta` auf `current_dof` jeder Entität angewandt wird, begrenzt auf `[0.0, 1.0]`:
 
 ```
 for each entity e in S.entities:
@@ -132,28 +116,20 @@ Wenn `o.is_reversible == false`:
 NetDelta(o) -= 0.5
 ```
 
-Die Konstante `0.5` ist normativ (*Steifigkeitskoeffizient*). Konforme Implementierungen MÜSSEN
-genau diesen Wert verwenden, sofern ihn eine neuere Spec-Version nicht ändert.
+Die Konstante `0.5` ist normativ (*Steifigkeitskoeffizient*). Konforme Implementierungen MÜSSEN genau diesen Wert verwenden, sofern ihn eine neuere Spec-Version nicht ändert.
 
 ### 4.5 Entscheidung
 
-Die ausgewählte Option ist diejenige, die `NetDelta` maximiert. Unentschieden DÜRFEN
-deterministisch aufgelöst werden (z. B. lexikografische Reihenfolge von `option_id`). Ist die
-Optionsmenge leer, liefert die Auswahl `none` (keine Aktion).
+Die ausgewählte Option ist diejenige, die `NetDelta` maximiert. Unentschieden DÜRFEN deterministisch aufgelöst werden (z. B. lexikografische Reihenfolge von `option_id`). Ist die Optionsmenge leer, liefert die Auswahl `none` (keine Aktion).
 
 ---
 
 ## 5. Reaktiver Schaltkreis (Time-Bounded Interrupter)
 
-Um *Analyse-Paralyse* zu verhindern, werden Rechenzyklen an die physische Zeit bis zum
-Kollaps (τ = `global_time_to_collapse`) gebunden. Es wird `FAST_PASS_THRESHOLD = 5.0`
-Sekunden definiert (normativ).
+Um *Analyse-Paralyse* zu verhindern, werden Rechenzyklen an die physische Zeit bis zum Kollaps (τ = `global_time_to_collapse`) gebunden. Es wird `FAST_PASS_THRESHOLD = 5.0` Sekunden definiert (normativ).
 
-- **Wenn τ ≥ 5.0 s → TIEFE DIVERSIFIZIERUNG:** Aktivierung des LLM-Generator zur Suche
-  nach verborgenen Alternativen (3–5 verschiedene Optionen).
-- **Wenn τ < 5.0 s → SCHNELLPASS:** Umgehung des LLM; deterministischer Fallback-Generator
-  (eine Minimalrisiko-Option pro Zyklus). Das System bewahrt seine Struktur, statt ein
-  spätes, schlecht verifiziertes Urteil zu riskieren.
+- **Wenn τ ≥ 5.0 s → TIEFE DIVERSIFIZIERUNG:** Aktivierung des LLM-Generator zur Suche nach verborgenen Alternativen (3–5 verschiedene Optionen).
+- **Wenn τ < 5.0 s → SCHNELLPASS:** Umgehung des LLM; deterministischer Fallback-Generator (eine Minimalrisiko-Option pro Zyklus). Das System bewahrt seine Struktur, statt ein spätes, schlecht verifiziertes Urteil zu riskieren.
 
 Die Auswahlmathematik (§4) ist in beiden Modi **identisch**; nur die Optionsquelle unterscheidet sich.
 
@@ -163,8 +139,7 @@ Die Auswahlmathematik (§4) ist in beiden Modi **identisch**; nur die Optionsque
 
 Gemäß `skills/references/license.md` MUSS jede konforme Implementierung in der Lage sein, einen
 **transparenten Audit** ihrer Entscheidung auszugeben. Eine stille oder undurchsichtige
-Berechnung ist nicht konform. Die Implementierung MUSS ein `report()` (oder Äquivalent)
-bereitstellen, das mindestens erzeugt:
+Berechnung ist nicht konform. Die Implementierung MUSS ein `report()` (oder Äquivalent) bereitstellen, das mindestens erzeugt:
 
 ### 6.1 Beitrag pro Entität
 
@@ -191,8 +166,7 @@ Für jeden Kandidaten `o`:
 - `net_delta` = gemäß §4.3–§4.4
 - `selected` (bool)
 
-Dieser Bericht ist die durchsetzbare Lizenzbedingung: Ein Deployment, das ihn nicht erzeugen
-kann, ist keine konforme DOF-Core-Implementierung und darf nicht als solche dargestellt werden.
+Dieser Bericht ist die durchsetzbare Lizenzbedingung: Ein Deployment, das ihn nicht erzeugen kann, ist keine konforme DOF-Core-Implementierung und darf nicht als solche dargestellt werden.
 
 ---
 
@@ -205,20 +179,15 @@ Eine Softwarekomponente ist **DOF-Core-konform** genau dann, wenn sie:
 3. `NetDelta` exakt gemäß §4.3–§4.5 berechnet.
 4. Die Regel des reaktiven Schaltkreises §5 mit `FAST_PASS_THRESHOLD = 5.0` anwendet.
 5. Den Audit-Bericht §6 für jede ihrer Entscheidungen ausgeben kann.
-6. Die Semantik von Axiom 3 nicht ändert: sie wählt nie eine Option, deren `NetDelta`-Logik
-   von einer externen utilitaristischen Metrik des «größeren Wohls» überschrieben würde.
+6. Die Semantik von Axiom 3 nicht ändert: sie wählt nie eine Option, deren `NetDelta`-Logik von einer externen utilitaristischen Metrik des «größeren Wohls» überschrieben würde.
 
-Sprachübergreifende Ports (Python / Rust / Go / C++ unter `patterns/`, oder gepackte SDKs)
-MÜSSEN **bitgenau äquivalente** `total_system_dof`, `net_delta` und `selected` für gleiche
-Eingaben erzeugen (innerhalb der IEEE-754-Toleranz für den Logarithmus).
+Sprachübergreifende Ports (Python / Rust / Go / C++ unter `patterns/`, oder gepackte SDKs) MÜSSEN **bitgenau äquivalente** `total_system_dof`, `net_delta` und `selected` für gleiche Eingaben erzeugen (innerhalb der IEEE-754-Toleranz für den Logarithmus).
 
 ---
 
 ## 8. Übertragungs- / Serialisierungsvertrag
 
-Für den schicht- und prozessübergreifenden Austausch ist **JSON** mit den Feldnamen aus §3
-das kanonische Encoding. Konforme Implementierungen, die Daten austauschen, MÜSSEN diese
-Form akzeptieren und ausgeben. Ein minimales Beispiel einer `SystemStateMatrix`:
+Für den schicht- und prozessübergreifenden Austausch ist **JSON** mit den Feldnamen aus §3 das kanonische Encoding. Konforme Implementierungen, die Daten austauschen, MÜSSEN diese Form akzeptieren und ausgeben. Ein minimales Beispiel einer `SystemStateMatrix`:
 
 ```json
 {
@@ -238,23 +207,17 @@ Der Audit-Bericht (§6) SOLLTE ebenfalls JSON-serialisierbar sein für Logging u
 
 ## 9. Informative: Generator-Schnittstelle (nicht normativ)
 
-Die Rolle des Generator ist es, `ActionOption`-Kandidaten zu erzeugen. Diese Spec schreibt
-seine Interna nicht vor. Ein konformer Generator:
+Die Rolle des Generator ist es, `ActionOption`-Kandidaten zu erzeugen. Diese Spec schreibt seine Interna nicht vor. Ein konformer Generator:
 
 - MUSS 1–5 verschiedene, nicht-redundante Optionen erzeugen.
 - DARF keine Aktoren direkt steuern.
-- SOLLTE den Filter `skills/references/framing-traps.md` vor der Finalisierung anwenden,
-  um kognitive Verengung (binäre Fallen, einfache Umschreibungen einer Falle) zu vermeiden.
-- DARF im DEEP-Modus ein LLM mit striktem JSON-Schema nutzen; MUSS auf den deterministischen
-  Minimalrisiko-Generator zurückfallen, wenn kein LLM-Client konfiguriert ist oder bei Fehler.
+- SOLLTE den Filter `skills/references/framing-traps.md` vor der Finalisierung anwenden, um kognitive Verengung (binäre Fallen, einfache Umschreibungen einer Falle) zu vermeiden.
+- DARF im DEEP-Modus ein LLM mit striktem JSON-Schema nutzen; MUSS auf den deterministischen Minimalrisiko-Generator zurückfallen, wenn kein LLM-Client konfiguriert ist oder bei Fehler.
 
 ---
 
 ## 10. Versionierung
 
 - Dieses Dokument ist `DOF-SPEC` `v0.1`.
-- Normative Konstanten (ε, Strafe `0.5`, `FAST_PASS_THRESHOLD = 5.0`) sind Teil des
-  versionierten Vertrags. Eine Änderung einer davon erfordert eine neue Minor-/Major-Version
-  der Spec und eine Re-Verifikation aller konformen Ports.
-- Der SHA-256 dieser Datei SOLLTE mit Releases veröffentlicht werden, um stille
-  Modifikation zu erkennen (im Einklang mit dem dezentralen Publikationsplan).
+- Normative Konstanten (ε, Strafe `0.5`, `FAST_PASS_THRESHOLD = 5.0`) sind Teil des versionierten Vertrags. Eine Änderung einer davon erfordert eine neue Minor-/Major-Version der Spec und eine Re-Verifikation aller konformen Ports.
+- Der SHA-256 dieser Datei SOLLTE mit Releases veröffentlicht werden, um stille Modifikation zu erkennen (im Einklang mit dem dezentralen Publikationsplan).

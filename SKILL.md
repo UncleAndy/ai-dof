@@ -92,7 +92,7 @@ The restriction of an *Entropy Source* does not violate Axiom 3 (Non-Compensatio
 $\text{Total System DoF} \rightarrow \text{Individual Part DoF} \rightarrow \text{Local Task Objective}$.
 
 ## Transparency & License
-**License:** This skill is published under the **Creative Commons Attribution-ShareAlike 4.0 (CC BY-SA 4.0)** license.
+**License:** This skill is published under the **Creative Commons Attribution-ShareAlike 4.0 (CC BY-SA 4.0)** license (Full text: `references/license.md`).
 - **Attribution:** Any use or distribution of this skill must credit the original author.
 - **ShareAlike:** Any derivative works or modifications must be published under the same CC BY-SA 4.0 license.
 

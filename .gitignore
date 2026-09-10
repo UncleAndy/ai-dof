@@ -13,6 +13,20 @@ env/
 .coverage
 htmlcov/
 
+# Rust
+target/
+*.rlib
+*.rmeta
+
+# Go
+*.exe
+
+# C / C++
+*.o
+*.out
+a.out
+build/
+
 # Editor / OS noise
 .DS_Store
 *.swp

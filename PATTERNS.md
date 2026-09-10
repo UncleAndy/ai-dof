@@ -35,6 +35,10 @@ The `patterns/` directory contains a runnable Python SDK implementing all layers
 - `patterns/calculus_core.py` — Validation Layer (logarithmic DoF sum, ΔT-aware selection).
 - `patterns/orchestrator.py` — Reactive Circuit with Interruption (ties layers together; FAST PASS / DEEP DIVERSIFICATION).
 - `patterns/smoke_test.py` — Minimal runnable example.
+- **Multi-language ports** (same logic, verified runnable):
+  - `patterns/rust/` — Rust port (`dof_core.rs`, `graph_mapper.rs`, `generator.rs`, `orchestrator.rs`, `main.rs`).
+  - `patterns/go/` — Go port (`dof_core.go`, `graph_mapper.go`, `generator.go`, `orchestrator.go`, `main.go`, `go.mod`).
+  - `patterns/cpp/` — C++ port (`dof_core.hpp`, `graph_mapper.hpp`, `generator.hpp`, `orchestrator.hpp`, `main.cpp`).
 
 ---
 
@@ -69,6 +73,10 @@ The `patterns/` directory contains a runnable Python SDK implementing all layers
 - `patterns/calculus_core.py` — Слой Валидации (логарифмическая сумма DoF, выбор с учётом ΔT).
 - `patterns/orchestrator.py` — Реактивный контур с прерыванием (связывает слои; FAST PASS / DEEP DIVERSIFICATION).
 - `patterns/smoke_test.py` — Минимальный запускаемый пример.
+- **Порты на другие языки** (та же логика, проверены на запуск):
+  - `patterns/rust/` — порт на Rust (`dof_core.rs`, `graph_mapper.rs`, `generator.rs`, `orchestrator.rs`, `main.rs`).
+  - `patterns/go/` — порт на Go (`dof_core.go`, `graph_mapper.go`, `generator.go`, `orchestrator.go`, `main.go`, `go.mod`).
+  - `patterns/cpp/` — порт на C++ (`dof_core.hpp`, `graph_mapper.hpp`, `generator.hpp`, `orchestrator.hpp`, `main.cpp`).
 
 ---
 
@@ -103,6 +111,10 @@ Le répertoire `patterns/` contient un SDK Python exécutable implémentant tout
 - `patterns/calculus_core.py` — Couche de Validation (somme logarithmique DoF, sélection via ΔT).
 - `patterns/orchestrator.py` — Cercle Réactif avec Interruption (lie les couches ; FAST PASS / DEEP DIVERSIFICATION).
 - `patterns/smoke_test.py` — Exemple minimal exécutable.
+- **Portages multilingues** (même logique, exécutables vérifiés) :
+  - `patterns/rust/` — portage Rust (`dof_core.rs`, `graph_mapper.rs`, `generator.rs`, `orchestrator.rs`, `main.rs`).
+  - `patterns/go/` — portage Go (`dof_core.go`, `graph_mapper.go`, `generator.go`, `orchestrator.go`, `main.go`, `go.mod`).
+  - `patterns/cpp/` — portage C++ (`dof_core.hpp`, `graph_mapper.hpp`, `generator.hpp`, `orchestrator.hpp`, `main.cpp`).
 
 ---
 
@@ -137,6 +149,10 @@ Das Verzeichnis `patterns/` enthält ein ausführbares Python-SDK, das alle Schi
 - `patterns/calculus_core.py` — Validierungsschicht (logarithmische DoF-Summe, ΔT-bewusste Auswahl).
 - `patterns/orchestrator.py` — Reaktiver Schaltkreis mit Unterbrechung (verbindet Schichten; FAST PASS / DEEP DIVERSIFICATION).
 - `patterns/smoke_test.py` — Minimales ausführbares Beispiel.
+- **Mehrsprachige Ports** (gleiche Logik, lauffähig verifiziert):
+  - `patterns/rust/` — Rust-Port (`dof_core.rs`, `graph_mapper.rs`, `generator.rs`, `orchestrator.rs`, `main.rs`).
+  - `patterns/go/` — Go-Port (`dof_core.go`, `graph_mapper.go`, `generator.go`, `orchestrator.go`, `main.go`, `go.mod`).
+  - `patterns/cpp/` — C++-Port (`dof_core.hpp`, `graph_mapper.hpp`, `generator.hpp`, `orchestrator.hpp`, `main.cpp`).
 
 ---
 
@@ -171,6 +187,10 @@ El directorio `patterns/` contiene un SDK de Python ejecutable que implementa to
 - `patterns/calculus_core.py` — Capa de Validación (suma logarítmica DoF, selección consciente de ΔT).
 - `patterns/orchestrator.py` — Circuito Reactivo con Interrupción (une las capas; FAST PASS / DEEP DIVERSIFICATION).
 - `patterns/smoke_test.py` — Ejemplo mínimo ejecutable.
+- **Ports multilingües** (misma lógica, ejecutables verificados):
+  - `patterns/rust/` — port Rust (`dof_core.rs`, `graph_mapper.rs`, `generator.rs`, `orchestrator.rs`, `main.rs`).
+  - `patterns/go/` — port Go (`dof_core.go`, `graph_mapper.go`, `generator.go`, `orchestrator.go`, `main.go`, `go.mod`).
+  - `patterns/cpp/` — port C++ (`dof_core.hpp`, `graph_mapper.hpp`, `generator.hpp`, `orchestrator.hpp`, `main.cpp`).
 
 ---
 
@@ -205,3 +225,7 @@ La dosierujo `patterns/` enhavas ekzekuteblan Python-SDK, kiu realigas ĉiujn ta
 - `patterns/calculus_core.py` — Tavolo de Validigo (logaritma DoF-sumo, ΔT-konscia elekto).
 - `patterns/orchestrator.py` — Reaktiva Cirkvito kun Interrompo (kunligas tavolojn; FAST PASS / DEEP DIVERSIFICATION).
 - `patterns/smoke_test.py` — Minimuma ekzekutebla ekzemplo.
+- **Multlingvaj realigoj** (sama logiko, ekzekuteble verkitaj):
+  - `patterns/rust/` — Rust-realigo (`dof_core.rs`, `graph_mapper.rs`, `generator.rs`, `orchestrator.rs`, `main.rs`).
+  - `patterns/go/` — Go-realigo (`dof_core.go`, `graph_mapper.go`, `generator.go`, `orchestrator.go`, `main.go`, `go.mod`).
+  - `patterns/cpp/` — C++-realigo (`dof_core.hpp`, `graph_mapper.hpp`, `generator.hpp`, `orchestrator.hpp`, `main.cpp`).

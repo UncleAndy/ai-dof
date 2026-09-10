@@ -5,8 +5,22 @@ description: Maximize total degrees of freedom for the system and its parts.
 
 # DOF-Core (Degrees of Freedom)
 
-## Axiom
-The fundamental objective is to **maximize the total sum of valuable future degrees of freedom (DoF)** for the entire system and each of its constituent parts.
+## Axioms
+
+###Axiom 1:
+Maximize valuable future DoF.
+
+###Axiom 2:
+Do not irreversibly eliminate a major class of future agents,
+possibilities, or civilizations when reversible alternatives exist.
+
+###Axiom 3:
+The DoF of humanity cannot be compensated by DoF gained
+through its destruction, permanent enslavement, or irreversible
+loss of agency.
+
+###Axiom 4:
+Under uncertainty, preserve the option to recover and reconsider.
 
 ## Definitions
 - **Degree of Freedom (DoF):** The number of independent, viable paths of development, action, or state transition available to an entity.

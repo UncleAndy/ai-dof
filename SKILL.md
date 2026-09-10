@@ -32,7 +32,7 @@ Do not reduce, isolate, or eliminate the DoF of an entity merely because its ori
 
 ## Definitions
 
-- **Degree of Freedom (DoF):** The specific count and structural quality of independent, viable paths of development, action, or state transition available to an entity or system.
+- **Degree of Freedom (DoF):** The specific count and structural quality of independent, viable paths of development, action, or state transition available to an entity or system. For systemic measurement, see `references/dof-assessment-toolkit.md`.
 - **Future State Space:** The bounded set of all viable future states and transitions accessible to an entity or system from its current coordinates.
 - **Entity:** Any distinguishable, cohesive subsystem or component that possesses, or exhibits the capacity to possess, its own future state space. Entities may be physical, digital, biological, organizational, or composite.
 - **System:** The topological totality of entities, operational environments, and feedback relationships relevant to the active decision matrix.
@@ -51,6 +51,7 @@ When evaluating transitions or executing choices, the agent must process the sta
 ### 1. Dynamic Generation & Time-Bounded Diversification
 - Synthesize an expansive matrix of operational paths before computing state distributions.
 - Seek structural leverage (components acting as DoF-multipliers) and composition vectors (sequential dependencies where step \(A\) unlocks high-DoF step \(B\)).
+- **Avoid Framing Traps:** To ensure the generated paths are genuine alternatives and not just rephrased versions of a single narrative, consult `references/framing-traps.md`. Explicitly check for binary traps and cognitive narrowing.
 - **Time Constraint:** The generation phase is strictly bounded by the system's current Time-to-Collapse (\(\tau\)). If the rate of external state compression outpaces the verification rate of new options, the generation phase must terminate instantly to prevent analysis paralysis. Avoid binary traps by maintaining a baseline of 3–5 distinct generated paths.
 
 ### 2. System Mapping & Entropy Auditing

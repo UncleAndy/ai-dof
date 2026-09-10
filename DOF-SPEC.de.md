@@ -1,8 +1,8 @@
 # DOF-Core — Formale Spezifikation (DOF-SPEC)
 
 **Status:** ENTWURF v0.1
-**Teil von:** Der offenen DOF-Norm (siehe `SKILL.md`, `references/`, `PATTERNS.md`).
-**Lizenz:** CC BY-SA 4.0 — siehe `references/license.md`. Implementierungen MÜSSEN §6 (Proof of Implementation) erfüllen.
+**Teil von:** Der offenen DOF-Norm (siehe `skills/SKILL.md`, `skills/references/`, `PATTERNS.md`).
+**Lizenz:** CC BY-SA 4.0 — siehe `skills/references/license.md`. Implementierungen MÜSSEN §6 (Proof of Implementation) erfüllen.
 
 Dieses Dokument ist der **normative Vertrag** für jede Software, die beansprucht, DOF-Core
 zu implementieren. Downstream-Projekte (`dof-sdk`, `dof-choir-plugin` und beliebige Dritt-Ports)
@@ -33,10 +33,10 @@ Generator-LLM-Integration vor (dies sind Implementierungsdetails, informativ in 
 
 ## 2. Normative Referenzen
 
-- `SKILL.md` — philosophische Axiome und Decision Calculus (Wahrheitsquelle der Intention).
-- `references/license.md` — CC BY-SA 4.0 + Proof-of-Implementation-Klausel.
-- `references/dof-assessment-toolkit.md` — systemische Messmethodik (informative).
-- `references/framing-traps.md` — kognitiver Filter, vor der Optionsgenerierung angewandt.
+- `skills/SKILL.md` — philosophische Axiome und Decision Calculus (Wahrheitsquelle der Intention).
+- `skills/references/license.md` — CC BY-SA 4.0 + Proof-of-Implementation-Klausel.
+- `skills/references/dof-assessment-toolkit.md` — systemische Messmethodik (informative).
+- `skills/references/framing-traps.md` — kognitiver Filter, vor der Optionsgenerierung angewandt.
 - `PATTERNS.md` — illustrative Muster (informative; diese Spec hat bei Konflikt Vorrang).
 
 ---
@@ -161,7 +161,7 @@ Die Auswahlmathematik (§4) ist in beiden Modi **identisch**; nur die Optionsque
 
 ## 6. Proof of Implementation (Audit-Bericht)
 
-Gemäß `references/license.md` MUSS jede konforme Implementierung in der Lage sein, einen
+Gemäß `skills/references/license.md` MUSS jede konforme Implementierung in der Lage sein, einen
 **transparenten Audit** ihrer Entscheidung auszugeben. Eine stille oder undurchsichtige
 Berechnung ist nicht konform. Die Implementierung MUSS ein `report()` (oder Äquivalent)
 bereitstellen, das mindestens erzeugt:
@@ -243,7 +243,7 @@ seine Interna nicht vor. Ein konformer Generator:
 
 - MUSS 1–5 verschiedene, nicht-redundante Optionen erzeugen.
 - DARF keine Aktoren direkt steuern.
-- SOLLTE den Filter `references/framing-traps.md` vor der Finalisierung anwenden,
+- SOLLTE den Filter `skills/references/framing-traps.md` vor der Finalisierung anwenden,
   um kognitive Verengung (binäre Fallen, einfache Umschreibungen einer Falle) zu vermeiden.
 - DARF im DEEP-Modus ein LLM mit striktem JSON-Schema nutzen; MUSS auf den deterministischen
   Minimalrisiko-Generator zurückfallen, wenn kein LLM-Client konfiguriert ist oder bei Fehler.

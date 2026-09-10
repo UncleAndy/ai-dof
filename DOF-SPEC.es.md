@@ -1,8 +1,8 @@
 # DOF-Core — Especificación Formal (DOF-SPEC)
 
 **Estado:** BORRADOR v0.1
-**Parte de:** El estándar abierto DOF (véase `SKILL.md`, `references/`, `PATTERNS.md`).
-**Licencia:** CC BY-SA 4.0 — véase `references/license.md`. Las implementaciones DEBEN satisfacer §6 (Proof of Implementation).
+**Parte de:** El estándar abierto DOF (véase `skills/SKILL.md`, `skills/references/`, `PATTERNS.md`).
+**Licencia:** CC BY-SA 4.0 — véase `skills/references/license.md`. Las implementaciones DEBEN satisfacer §6 (Proof of Implementation).
 
 Este documento es el **contrato normativo** para cualquier software que pretenda implementar
 DOF-Core. Los proyectos descendentes (`dof-sdk`, `dof-choir-plugin`, y cualquier port
@@ -34,10 +34,10 @@ LLM del Generator (esos son detalles de implementación, cubiertos informativame
 
 ## 2. Referencias Normativas
 
-- `SKILL.md` — axiomas filosóficos y Decision Calculus (fuente de intención).
-- `references/license.md` — CC BY-SA 4.0 + cláusula Proof of Implementation.
-- `references/dof-assessment-toolkit.md` — metodología de medición sistémica (informativa).
-- `references/framing-traps.md` — filtro cognitivo aplicado antes de generar opciones.
+- `skills/SKILL.md` — axiomas filosóficos y Decision Calculus (fuente de intención).
+- `skills/references/license.md` — CC BY-SA 4.0 + cláusula Proof of Implementation.
+- `skills/references/dof-assessment-toolkit.md` — metodología de medición sistémica (informativa).
+- `skills/references/framing-traps.md` — filtro cognitivo aplicado antes de generar opciones.
 - `PATTERNS.md` — patrones ilustrativos (informativo; esta spec prevalece en conflicto).
 
 ---
@@ -163,7 +163,7 @@ Las matemáticas de selección (§4) son **idénticas** en ambos modos; solo dif
 
 ## 6. Proof of Implementation (Informe de Auditoría)
 
-Según `references/license.md`, toda implementación conforme DEBE poder emitir una
+Según `skills/references/license.md`, toda implementación conforme DEBE poder emitir una
 **auditoría transparente** de su decisión. Un cálculo silencioso u opaco no es conforme.
 La implementación DEBE exponer un `report()` (o equivalente) que produzca, como mínimo:
 
@@ -244,7 +244,7 @@ Un Generator conforme:
 
 - DEBE producir 1–5 opciones distintas, no redundantes.
 - NO DEBE comandar actuadores directamente.
-- DEBERÍA aplicar el filtro `references/framing-traps.md` antes de finalizar opciones,
+- DEBERÍA aplicar el filtro `skills/references/framing-traps.md` antes de finalizar opciones,
   para evitar estrechamiento cognitivo (trampas binarias, simples reformulaciones de una trampa).
 - En modo DEEP PUEDE usar un LLM con esquema JSON estricto; DEBE retroceder al generador
   determinista de riesgo mínimo si no hay cliente LLM configurado o ante fallo.

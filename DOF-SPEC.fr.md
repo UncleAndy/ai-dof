@@ -1,8 +1,8 @@
 # DOF-Core — Spécification Formelle (DOF-SPEC)
 
 **Statut :** BROUILLON v0.1
-**Partie de :** La norme ouverte DOF (voir `SKILL.md`, `references/`, `PATTERNS.md`).
-**Licence :** CC BY-SA 4.0 — voir `references/license.md`. Les implémentations DOIVENT satisfaire §6 (Proof of Implementation).
+**Partie de :** La norme ouverte DOF (voir `skills/SKILL.md`, `skills/references/`, `PATTERNS.md`).
+**Licence :** CC BY-SA 4.0 — voir `skills/references/license.md`. Les implémentations DOIVENT satisfaire §6 (Proof of Implementation).
 
 Ce document est le **contrat normatif** pour tout logiciel prétendant implémenter
 DOF-Core. Les projets en aval (`dof-sdk`, `dof-choir-plugin`, et tout port tiers)
@@ -34,10 +34,10 @@ informative en §9).
 
 ## 2. Références Normatives
 
-- `SKILL.md` — axiomes philosophiques et Decision Calculus (source de l'intention).
-- `references/license.md` — CC BY-SA 4.0 + clause Proof of Implementation.
-- `references/dof-assessment-toolkit.md` — méthodologie de mesure systémique (informative).
-- `references/framing-traps.md` — filtre cognitif appliqué avant la génération d'options.
+- `skills/SKILL.md` — axiomes philosophiques et Decision Calculus (source de l'intention).
+- `skills/references/license.md` — CC BY-SA 4.0 + clause Proof of Implementation.
+- `skills/references/dof-assessment-toolkit.md` — méthodologie de mesure systémique (informative).
+- `skills/references/framing-traps.md` — filtre cognitif appliqué avant la génération d'options.
 - `PATTERNS.md` — motifs illustratifs (informative ; cette spec prime en cas de conflit).
 
 ---
@@ -164,7 +164,7 @@ des options diffère.
 
 ## 6. Proof of Implementation (Rapport d'Audit)
 
-Selon `references/license.md`, toute implémentation conforme DOIT pouvoir émettre un
+Selon `skills/references/license.md`, toute implémentation conforme DOIT pouvoir émettre un
 **audit transparent** de sa décision. Un calcul silencieux ou opaque n'est pas conforme.
 L'implémentation DOIT exposer un `report()` (ou équivalent) produisant au minimum :
 
@@ -245,7 +245,7 @@ ses internes. Un Generator conforme :
 
 - DOIT produire 1–5 options distinctes, non redondantes.
 - NE DOIT PAS commander directement des actionneurs.
-- DEVRAIT appliquer le filtre `references/framing-traps.md` avant de finaliser les options,
+- DEVRAIT appliquer le filtre `skills/references/framing-traps.md` avant de finaliser les options,
   pour éviter le rétrécissement cognitif (pièges binaires, simples paraphrases d'un piège).
 - En mode DEEP PEUT utiliser un LLM avec schéma JSON strict ; DOIT retomber sur le
   générateur déterministe à risque minimal en l'absence de client LLM ou en cas d'échec.

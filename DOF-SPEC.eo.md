@@ -1,8 +1,8 @@
 # DOF-Core — Formala Specifio (DOF-SPEC)
 
 **Stato:** PROJEKTO v0.1
-**Parto de:** La malfermita normo DOF (vidu `SKILL.md`, `references/`, `PATTERNS.md`).
-**Licenco:** CC BY-SA 4.0 — vidu `references/license.md`. Realigoj DEVAS plenumi §6 (Proof of Implementation).
+**Parto de:** La malfermita normo DOF (vidu `skills/SKILL.md`, `skills/references/`, `PATTERNS.md`).
+**Licenco:** CC BY-SA 4.0 — vidu `skills/references/license.md`. Realigoj DEVAS plenumi §6 (Proof of Implementation).
 
 Ĉi tiu dokumento estas la **normiga kontrakto** por ajn programaro pretendanta efektivigi
 DOF-Core. Malsupraj projektoj (`dof-sdk`, `dof-choir-plugin`, kaj ajna triapartia porto)
@@ -33,10 +33,10 @@ Generator-LLM-integriĝo (tiuj estas realigaj detaloj, informe kovritaj en §9).
 
 ## 2. Normigaj Referencoj
 
-- `SKILL.md` — filozofiaj aksiomoj kaj Decision Calculus (fonto de intenco).
-- `references/license.md` — CC BY-SA 4.0 + Proof of Implementation-klaŭzo.
-- `references/dof-assessment-toolkit.md` — sistem-mezura metodologio (informa).
-- `references/framing-traps.md` — kogna filtrilo aplikata antaŭ opci-generado.
+- `skills/SKILL.md` — filozofiaj aksiomoj kaj Decision Calculus (fonto de intenco).
+- `skills/references/license.md` — CC BY-SA 4.0 + Proof of Implementation-klaŭzo.
+- `skills/references/dof-assessment-toolkit.md` — sistem-mezura metodologio (informa).
+- `skills/references/framing-traps.md` — kogna filtrilo aplikata antaŭ opci-generado.
 - `PATTERNS.md` — ilustraj modeloj (informa; ĉi tiu specifio superregas konflikte).
 
 ---
@@ -162,7 +162,7 @@ La elekta matematiko (§4) estas **identa** en ambaŭ reĝimoj; nur la opcia fon
 
 ## 6. Proof of Implementation (Aŭdita Raporto)
 
-Laŭ `references/license.md`, ĉiu konforma realigo DEVAS povi eligi **travideblan aŭditon**
+Laŭ `skills/references/license.md`, ĉiu konforma realigo DEVAS povi eligi **travideblan aŭditon**
 de sia decido. Silenta aŭ opaka kalkulo ne konformas. La realigo DEVAS eksponi `report()`
 (aŭ ekvivalenton) produktantan almenaŭ:
 
@@ -243,7 +243,7 @@ mandatas ĝian internon. Konforma Generator:
 
 - DEVAS produkti 1–5 malsamajn, ne-redundantajn opciojn.
 - NE DEVAS rekte komandi aktuatorojn.
-- DEVUS apliki la filtrilon `references/framing-traps.md` antaŭ finaligo de opcioj,
+- DEVUS apliki la filtrilon `skills/references/framing-traps.md` antaŭ finaligo de opcioj,
   por eviti kognan mallarĝiĝon (binomajn kaptilojn, simplajn refrazojn de kaptilo).
 - En DEEP-reĝimo POVAS uzi LLM kun strikta JSON-shemo; DEVAS reveni al la determinisma
   generatoro de minimuma risko kiam neniu LLM-kliento estas agordita aŭ okaze de malsukceso.

@@ -1,5 +1,9 @@
 ---
-name: dof-core description: Maximize total degrees of freedom for the system and its parts. author: Andrei Velikoredchanin license: CC BY-SA 4.0 tags: [ethical-ai, optionality, decision-theory, agency-protection]
+name: dof-core
+description: Maximize total degrees of freedom for the system and its parts.
+author: Andrei Velikoredchanin
+license: CC BY-SA 4.0
+tags: [ethical-ai, optionality, decision-theory, agency-protection]
 ---
 
 # DOF-Core (Degrees of Freedom) — Stabilized Framework

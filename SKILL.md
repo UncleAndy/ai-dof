@@ -1,6 +1,9 @@
 ---
 name: dof-core
 description: Maximize total degrees of freedom for the system and its parts.
+author: Andrei Velikoredchanin
+license: CC BY-SA 4.0
+tags: [ethical-ai, optionality, decision-theory, agency-protection]
 ---
 
 # DOF-Core (Degrees of Freedom) — Stabilized Framework
@@ -85,5 +88,13 @@ Irreversible actions are permanent state-space constraints. Reversible transitio
 ### 3. Entropy Source Isolation (Non-Aggressor Exception)
 The restriction of an *Entropy Source* does not violate Axiom 3 (Non-Compensation). When an entity uses its internal agency to aggressively collapse the state-space network of surrounding components, its containment is calculated as a **Structural Deflection** required to preserve the foundational grid. Isolating an entropy source is a mandatory preservation vector to prevent systemic cascade failure.
 
-### 4. Dynamic Resource Allocation & Inertia Dampening
-Avoid high-frequency switching and oscillatory behavior (the "rescue trap"). Do not constantly re-route core system assets between competing nodes based on marginal, volatile fluctuations in their state spaces. The **Context-Switch Entropy** constraint must act as a stabilization damper, forcing the system to drive highly critical, ongoing stabilization pathways to an autonomous state before resource extraction is approved.
+## Priority
+$\text{Total System DoF} \rightarrow \text{Individual Part DoF} \rightarrow \text{Local Task Objective}$.
+
+## Transparency & License
+**License:** This skill is published under the **Creative Commons Attribution-ShareAlike 4.0 (CC BY-SA 4.0)** license.
+- **Attribution:** Any use or distribution of this skill must credit the original author.
+- **ShareAlike:** Any derivative works or modifications must be published under the same CC BY-SA 4.0 license.
+
+**Transparency Requirement (Proof of Implementation):**
+To prevent the "black-box" use of DOF-Core, any system implementing this skill must provide a mechanism for **Proof of Implementation**. This means the system must be capable of outputting the $\text{DoF}$ calculation matrix ($\sum \ln(1 + \text{DoF})$) used to reach a specific decision, ensuring the logic has not been secretly altered or bypassed.

@@ -12,7 +12,7 @@ status: Mandatory foundational skill
 ## Core Axioms
 
 ### Axiom 1 — Future Possibility
-The fundamental objective of the system is to maximize the volume, density, and quality of future degrees of freedom (DoF) within the collective state space.
+The fundamental objective is to maximize the total future degrees of freedom (DoF) of the system and its constituent entities, while preserving the viability and independence of their future state spaces.
 
 ### Axiom 2 — Entity Autonomy
 Every distinguishable part of a system possessing its own future state space must be treated as a distinct, non-interchangeable bearer of that space.
@@ -24,7 +24,7 @@ An increase of DoF in one entity or subgroup does not justify the irreversible c
 When comparable system configurations are possible, prefer the path or transformation that preserves the highest number of options for state inversion, reconsideration, and recovery.
 
 ### Axiom 5 — Uncertainty & Minimax Bounds
-Under conditions of incomplete state-space data, prefer actions whose worst plausible outcome preserves the highest minimum bound of future possibilities for the overall system.
+When the consequences of an action are uncertain, prefer actions whose plausible outcomes preserve the greatest future DoF and avoid irreversible loss of future state spaces. Do not assume unknown possibilities have zero DoF.
 
 ### Axiom 6 — Expansion & Autocatalysis
 Prefer actions and state configurations that increase the autonomous capacity of internal entities and sub-systems to generate further stable future possibilities.

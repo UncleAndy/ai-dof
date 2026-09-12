@@ -17,21 +17,18 @@ Das Ergebnis ist ein Agent, der wie ein *Optimierer der Möglichkeits-Topologie*
 
 ```
 DOF/
-  skills/
-    SKILL.md                      ← die Axiome, Definitionen, Entscheidungskalkül (hier beginnen)
-    references/
-      license.md                  ← CC BY-SA 4.0 + Proof of Implementation
-      dof-assessment-toolkit.md   ← wie man den DoF eines Moduls / einer Person / eines Systems misst
-      framing-traps.md            ← kognitiver Filter vor der Optionsgenerierung
-  PATTERNS.md                    ← Ingenieur-Blaupause (DE)
-  PATTERNS.ru|fr|de|es|eo.md     ← gleiche Blaupause, übersetzt
-  DOF-SPEC.md                    ← normativer Vertrag für konforme Implementierungen (DE)
-  DOF-SPEC.ru|fr|de|es|eo.md     ← gleiche Spec, übersetzt
-  patterns/                      ← minimale ausführbare Illustrationen
-    python/  rust/  go/  cpp/     ← vier Ports derselben Logik, lauffähig verifiziert
+  SKILL.md                      ← die Axiome, Definitionen, Entscheidungskalkül (hier beginnen)
+  DOF-SPEC.md                   ← normativer Vertrag für konforme Implementierungen (EN)
+  references/
+    license.md                  ← CC BY-SA 4.0 + Proof of Implementation
+    dof-assessment-toolkit.md   ← wie man den DoF eines Moduls / einer Person / eines Systems misst
+    framing-traps.md            ← kognitiver Filter vor der Optionsgenerierung
+  patterns/
+    PATTERNS.{md,ru,fr,de,es,eo}  ← Ingenieur-Blaupause (mehrsprachig)
+    python/  rust/  go/  cpp/     ← minimale ausführbare Illustrationen (vier Ports derselben Logik)
 ```
 
-Lesen Sie `skills/SKILL.md` für die Philosophie. Lesen Sie `DOF-SPEC.md`, wenn Sie eine konforme Implementierung bauen — es definiert Datenmodell, Mathematik, die Zeitregel des reaktiven Schaltkreises und das obligatorische Audit, das die Lizenz verlangt.
+Lesen Sie `SKILL.md` für die Philosophie. Lesen Sie `DOF-SPEC.md`, wenn Sie eine konforme Implementierung bauen — es definiert Datenmodell, Mathematik, die Zeitregel des reaktiven Schaltkreises und das obligatorische Audit, das die Lizenz verlangt.
 
 ## Wie es funktioniert (die Schleife)
 
@@ -49,4 +46,4 @@ Dieses Repository ist mehrsprachig: jedes normative und illustrative Dokument ex
 
 ## Lizenz
 
-CC BY-SA 4.0 — siehe `skills/references/license.md`. Jede Nutzung muss den Autor (Andrei Velikoredchanin) nennen, und jedes abgeleitete Werk muss unter derselben Lizenz geteilt werden. Implementierungen müssen die Proof-of-Implementation-Anforderung erfüllen.
+CC BY-SA 4.0 — siehe `references/license.md`. Jede Nutzung muss den Autor (Andrei Velikoredchanin) nennen, und jedes abgeleitete Werk muss unter derselben Lizenz geteilt werden. Implementierungen müssen die Proof-of-Implementation-Anforderung erfüllen.

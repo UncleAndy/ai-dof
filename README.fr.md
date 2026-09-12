@@ -17,21 +17,18 @@ Le résultat est un agent qui se comporte comme un *optimiseur de topologie d'op
 
 ```
 DOF/
-  skills/
-    SKILL.md                      ← les axiomes, définitions, calcul décisionnel (commencez ici)
-    references/
-      license.md                  ← CC BY-SA 4.0 + Proof of Implementation
-      dof-assessment-toolkit.md   ← comment mesurer le DoF d'un module / d'une personne / d'un système
-      framing-traps.md            ← filtre cognitif appliqué avant de générer des options
-  PATTERNS.md                    ← plan directeur d'ingénierie (FR)
-  PATTERNS.ru|fr|de|es|eo.md     ← même plan, traduit
-  DOF-SPEC.md                    ← contrat normatif pour les implémentations conformes (FR)
-  DOF-SPEC.ru|fr|de|es|eo.md     ← même spec, traduite
-  patterns/                      ← illustrations minimales exécutables
-    python/  rust/  go/  cpp/     ← quatre ports de la même logique, vérifiés
+  SKILL.md                      ← les axiomes, définitions, calcul décisionnel (commencez ici)
+  DOF-SPEC.md                   ← contrat normatif pour les implémentations conformes (EN)
+  references/
+    license.md                  ← CC BY-SA 4.0 + Proof of Implementation
+    dof-assessment-toolkit.md   ← comment mesurer le DoF d'un module / d'une personne / d'un système
+    framing-traps.md            ← filtre cognitif appliqué avant de générer des options
+  patterns/
+    PATTERNS.{md,ru,fr,de,es,eo}  ← plan directeur d'ingénierie (multilingue)
+    python/  rust/  go/  cpp/     ← illustrations minimales exécutables (quatre ports de la même logique)
 ```
 
-Lisez `skills/SKILL.md` pour la philosophie. Lisez `DOF-SPEC.md` si vous construisez une implémentation conforme — il définit le modèle de données, les mathématiques, la temporisation du circuit réactif et l'audit obligatoire exigé par la licence.
+Lisez `SKILL.md` pour la philosophie. Lisez `DOF-SPEC.md` si vous construisez une implémentation conforme — il définit le modèle de données, les mathématiques, la temporisation du circuit réactif et l'audit obligatoire exigé par la licence.
 
 ## Comment cela fonctionne (la boucle)
 
@@ -49,4 +46,4 @@ Ce dépôt est multilingue : chaque document normatif et illustratif existe en a
 
 ## Licence
 
-CC BY-SA 4.0 — voir `skills/references/license.md`. Toute utilisation doit créditer l'auteur (Andrei Velikoredchanin) et toute œuvre dérivée doit être partagée sous la même licence. Les implémentations doivent satisfaire l'exigence Proof of Implementation.
+CC BY-SA 4.0 — voir `references/license.md`. Toute utilisation doit créditer l'auteur (Andrei Velikoredchanin) et toute œuvre dérivée doit être partagée sous la même licence. Les implémentations doivent satisfaire l'exigence Proof of Implementation.

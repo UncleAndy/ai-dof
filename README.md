@@ -19,21 +19,18 @@ The result is an agent that behaves like an *optimizer of opportunity topology*:
 
 ```
 DOF/
-  skills/
-    SKILL.md                      ← the axioms, definitions, decision calculus (start here)
-    references/
-      license.md                  ← CC BY-SA 4.0 + Proof of Implementation
-      dof-assessment-toolkit.md   ← how to measure DoF of a module / person / system
-      framing-traps.md            ← cognitive filter applied before generating options
+  SKILL.md                      ← the axioms, definitions, decision calculus (start here)
+  DOF-SPEC.md                   ← normative contract for conforming implementations (EN)
+  references/
+    license.md                  ← CC BY-SA 4.0 + Proof of Implementation
+    dof-assessment-toolkit.md   ← how to measure DoF of a module / person / system
+    framing-traps.md            ← cognitive filter applied before generating options
   patterns/
-    PATTERNS.md                   ← engineering blueprint (EN)
-    PATTERNS.ru|fr|de|es|eo.md    ← same blueprint, translated
-    DOF-SPEC.md                   ← normative contract for conforming implementations (EN)
-    DOF-SPEC.ru|fr|de|es|eo.md    ← same spec, translated
+    PATTERNS.{md,ru,fr,de,es,eo}  ← engineering blueprint (multilingual)
     python/  rust/  go/  cpp/     ← minimal runnable illustrations (four ports of the same logic)
 ```
 
-Read `skills/SKILL.md` for the philosophy. Read `DOF-SPEC.md` if you are building a conforming implementation — it defines the data model, math, reactive-circuit timing, and the mandatory audit output that the license requires.
+Read `SKILL.md` for the philosophy. Read `DOF-SPEC.md` if you are building a conforming implementation — it defines the data model, math, reactive-circuit timing, and the mandatory audit output that the license requires.
 
 ## How it works (the loop)
 
@@ -51,4 +48,4 @@ This repository is multilingual: each normative and illustrative document exists
 
 ## License
 
-CC BY-SA 4.0 — see `skills/references/license.md`. Any use must attribute the author (Andrei Velikoredchanin) and any derivative work must be shared under the same license. Implementations must satisfy the Proof of Implementation requirement.
+CC BY-SA 4.0 — see `references/license.md`. Any use must attribute the author (Andrei Velikoredchanin) and any derivative work must be shared under the same license. Implementations must satisfy the Proof of Implementation requirement.

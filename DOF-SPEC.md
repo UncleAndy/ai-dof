@@ -1,10 +1,10 @@
 # DOF-Core — Formal Specification (DOF-SPEC)
 
 **Status:** DRAFT v0.2
-**Part of:** The DOF open standard (see `skills/SKILL.md`, `skills/references/`, `PATTERNS.md`).
-**License:** CC BY-SA 4.0 — see `skills/references/license.md`. Implementations MUST satisfy §6 (Proof of Implementation).
+**Part of:** The DOF open standard (see `SKILL.md`, `references/`, `patterns/PATTERNS.md`).
+**License:** CC BY-SA 4.0 — see `references/license.md`. Implementations MUST satisfy §6 (Proof of Implementation).
 
-This document is the **normative contract** for any software that claims to implement DOF-Core. Downstream projects (`dof-sdk`, `dof-choir-plugin`, and any third-party port) MUST conform to the data model, mathematics, and audit requirements defined here. Where this document and `PATTERNS.md` disagree, **this document is authoritative**.
+This document is the **normative contract** for any software that claims to implement DOF-Core. Downstream projects (`dof-sdk`, `dof-choir-plugin`, and any third-party port) MUST conform to the data model, mathematics, and audit requirements defined here. Where this document and `patterns/PATTERNS.md` disagree, **this document is authoritative**.
 
 ---
 
@@ -26,11 +26,11 @@ It does **not** prescribe transport, storage, language, or the internal design o
 
 ## 2. Normative References
 
-- `skills/SKILL.md` — philosophical axioms and the Decision Calculus (source of truth for intent).
-- `skills/references/license.md` — CC BY-SA 4.0 + Proof of Implementation clause.
-- `skills/references/dof-assessment-toolkit.md` — systemic measurement methodology (informative).
-- `skills/references/framing-traps.md` — cognitive filter applied before option generation.
-- `PATTERNS.md` — illustrative patterns (informative; this spec overrides on conflict).
+- `SKILL.md` — philosophical axioms and the Decision Calculus (source of truth for intent).
+- `references/license.md` — CC BY-SA 4.0 + Proof of Implementation clause.
+- `references/dof-assessment-toolkit.md` — systemic measurement methodology (informative).
+- `references/framing-traps.md` — cognitive filter applied before option generation.
+- `patterns/PATTERNS.md` — illustrative patterns (informative; this spec overrides on conflict).
 
 ---
 
@@ -149,7 +149,7 @@ The selection mathematics (§4) is **identical** in both modes; only the option 
 
 ## 6. Proof of Implementation (Audit Report)
 
-Per `skills/references/license.md`, any conforming implementation MUST be able to emit a
+Per `references/license.md`, any conforming implementation MUST be able to emit a
 **transparent audit** of its decision. A silent or opaque calculation is non-conforming.
 The implementation MUST expose a `report()` (or equivalent) producing, at minimum:
 
@@ -224,7 +224,7 @@ The Generator's role is to produce `ActionOption` candidates. This spec does not
 
 - MUST produce 1–5 distinct, non-redundant options.
 - MUST NOT directly command actuators.
-- SHOULD apply the `skills/references/framing-traps.md` filter before finalizing options, to avoid cognitive narrowing (binary traps, simple rephrasings of a trap).
+- SHOULD apply the `references/framing-traps.md` filter before finalizing options, to avoid cognitive narrowing (binary traps, simple rephrasings of a trap).
 - In DEEP mode MAY use an LLM with a strict JSON schema; MUST fall back to the deterministic minimal-risk generator when no LLM client is configured or on failure.
 
 ---

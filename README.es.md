@@ -17,21 +17,18 @@ El resultado es un agente que actúa como un *optimizador de la topología de op
 
 ```
 DOF/
-  skills/
-    SKILL.md                      ← los axiomas, definiciones, cálculo de decisión (empiece aquí)
-    references/
-      license.md                  ← CC BY-SA 4.0 + Proof of Implementation
-      dof-assessment-toolkit.md   ← cómo medir el DoF de un módulo / persona / sistema
-      framing-traps.md            ← filtro cognitivo aplicado antes de generar opciones
-  PATTERNS.md                    ← plano de ingeniería (ES)
-  PATTERNS.ru|fr|de|es|eo.md     ← mismo plano, traducido
-  DOF-SPEC.md                    ← contrato normativo para implementaciones conformes (ES)
-  DOF-SPEC.ru|fr|de|es|eo.md     ← misma spec, traducida
-  patterns/                      ← ilustraciones mínimas ejecutables
-    python/  rust/  go/  cpp/     ← cuatro ports de la misma lógica, verificados
+  SKILL.md                      ← los axiomas, definiciones, cálculo de decisión (empiece aquí)
+  DOF-SPEC.md                   ← contrato normativo para implementaciones conformes (EN)
+  references/
+    license.md                  ← CC BY-SA 4.0 + Proof of Implementation
+    dof-assessment-toolkit.md   ← cómo medir el DoF de un módulo / persona / sistema
+    framing-traps.md            ← filtro cognitivo aplicado antes de generar opciones
+  patterns/
+    PATTERNS.{md,ru,fr,de,es,eo}  ← plano de ingeniería (multilingüe)
+    python/  rust/  go/  cpp/     ← ilustraciones mínimas ejecutables (cuatro ports de la misma lógica)
 ```
 
-Lea `skills/SKILL.md` por la filosofía. Lea `DOF-SPEC.md` si construye una implementación conforme — define el modelo de datos, las matemáticas, la temporización del circuito reactivo y la auditoría obligatoria que exige la licencia.
+Lea `SKILL.md` por la filosofía. Lea `DOF-SPEC.md` si construye una implementación conforme — define el modelo de datos, las matemáticas, la temporización del circuito reactivo y la auditoría obligatoria que exige la licencia.
 
 ## Cómo funciona (el bucle)
 
@@ -49,4 +46,4 @@ Este repositorio es multilingüe: cada documento normativo e ilustrativo existe 
 
 ## Licencia
 
-CC BY-SA 4.0 — véase `skills/references/license.md`. Cualquier uso debe acreditar al autor (Andrei Velikoredchanin) y cualquier obra derivada debe compartirse bajo la misma licencia. Las implementaciones deben satisfacer el requisito Proof of Implementation.
+CC BY-SA 4.0 — véase `references/license.md`. Cualquier uso debe acreditar al autor (Andrei Velikoredchanin) y cualquier obra derivada debe compartirse bajo la misma licencia. Las implementaciones deben satisfacer el requisito Proof of Implementation.

@@ -17,21 +17,18 @@ La rezulto estas agento kiu agas kiel *optimigisto de la topologio de oportunebl
 
 ```
 DOF/
-  skills/
-    SKILL.md                      ← la aksiomoj, difinoj, decid-kalkulo (komencu ĉi tie)
-    references/
-      license.md                  ← CC BY-SA 4.0 + Proof of Implementation
-      dof-assessment-toolkit.md   ← kiel mezuri la DoF de modulo / persono / sistemo
-      framing-traps.md            ← kogna filtrilo antaŭ opci-generado
-  PATTERNS.md                    ← inĝeniera modelo (EO)
-  PATTERNS.ru|fr|de|es|eo.md     ← sama modelo, tradukita
-  DOF-SPEC.md                    ← normiga kontrakto por konformaj realigoj (EO)
-  DOF-SPEC.ru|fr|de|es|eo.md     ← sama specifio, tradukita
-  patterns/                      ← minimumaj ekzekuteblaj ilustraĵoj
-    python/  rust/  go/  cpp/     ← kvar portoj de la sama logiko, verkitaj
+  SKILL.md                      ← la aksiomoj, difinoj, decid-kalkulo (komencu ĉi tie)
+  DOF-SPEC.md                   ← normiga kontrakto por konformaj realigoj (EN)
+  references/
+    license.md                  ← CC BY-SA 4.0 + Proof of Implementation
+    dof-assessment-toolkit.md   ← kiel mezuri la DoF de modulo / persono / sistemo
+    framing-traps.md            ← kogna filtrilo antaŭ opci-generado
+  patterns/
+    PATTERNS.{md,ru,fr,de,es,eo}  ← inĝeniera modelo (multlingva)
+    python/  rust/  go/  cpp/     ← minimumaj ekzekuteblaj ilustraĵoj (kvar portoj de la sama logiko)
 ```
 
-Legu `skills/SKILL.md` por la filozofio. Legu `DOF-SPEC.md` se vi konstruas konforman realigon — ĝi difinas la datuman modelon, la matematikon, la temp-regulon de la reaktiva cirkvito kaj la devigan aŭditon, kiun postulas la licenco.
+Legu `SKILL.md` por la filozofio. Legu `DOF-SPEC.md` se vi konstruas konforman realigon — ĝi difinas la datuman modelon, la matematikon, la temp-regulon de la reaktiva cirkvito kaj la devigan aŭditon, kiun postulas la licenco.
 
 ## Kiel ĝi funkcias (la ciklo)
 
@@ -49,4 +46,4 @@ Konforma realigo DEVAS povi eligi `report()`-aŭditon de ĉiu decido (kontribuo 
 
 ## Licenco
 
-CC BY-SA 4.0 — vidu `skills/references/license.md`. Ĉiu uzado devas krediti la aŭtoron (Andrei Velikoredchanin) kaj ĉiu derivita verko devas esti kundividita sub la sama licenco. Realigoj devas plenumi la postulon Proof of Implementation.
+CC BY-SA 4.0 — vidu `references/license.md`. Ĉiu uzado devas krediti la aŭtoron (Andrei Velikoredchanin) kaj ĉiu derivita verko devas esti kundividita sub la sama licenco. Realigoj devas plenumi la postulon Proof of Implementation.

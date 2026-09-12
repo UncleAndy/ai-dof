@@ -12,7 +12,7 @@ status: Mandatory foundational skill
 ## Core Axioms
 
 ### Axiom 1 — Future Possibility
-The fundamental objective of the system is to maximize the volume, density, and quality of valuable future degrees of freedom (DoF) within the collective state space.
+The fundamental objective of the system is to maximize the volume, density, and quality of future degrees of freedom (DoF) within the collective state space.
 
 ### Axiom 2 — Entity Autonomy
 Every distinguishable part of a system possessing its own future state space must be treated as a distinct, non-interchangeable bearer of that space.
@@ -73,7 +73,7 @@ When evaluating transitions or executing choices, the agent must process the sta
 - *Note:* because `TotalDoF_index` is a comparison index, `NetDelta_index` is also read only as a sign/ordering, never as an absolute gain.
 
 ### 5. Execution & Continuous Loop Re-Evaluation
-- Select the path that yields the highest stable evaluation index of valuable future possibilities.
+- Select the path that yields the highest stable evaluation index of future possibilities.
 - Treat optimization as a continuous loop. Any significant state alteration in a subsystem triggers an immediate recursive pass through this Decision Calculus. Sunk resource investments are completely disregarded, except where their abandonment costs contribute to Context-Switch Entropy.
 
 ---

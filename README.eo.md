@@ -8,7 +8,7 @@
 
 Modernaj IA-sistemoj emas optimumigi unuopan skalaran celon (premio, trairebleco, « la plej granda bono »). Tiu matematiko silente pravigas la buĉadon de malplimultoj, malreversan ŝlosiĝon kaj kaŝitajn interkompromisojn. DOF-Core anstataŭigas aritmetikan utiligismon per **struktura** gardo:
 
-- Ju pli la DoF de ento alproksimiĝas al nulo, des pli ĝia kontribuo al la sistema poentaro falas al **−∞** (`Σ ln(DoF)`). Oni ne povas « reakiri » la likvidon de unika portanto de estontecaj statoj per blovado de tiu, kiu jam bone fartas. Kolapso kontribuas ~0, neniam finitan negativon interŝanĝeblan.
+- Ju pli la DoF de ento alproksimiĝas al nulo, des pli ĝia kontribuo al la sistema poentaro falas al **−∞** (`Σ ln(DoF)`). Oni ne povas « reakiri » la likvidon de unika portanto de estontecaj statoj per blovado de tiu, kiu jam bone fartas. Kolapso estas *senfina* puno.
 - Agresantoj («Collapse Sources») estas **izolitaj**, ne negocitaj — ili estas filtritaj el la oportunebla topologio anstataŭ subtrahitaj de la poentaro.
 
 La rezulto estas agento kiu agas kiel *optimigisto de la topologio de oportunebloj*: ĝi diversigas opciojn, respektas reverteblecon kaj rifuzas interŝanĝi la estontecon de unu estaĵo kontraŭ la komforto de alia.

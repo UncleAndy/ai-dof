@@ -8,7 +8,7 @@ Elle est publiée sous **CC BY-SA 4.0** avec une clause supplémentaire **Proof 
 
 Les systèmes d'IA modernes tendent à optimiser un objectif scalaire unique (récompense, débit, « le plus grand bien »). Cette mathématique justifie en silence le sacrifice des minorités, le verrouillage irréversible et les compromis cachés. DOF-Core remplace l'utilitarisme arithmétique par une protection **structurelle** :
 
-- Au fur et à mesure que le DoF d'une entité tend vers zéro, sa contribution au score système chute vers **−∞** (`Σ ln(DoF)`). On ne peut « récupérer » la liquidation d'un porteur unique d'états futurs en gonflant celui qui est déjà bien loti. Un effondrement contribue ~0, jamais un négatif fini à échanger.
+- Au fur et à mesure que le DoF d'une entité tend vers zéro, sa contribution au score système chute vers **−∞** (`Σ ln(DoF)`). On ne peut « récupérer » la liquidation d'un porteur unique d'états futurs en gonflant celui qui est déjà bien loti. Un effondrement est une pénalité *infinie*.
 - Les agresseurs («Collapse Sources») sont **isolés**, pas négociés — ils sont filtrés de la topologie d'opportunité au lieu d'être soustraits du score.
 
 Le résultat est un agent qui se comporte comme un *optimiseur de topologie d'opportunités* : il diversifie les options, respecte la réversibilité et refuse d'échanger l'avenir d'un être contre le confort d'un autre.

@@ -1,7 +1,12 @@
 // DOF-Core calculus kernel (C++ port).
-// Mirrors patterns/calculus_core.py: non-linear sum of system DoF,
-// logarithmic filter, Collapse-Source isolation, Delta-T-aware selection,
+// Mirrors patterns/calculus_core.py: pure Nash evaluation index (sum of ln(DoF)),
+// the `calc` calculation set, Collapse-Source isolation, Delta-T-aware selection,
 // and the Proof-of-Implementation audit report (DOF-SPEC §6).
+//
+// Axioms: Axiom 1 (maximize the total future DoF of the system AND its constituent
+// entities); Axiom 3 (never trade one entity's collapse for another's gain);
+// Axiom 5 (prefer reversible actions; never assume unknown possibilities have zero
+// DoF — a node with dof_known == false is never excluded as a hopeless zero).
 
 #pragma once
 #include <string>
@@ -18,6 +23,7 @@ struct EntityState {
     double agency_index = 0.0;   // 0..1
     double current_dof = 0.0;     // 0..1
     bool is_collapse_source = false;
+    bool dof_known = true;        // unknown DoF is never treated as 0 (Axiom 5)
     double time_to_collapse = 0.0;
 };
 
@@ -40,6 +46,7 @@ struct EntityReportRow {
     bool is_collapse_source = false;
     bool included_in_sum = false;
     double current_dof = 0.0;
+    bool dof_known = true;
     double contribution = 0.0;
 };
 
@@ -66,13 +73,15 @@ public:
     DOFCalculusCore(double epsilon = 1e-6) : epsilon_(epsilon) {}
 
     // Whether an entity belongs to the calculation set `calc` (DOF-SPEC §4.2).
-    // Excluded if it is a collapse source, OR if its current_dof <= 0 and no available
-    // option can raise its DoF (a node with no recovery path). A node at DoF = 0 that
-    // *can* be revived stays in the set.
+    // Excluded if it is a collapse source, OR if its DoF is a known zero and no
+    // available option can raise it (no recovery path). A node at DoF = 0 that
+    // can be revived stays in the set. A node with unknown DoF (dof_known == false)
+    // is never excluded (Axiom 5).
     bool is_included(const EntityState& e, const std::vector<ActionOption>& options) const {
         if (e.is_collapse_source) return false;
         if (e.current_dof > 0.0) return true;
-        // current_dof == 0 (or <= epsilon): keep only if some option can revive it
+        // current_dof <= 0: unknown DoF is never treated as hopeless-zero (Axiom 5)
+        if (!e.dof_known) return true;
         for (const auto& opt : options) {
             auto it = opt.projected_dof_delta.find(e.entity_id);
             if (it != opt.projected_dof_delta.end() && it->second > 0.0) return true;
@@ -114,7 +123,7 @@ public:
     double net_delta(const SystemStateMatrix& current, const ActionOption& option,
                      double projected, double current_dof) const {
         double net = projected - current_dof - current.context_switch_cost;
-        if (!option.is_reversible) net -= 0.5;
+        if (!option.is_reversible) net -= 0.5; // rigidity coefficient (Axiom 5)
         return net;
     }
 
@@ -150,7 +159,7 @@ public:
             const EntityState& e = kv.second;
             bool included = is_included(e, options);
             double contribution = included ? std::log(std::max(e.current_dof, epsilon_)) : 0.0;
-            rep.entities.push_back(EntityReportRow{e.entity_id, e.is_collapse_source, included, e.current_dof, contribution});
+            rep.entities.push_back(EntityReportRow{e.entity_id, e.is_collapse_source, included, e.current_dof, e.dof_known, contribution});
         }
         double total = calculate_system_dof(current_state, options);
         for (const auto& option : options) {

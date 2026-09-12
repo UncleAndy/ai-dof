@@ -58,5 +58,10 @@ class Generator:
             f"Generate {n_options} distinct, non-redundant action options. "
             "Each option must include: option_id, description, "
             "projected_dof_delta (per entity_id), and is_reversible. "
+            "Objective (Axiom 1): maximize the total future DoF of the system AND "
+            "its constituent entities; never sacrifice one entity's future for "
+            "another's gain. Uncertainty (Axiom 5): prefer reversible actions and "
+            "avoid irreversible loss; never assume unknown possibilities have zero "
+            "DoF (a node with dof_known=false is not zero). "
             'Output strict JSON: {"options": [...]}.'
         )

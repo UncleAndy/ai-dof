@@ -34,6 +34,7 @@ func (m *GraphMapper) PollEnvironment(raw map[string]*RawObservation) *SystemSta
 			AgencyIndex:     agency,
 			CurrentDoF:      dof,
 			IsCollapseSource: obs.IsCollapseSource,
+			DoFKnown:        true, // observations carry a known DoF by default (Axiom 5)
 			TimeToCollapse:  obs.TimeToCollapse,
 		}
 		if !ent.IsCollapseSource && obs.TimeToCollapse < minTTC {

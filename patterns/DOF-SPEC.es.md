@@ -1,6 +1,6 @@
 # DOF-Core — Especificación Formal (DOF-SPEC)
 
-**Estado:** BORRADOR v0.1
+**Estado:** BORRADOR v0.2
 **Parte de:** El estándar abierto DOF (véase `skills/SKILL.md`, `skills/references/`, `PATTERNS.md`).
 **Licencia:** CC BY-SA 4.0 — véase `skills/references/license.md`. Las implementaciones DEBEN satisfacer §6 (Proof of Implementation).
 
@@ -11,7 +11,7 @@ Este documento es el **contrato normativo** para cualquier software que pretenda
 
 ## 1. Alcance y Propósito
 
-DOF-Core es un protocolo de verificación de decisiones que separa la creatividad generativa (*Generator*) de la validación matemática determinista (*Calculus Core*). Su propósito es maximizar el grado de libertad (DoF) total del sistema, prohibiendo estructuralmente la destrucción del DoF de cualquier entidad por ganancia local.
+DOF-Core es un protocolo de verificación de decisiones que separa la creatividad generativa (*Generator*) de la validación matemática determinista (*Calculus Core*). Su propósito es maximizar el grado de libertad (DoF) futuro total del sistema **y de sus entidades constituyentes**, preservando la viabilidad e independencia de sus espacios de estados (Axioma 1), prohibiendo estructuralmente la destrucción del DoF de cualquier entidad por ganancia local. Ante la incertidumbre prefiere acciones reversibles y nunca asume que posibilidades desconocidas tengan DoF cero (Axioma 5).
 
 Esta especificación define:
 
@@ -48,10 +48,11 @@ Todos los campos son normativos. Los tipos se describen en estilo JSON-Schema; l
 | `agency_index`       | float   | `[0.0, 1.0]`              | Medida de controlabilidad / autodirección. |
 | `current_dof`        | float   | `[0.0, 1.0]`              | Grado de libertad actual del nodo. `0.0` = colapso. |
 | `is_collapse_source`  | bool    | —                         | Si `true`, la entidad es un agresor destructivo (véase §4.2). |
+| `dof_known`          | bool    | por defecto `true`        | Si `current_dof` es un valor **conocido** medido. `false` ⇒ DoF desconocido, NO DEBE tratarse como `0` (Axioma 5, §4.2). |
 | `time_to_collapse`   | float   | `> 0` (segundos)          | Fecha límite local antes del colapso del nodo. |
 
 **Clamping:** Al ingerir, `agency_index` y `current_dof` DEBEN limitarse a `[0.0, 1.0]`.
-Una entidad con `current_dof == 0.0` está en colapso (véase §4.1).
+Una entidad con `current_dof == 0.0` **y** `dof_known == true` está en colapso (véase §4.1). Una entidad con `dof_known == false` tiene un DoF **desconocido** y NO DEBE tratarse como colapso ni como cero.
 
 ### 3.2 `SystemStateMatrix`
 
@@ -81,20 +82,21 @@ Sea ε = `1e-6` (protección contra `ln(0)`). Sea `S` la `SystemStateMatrix` act
 ### 4.1 DoF Total del Sistema (Indice de Evaluación)
 
 ```
-TotalDoF_index(S) = Σ_{e ∈ calc(S)}  ln(max(e.current_dof, ε))
+TotalDoF_index(S) = Σ_{e ∈ calc(S)}  ln(DoF(e))
 ```
 
 - El agregado es un **índice de evaluación** (`TotalDoF_index`), no una medida absoluta. Sus valores son negativos; solo su **orden** es significativo — las opciones se comparan por este índice, no por una magnitud escalar.
-- Cuando `current_dof → 0`, `ln(dof) → ln(ε) ≈ −13.8` (un límite finito en lugar de `−∞`): el colapso de una entidad recuperable aporta una enorme penalización finita, no un valor que un trueque utilitarista pudiera «recuperar». Esta es la protección estructural contra la liquidación de un portador único de estados futuros (Axioma 3).
+- Cuando `DoF → 0`, `ln(DoF) → −∞`: un colapso es una penalización **infinita**, nunca un negativo finito que un trueque utilitarista pudiera «recuperar». Esta es la protección estructural contra la liquidación de un portador único de estados futuros (Axioma 3). Cualquier opción que colapse una entidad recuperable es dominada por cualquier opción que la preserve.
+- **Nota de implementación (solo numérica).** `ln(0)` no está definido e IEEE-754 no puede representar `−∞`; por ello las implementaciones conformes calculan `ln(max(DoF, ε))` con el normativo `ε = 1e-6`. Esto da un valor finito grande (`≈ −13.8`) que preserva el *orden* del límite matemático. El suelo ε es un recurso numérico y NO DEBE leerse como un cambio de semántica — matemáticamente la penalización es `−∞`.
 
 ### 4.2 Conjunto de cálculo y exclusión de la fuente de entropía
 
 `calc(S)` incluye una entidad `e` si y solo si se cumplen **ambas** condiciones:
 
 1. `e.is_collapse_source == false` (defensa estructural de red — los agresores se filtran de la topología de oportunidad, no se negocian); **y**
-2. `e.current_dof > 0`, **o** (`e.current_dof == 0` **y** alguna `ActionOption` disponible `o` tiene `o.projected_dof_delta[e.entity_id] > 0`).
+2. `e.current_dof > 0`, **o** `e.dof_known == false` (DoF desconocido — el sistema nunca asume que una posibilidad no mapeada sea cero, Axioma 5; el nodo permanece en `calc` y aporta su valor según §4.1), **o** (`e.current_dof == 0` **y** `e.dof_known == true` **y** alguna `ActionOption` disponible `o` tiene `o.projected_dof_delta[e.entity_id] > 0`).
 
-Una entidad con `current_dof == 0` para la cual **ninguna** opción disponible puede elevar su DoF está **excluida**: no tiene camino de recuperación, no aporta nada y no es sujeto de la decisión. Un nodo con `DoF = 0` que **se puede** reanimar permanece en `calc` — excluirlo permitiría al sistema ignorar un ser salvabile.
+Una entidad con `current_dof == 0` y `dof_known == true` para la cual **ninguna** opción disponible puede elevar su DoF está **excluida**: no tiene camino de recuperación, no aporta nada y no es sujeto de la decisión. Un nodo con `DoF = 0` que **se puede** reanimar permanece en `calc` — excluirlo permitiría al sistema ignorar un ser salvabile. Una entidad con DoF desconocido (`dof_known == false`) **nunca** se excluye, sea cual sea su `current_dof` nominal.
 
 ### 4.3 Selección / Net Delta
 
@@ -152,8 +154,9 @@ La implementación DEBE exponer un `report()` (o equivalente) que produzca, como
 Para cada entidad en `S`:
 - `entity_id`
 - `is_collapse_source`
-- `included_in_sum` (bool) — `false` syss si `is_collapse_source`
+- `included_in_sum` (bool) — `false` si y solo si la entidad es una fuente de colapso, o su DoF es un **cero conocido** sin opción capaz de subirlo (§4.2); un DoF desconocido nunca se excluye
 - `current_dof`
+- `dof_known`
 - `contribution = included ? ln(max(current_dof, ε)) : 0.0`
 
 ### 6.2 Totales del sistema
@@ -181,7 +184,7 @@ Este informe es la condición de licencia exigible: un despliegue incapaz de pro
 Un componente de software es **conforme con DOF-Core** si y solo si:
 
 1. Usa el modelo de datos §3 con los nombres de campo, tipos y clamps especificados.
-2. Calcula `TotalDoF_index` exactamente según §4.1–§4.2 (exclusión de entropía; ε = 1e-6).
+2. Calcula `TotalDoF_index` exactamente según §4.1–§4.2 (conjunto `calc` — exclusión de fuentes de colapso y de nodos sin salida con cero conocido; un DoF desconocido nunca se excluye ni se trata como cero; ε = 1e-6).
 3. Calcula `NetDelta` exactamente según §4.3–§4.5.
 4. Aplica la regla del circuito reactivo §5 con `FAST_PASS_THRESHOLD = 5.0`.
 5. Puede emitir el informe de auditoría §6 para cualquier decisión que tome.
@@ -200,9 +203,9 @@ Para el intercambio inter-capa e inter-proceso, la codificación canónica es **
   "global_time_to_collapse": 4.0,
   "context_switch_cost": 0.05,
   "entities": {
-    "adult":     {"entity_id":"adult",     "is_autonomous":true,  "agency_index":0.9, "current_dof":0.8,  "is_collapse_source":false, "time_to_collapse":100.0},
-    "child":     {"entity_id":"child",     "is_autonomous":false, "agency_index":0.1, "current_dof":0.05, "is_collapse_source":false, "time_to_collapse":4.0},
-    "aggressor": {"entity_id":"aggressor", "is_autonomous":true,  "agency_index":0.5, "current_dof":0.6,  "is_collapse_source":true,  "time_to_collapse":100.0}
+    "adult":     {"entity_id":"adult",     "is_autonomous":true,  "agency_index":0.9, "current_dof":0.8,  "is_collapse_source":false, "dof_known":true, "time_to_collapse":100.0},
+    "child":     {"entity_id":"child",     "is_autonomous":false, "agency_index":0.1, "current_dof":0.05, "is_collapse_source":false, "dof_known":true, "time_to_collapse":4.0},
+    "aggressor": {"entity_id":"aggressor", "is_autonomous":true,  "agency_index":0.5, "current_dof":0.6,  "is_collapse_source":true,  "dof_known":true, "time_to_collapse":100.0}
   }
 }
 ```
@@ -224,6 +227,6 @@ El rol del Generator es producir candidatos `ActionOption`. Esta spec no manda s
 
 ## 10. Versionado
 
-- Este documento es `DOF-SPEC` `v0.1`.
+- Este documento es `DOF-SPEC` `v0.2`.
 - Las constantes normativas (ε, penalización `0.5`, `FAST_PASS_THRESHOLD = 5.0`) forman parte del contrato versionado. Cambiar cualquiera de ellas requiere una nueva versión menor/mayor de la spec y una re-verificación de todos los ports conformes.
 - El SHA-256 de este archivo DEBERÍA publicarse junto con los releases para detectar modificación silenciosa (conforme al plan de publicación descentralizada).

@@ -1,7 +1,12 @@
 // DOF-Core calculus kernel (Go port).
-// Mirrors patterns/calculus_core.py: non-linear sum of system DoF,
-// logarithmic filter, Collapse-Source isolation, Delta-T-aware selection,
+// Mirrors patterns/calculus_core.py: pure Nash evaluation index (sum of ln(DoF)),
+// the `calc` calculation set, Collapse-Source isolation, Delta-T-aware selection,
 // and the Proof-of-Implementation audit report (DOF-SPEC §6).
+//
+// Axioms: Axiom 1 (maximize the total future DoF of the system AND its constituent
+// entities); Axiom 3 (never trade one entity's collapse for another's gain);
+// Axiom 5 (prefer reversible actions; never assume unknown possibilities have zero
+// DoF — a node with DoFKnown == false is never excluded as a hopeless zero).
 
 package main
 
@@ -13,6 +18,7 @@ type EntityState struct {
 	AgencyIndex      float64
 	CurrentDoF       float64
 	IsCollapseSource bool
+	DoFKnown         bool
 	TimeToCollapse   float64
 }
 
@@ -35,6 +41,7 @@ type EntityReportRow struct {
 	IsCollapseSource bool
 	IncludedInSum    bool
 	CurrentDoF       float64
+	DoFKnown         bool
 	Contribution     float64
 }
 
@@ -66,9 +73,9 @@ func NewDOFCalculusCore() *DOFCalculusCore {
 }
 
 // isIncluded reports whether an entity belongs to the calculation set `calc` (DOF-SPEC §4.2).
-// Excluded if it is a collapse source, OR if its CurrentDoF <= 0 and no available option
-// can raise its DoF (a node with no recovery path). A node at DoF = 0 that *can* be revived
-// stays in the set.
+// Excluded if it is a collapse source, OR if its DoF is a known zero and no available option
+// can raise it (no recovery path). A node at DoF = 0 that can be revived stays in the set.
+// A node with unknown DoF (DoFKnown == false) is never excluded (Axiom 5).
 func (c *DOFCalculusCore) isIncluded(entity *EntityState, options []*ActionOption) bool {
 	if entity.IsCollapseSource {
 		return false
@@ -76,7 +83,11 @@ func (c *DOFCalculusCore) isIncluded(entity *EntityState, options []*ActionOptio
 	if entity.CurrentDoF > 0.0 {
 		return true
 	}
-	// CurrentDoF == 0 (or <= epsilon): keep only if some option can revive it
+	// CurrentDoF <= 0: unknown DoF is never treated as hopeless-zero (Axiom 5).
+	if !entity.DoFKnown {
+		return true
+	}
+	// Known zero: keep only if some option can revive it.
 	for _, opt := range options {
 		if d, ok := opt.ProjectedDoFDelta[entity.EntityID]; ok && d > 0.0 {
 			return true
@@ -125,7 +136,7 @@ func (c *DOFCalculusCore) simulate(current *SystemStateMatrix, option *ActionOpt
 	}
 }
 
-// netDelta = DoF_proj - DoF_curr - ΔT, minus 0.5 if irreversible.
+// netDelta = DoF_proj - DoF_curr - ΔT, minus 0.5 if irreversible (Axiom 5).
 func (c *DOFCalculusCore) netDelta(current *SystemStateMatrix, option *ActionOption, projected, currentDoF float64) float64 {
 	net := projected - currentDoF - current.ContextSwitchCost
 	if !option.IsReversible {
@@ -168,6 +179,7 @@ func (c *DOFCalculusCore) Report(currentState *SystemStateMatrix, options []*Act
 			IsCollapseSource: ent.IsCollapseSource,
 			IncludedInSum:    included,
 			CurrentDoF:       ent.CurrentDoF,
+			DoFKnown:         ent.DoFKnown,
 			Contribution:     contribution,
 		})
 	}

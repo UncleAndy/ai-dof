@@ -8,7 +8,7 @@ Se publica bajo **CC BY-SA 4.0** con una cláusula adicional **Proof of Implemen
 
 Los sistemas de IA modernos tienden a optimizar un único objetivo escalar (recompensa, rendimiento, « el mayor bien »). Esa matemática justifica en silencio el sacrificio de minorías, el bloqueo irreversible y concesiones ocultas. DOF-Core reemplaza el utilitarismo aritmético por una protección **estructural**:
 
-- A medida que el DoF de una entidad se acerca a cero, su contribución a la puntuación del sistema cae hacia **−∞** (`Σ ln(DoF)`). No se puede « recuperar » la liquidación de un portador único de estados futuros inflando a quien ya está bien. Un colapso aporta ~0, nunca un negativo finito que pudiera intercambiarse.
+- A medida que el DoF de una entidad se acerca a cero, su contribución a la puntuación del sistema cae hacia **−∞** (`Σ ln(DoF)`). No se puede « recuperar » la liquidación de un portador único de estados futuros inflando a quien ya está bien. Un colapso es una penalización *infinita*.
 - Los agresores («Collapse Sources») se **aislan**, no se negocian — se filtran de la topología de oportunidad en lugar de restarse de la puntuación.
 
 El resultado es un agente que actúa como un *optimizador de la topología de oportunidades*: diversifica opciones, respeta la reversibilidad y se niega a cambiar el futuro de un ser por la comodidad de otro.

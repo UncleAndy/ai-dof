@@ -10,6 +10,9 @@ class DOFOrchestrator:
 
     Ties the three layers together and links compute cycles to the physical
     time remaining before collapse (tau). Prevents Analysis Paralysis.
+
+    Under uncertainty it keeps options open via the deterministic minimal-risk
+    fallback (Axiom 5: never assume unmapped possibilities have zero DoF).
     """
 
     FAST_PASS_THRESHOLD = 5.0  # seconds

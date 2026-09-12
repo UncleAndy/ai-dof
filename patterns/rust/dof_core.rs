@@ -1,7 +1,11 @@
 // DOF-Core calculus kernel (Rust port).
-// Mirrors patterns/calculus_core.py: non-linear sum of system DoF,
-// logarithmic filter, Collapse-Source isolation, Delta-T-aware selection,
+// Mirrors patterns/calculus_core.py: pure Nash evaluation index (sum of ln(DoF)),
+// the `calc` calculation set, Collapse-Source isolation, Delta-T-aware selection,
 // and the Proof-of-Implementation audit report (DOF-SPEC §6).
+//
+// Axioms: Axiom 1 (system AND its constituent entities); Axiom 3 (no trading one
+// entity's collapse for another's gain); Axiom 5 (prefer reversible actions; never
+// assume unknown possibilities have zero DoF).
 
 use std::collections::HashMap;
 
@@ -12,6 +16,8 @@ pub struct EntityState {
     pub agency_index: f64,
     pub current_dof: f64,
     pub is_collapse_source: bool,
+    /// Whether `current_dof` is a known value; unknown DoF is never treated as 0 (Axiom 5).
+    pub dof_known: bool,
     pub time_to_collapse: f64,
 }
 
@@ -30,6 +36,7 @@ impl EntityState {
             agency_index,
             current_dof,
             is_collapse_source,
+            dof_known: true,
             time_to_collapse,
         }
     }
@@ -73,6 +80,8 @@ pub struct EntityReportRow {
     pub is_collapse_source: bool,
     pub included_in_sum: bool,
     pub current_dof: f64,
+    /// Whether `current_dof` is a known value; unknown DoF is never treated as 0 (Axiom 5).
+    pub dof_known: bool,
     pub contribution: f64,
 }
 
@@ -107,9 +116,10 @@ impl DofCalculusCore {
     }
 
     /// Whether an entity belongs to the calculation set `calc` (DOF-SPEC §4.2).
-    /// Excluded if it is a collapse source, OR if its current_dof <= 0 and no
-    /// available option can raise its DoF (a node with no recovery path). A node
-    /// at DoF = 0 that *can* be revived stays in the set.
+    /// Excluded if it is a collapse source, OR if its DoF is a known zero and no
+    /// available option can raise it (a node with no recovery path). A node at
+    /// DoF = 0 that *can* be revived stays in the set. A node with unknown DoF
+    /// (`dof_known == false`) is never excluded (Axiom 5).
     fn is_included(&self, entity: &EntityState, options: &[ActionOption]) -> bool {
         if entity.is_collapse_source {
             return false;
@@ -117,7 +127,11 @@ impl DofCalculusCore {
         if entity.current_dof > 0.0 {
             return true;
         }
-        // current_dof == 0 (or <= epsilon): keep only if some option can revive it
+        // current_dof <= 0: unknown DoF is never treated as hopeless-zero (Axiom 5).
+        if !entity.dof_known {
+            return true;
+        }
+        // Known zero: keep only if some option can revive it.
         for opt in options {
             if opt.projected_dof_delta.get(&entity.entity_id).copied().unwrap_or(0.0) > 0.0 {
                 return true;
@@ -223,6 +237,7 @@ impl DofCalculusCore {
                 is_collapse_source: ent.is_collapse_source,
                 included_in_sum: included,
                 current_dof: ent.current_dof,
+                dof_known: ent.dof_known,
                 contribution,
             });
         }

@@ -42,7 +42,7 @@ Eine konforme Implementierung MUSS in der Lage sein, ein `report()`-Audit jeder 
 
 ## Sprachen
 
-Dieses Repository ist mehrsprachig: jedes normative und illustrative Dokument existiert auf Englisch, Russisch, Französisch, Deutsch, Spanisch und Esperanto.
+Die **normativen** Dokumente — `SKILL.md` (die Axiome) und `DOF-SPEC.md` (der Vertrag) — existieren nur auf Englisch: ein einziger maßgeblicher Text, damit Übersetzungen keine Mehrdeutigkeit in die Norm bringen können. Das **illustrative** Material — dieses README, `patterns/PATTERNS.*` und die Referenz-Ports — ist mehrsprachig (Englisch, Russisch, Französisch, Deutsch, Spanisch, Esperanto); bei Abweichung einer Übersetzung vom englischen Original gilt das englische Original.
 
 ## Lizenz
 

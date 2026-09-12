@@ -42,7 +42,7 @@ Konforma realigo DEVAS povi eligi `report()`-aŭditon de ĉiu decido (kontribuo 
 
 ## Lingvoj
 
-Ĉi tiu deponejo estas multlingva: ĉiu normiga kaj ilustra dokumento ekzistas en la angla, rusa, franca, germana, hispana kaj esperanto.
+La **normigaj** dokumentoj — `SKILL.md` (la aksiomoj) kaj `DOF-SPEC.md` (la kontrakto) — ekzistas nur en la angla: unu sola aŭtoritata teksto, por ke tradukoj neniam enkonduku dusencecon en la normon. La **ilustra** materialo — ĉi tiu README, `patterns/PATTERNS.*` kaj la referencaj portoj — estas multlingva (la angla, rusa, franca, germana, hispana, esperanto); se traduko kaj ĝia angla originalo malkongruas, la angla originalo superregas.
 
 ## Licenco
 

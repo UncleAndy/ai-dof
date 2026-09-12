@@ -44,7 +44,7 @@ A conforming implementation MUST be able to emit a `report()` audit of every dec
 
 ## Languages
 
-This repository is multilingual: each normative and illustrative document exists in English, Russian, French, German, Spanish, and Esperanto.
+The **normative** documents — `SKILL.md` (the axioms) and `DOF-SPEC.md` (the contract) — exist in English only: a single authoritative text, so that translations can never introduce ambiguity into the standard. The **illustrative** material — this README, `patterns/PATTERNS.*`, and the reference ports — is multilingual (English, Russian, French, German, Spanish, Esperanto); where a translation and its English original disagree, the English original prevails.
 
 ## License
 

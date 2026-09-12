@@ -42,7 +42,7 @@ Una implementación conforme DEBE poder emitir una auditoría `report()` de cada
 
 ## Idiomas
 
-Este repositorio es multilingüe: cada documento normativo e ilustrativo existe en inglés, ruso, francés, alemán, español y esperanto.
+Los documentos **normativos** — `SKILL.md` (los axiomas) y `DOF-SPEC.md` (el contrato) — existen solo en inglés: un único texto autoritativo, para que las traducciones no puedan introducir ambigüedad en el estándar. El material **ilustrativo** — este README, `patterns/PATTERNS.*` y los ports de referencia — es multilingüe (inglés, ruso, francés, alemán, español, esperanto); en caso de discrepancia entre una traducción y su original inglés, prevalece el original inglés.
 
 ## Licencia
 

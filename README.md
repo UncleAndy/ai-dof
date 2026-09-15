@@ -28,9 +28,12 @@ DOF/
   patterns/
     PATTERNS.{md,ru,fr,de,es,eo}  ← engineering blueprint (multilingual)
     python/  rust/  go/  cpp/     ← minimal runnable illustrations (four ports of the same logic)
+  drafts/                       ← non-normative working notes (informative, NOT part of the standard)
 ```
 
 Read `SKILL.md` for the philosophy. Read `DOF-SPEC.md` if you are building a conforming implementation — it defines the data model, math, reactive-circuit timing, and the mandatory audit output that the license requires.
+
+`drafts/` holds non-normative working notes: open design questions, candidate formulas and analyses still under discussion. They are informative only — they are not part of `SKILL.md` or `DOF-SPEC.md`, may contradict the current standard, and must not be cited as normative. See `drafts/README.md`.
 
 ## How it works (the loop)
 

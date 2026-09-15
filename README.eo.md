@@ -26,9 +26,12 @@ DOF/
   patterns/
     PATTERNS.{md,ru,fr,de,es,eo}  ← inĝeniera modelo (multlingva)
     python/  rust/  go/  cpp/     ← minimumaj ekzekuteblaj ilustraĵoj (kvar portoj de la sama logiko)
+  drafts/                       ← nenormaj labornotoj (informa, NE parto de la normo)
 ```
 
 Legu `SKILL.md` por la filozofio. Legu `DOF-SPEC.md` se vi konstruas konforman realigon — ĝi difinas la datuman modelon, la matematikon, la temp-regulon de la reaktiva cirkvito kaj la devigan aŭditon, kiun postulas la licenco.
+
+`drafts/` enhavas nenormajn labornotojn: malfermaj dezajn-demandoj, kandidataj formuloj kaj analizoj ankoraŭ diskutataj. Ili estas nur informaj — ne parto de `SKILL.md` aŭ `DOF-SPEC.md`, povas kontraŭdiri la nunan normon kaj neniam citiĝu kiel normaj. Vidu `drafts/README.md`.
 
 ## Kiel ĝi funkcias (la ciklo)
 

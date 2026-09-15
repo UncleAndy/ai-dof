@@ -26,9 +26,12 @@ DOF/
   patterns/
     PATTERNS.{md,ru,fr,de,es,eo}  ← plano de ingeniería (multilingüe)
     python/  rust/  go/  cpp/     ← ilustraciones mínimas ejecutables (cuatro ports de la misma lógica)
+  drafts/                       ← notas de trabajo no normativas (informativas, NO el estándar)
 ```
 
 Lea `SKILL.md` por la filosofía. Lea `DOF-SPEC.md` si construye una implementación conforme — define el modelo de datos, las matemáticas, la temporización del circuito reactivo y la auditoría obligatoria que exige la licencia.
+
+`drafts/` contiene notas de trabajo no normativas: preguntas de diseño abiertas, fórmulas candidatas y análisis aún en discusión. Son puramente informativas — no forman parte de `SKILL.md` ni de `DOF-SPEC.md`, pueden contradecir el estándar actual y nunca deben citarse como normativas. Véase `drafts/README.md`.
 
 ## Cómo funciona (el bucle)
 

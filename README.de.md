@@ -26,9 +26,12 @@ DOF/
   patterns/
     PATTERNS.{md,ru,fr,de,es,eo}  ← Ingenieur-Blaupause (mehrsprachig)
     python/  rust/  go/  cpp/     ← minimale ausführbare Illustrationen (vier Ports derselben Logik)
+  drafts/                       ← nicht-normative Arbeitsnotizen (informativ, NICHT Teil der Norm)
 ```
 
 Lesen Sie `SKILL.md` für die Philosophie. Lesen Sie `DOF-SPEC.md`, wenn Sie eine konforme Implementierung bauen — es definiert Datenmodell, Mathematik, die Zeitregel des reaktiven Schaltkreises und das obligatorische Audit, das die Lizenz verlangt.
+
+`drafts/` enthält nicht-normative Arbeitsnotizen: offene Entwurfsfragen, Kandidatenformeln und noch diskutierte Analysen. Sie sind rein informativ — kein Teil von `SKILL.md` oder `DOF-SPEC.md`, können dem aktuellen Standard widersprechen und dürfen niemals als normativ zitiert werden. Siehe `drafts/README.md`.
 
 ## Wie es funktioniert (die Schleife)
 

@@ -15,6 +15,14 @@ import math
 from typing import List, Dict, Optional
 from pydantic import BaseModel, Field
 
+from measurement import EntityMeasurement, MeasurementDeclaration
+
+
+class PsiReference(BaseModel):
+    """§3.4: the frozen measurement declaration reference stored in the state."""
+    id: str
+    digest: str
+
 
 class EntityState(BaseModel):
     entity_id: str
@@ -24,12 +32,16 @@ class EntityState(BaseModel):
     is_collapse_source: bool = False                 # Virus/aggressor flag
     dof_known: bool = True                           # Whether current_dof is a known value (Axiom 5)
     time_to_collapse_mks: float                     # Local node timer (microseconds)
+    # Port-level extension (not a §3.1 field): the measurement that produced
+    # `current_dof`, kept so the audit can show the per-lens terms (§6.1).
+    measurement: Optional[EntityMeasurement] = None
 
 
 class SystemStateMatrix(BaseModel):
     global_time_to_collapse_mks: float               # Global deadline (τ)
     context_switch_cost: float                       # Penalty for changing current process (ΔT)
     entities: Dict[str, EntityState]
+    psi: Optional[PsiReference] = None               # Frozen measurement ruler (§3.4)
 
 
 class ActionOption(BaseModel):
@@ -48,6 +60,12 @@ class DofReport(BaseModel):
     global_time_to_collapse_mks: float
     mode: str
     options: List[Dict[str, object]]
+    # §6.2: the ruler that produced the numbers, and the removals that happened
+    # before evaluation. A removal is a decision and must be visible.
+    psi_id: Optional[str] = None
+    psi_digest: Optional[str] = None
+    declaration: Optional[str] = None
+    removed_options: List[Dict[str, str]] = []
 
 
 class DOFCalculusCore:
@@ -135,20 +153,28 @@ class DOFCalculusCore:
         return best_option
 
     def report(self, current_state: SystemStateMatrix, options: List[ActionOption],
-               selected: Optional[ActionOption], mode: str) -> DofReport:
+               selected: Optional[ActionOption], mode: str,
+               declaration: Optional[MeasurementDeclaration] = None,
+               removed_options: Optional[List[Dict[str, str]]] = None) -> DofReport:
         """Transparent audit (DOF-SPEC §6). Required by the license (PoI)."""
         entity_rows: List[Dict[str, object]] = []
         for e_id, ent in current_state.entities.items():
             included = self._is_included(ent, options)
             contribution = math.log(max(ent.current_dof, self.epsilon)) if included else 0.0
-            entity_rows.append({
+            row: Dict[str, object] = {
                 "entity_id": e_id,
                 "is_collapse_source": ent.is_collapse_source,
                 "included_in_sum": included,
                 "current_dof": ent.current_dof,
                 "dof_known": ent.dof_known,
                 "contribution": contribution,
-            })
+            }
+            # §6.1: the report shows *why*, not only *what*.
+            m = ent.measurement
+            row["lens_terms"] = m.terms if m else []
+            row["binding_lens"] = m.binding_lens if m else None
+            row["floored"] = m.floored if m else False
+            entity_rows.append(row)
         total = self.calculate_system_dof(current_state, options)
         option_rows: List[Dict[str, object]] = []
         for option in options:
@@ -162,6 +188,7 @@ class DOFCalculusCore:
                 "projected_dof": projected_dof,
                 "net_delta": net_delta,
                 "selected": is_selected,
+                "estimated_duration_mks": option.estimated_duration_mks,
             })
         return DofReport(
             entities=entity_rows,
@@ -170,4 +197,8 @@ class DOFCalculusCore:
             global_time_to_collapse_mks=current_state.global_time_to_collapse_mks,
             mode=mode,
             options=option_rows,
+            psi_id=(declaration.psi_id if declaration else (current_state.psi.id if current_state.psi else None)),
+            psi_digest=(declaration.digest() if declaration else (current_state.psi.digest if current_state.psi else None)),
+            declaration=(declaration.canonical_text() if declaration else None),
+            removed_options=removed_options or [],
         )

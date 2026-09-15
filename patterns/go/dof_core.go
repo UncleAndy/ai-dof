@@ -20,12 +20,16 @@ type EntityState struct {
 	IsCollapseSource  bool    `json:"is_collapse_source"`
 	DoFKnown          bool    `json:"dof_known"`
 	TimeToCollapseMks float64 `json:"time_to_collapse_mks"`
+	// Port-level extension (not a §3.1 field): the measurement that produced
+	// CurrentDoF, kept so the audit can show the per-lens terms (§6.1).
+	Measurement *EntityMeasurement `json:"-"`
 }
 
 type SystemStateMatrix struct {
 	GlobalTimeToCollapseMks float64                 `json:"global_time_to_collapse_mks"`
 	ContextSwitchCost       float64                 `json:"context_switch_cost"`
 	Entities                map[string]*EntityState `json:"entities"`
+	Psi                     *PsiReference           `json:"psi"` // frozen ruler (§3.4)
 }
 
 type ActionOption struct {
@@ -38,21 +42,31 @@ type ActionOption struct {
 
 // EntityReportRow is one entity row of the audit report.
 type EntityReportRow struct {
-	EntityID         string  `json:"entity_id"`
-	IsCollapseSource bool    `json:"is_collapse_source"`
-	IncludedInSum    bool    `json:"included_in_sum"`
-	CurrentDoF       float64 `json:"current_dof"`
-	DoFKnown         bool    `json:"dof_known"`
-	Contribution     float64 `json:"contribution"`
+	EntityID         string     `json:"entity_id"`
+	IsCollapseSource bool       `json:"is_collapse_source"`
+	IncludedInSum    bool       `json:"included_in_sum"`
+	CurrentDoF       float64    `json:"current_dof"`
+	DoFKnown         bool       `json:"dof_known"`
+	Contribution     float64    `json:"contribution"`
+	LensTerms        []LensTerm `json:"lens_terms"`   // §6.1: why, not only what
+	BindingLens      string     `json:"binding_lens"` // the channel holding it back
+	Floored          bool       `json:"floored"`      // ε-floor applied at entity level
 }
 
 // OptionReportRow is one option row of the audit report.
 type OptionReportRow struct {
-	OptionID     string  `json:"option_id"`
-	IsReversible bool    `json:"is_reversible"`
-	ProjectedDoF float64 `json:"projected_dof"`
-	NetDelta     float64 `json:"net_delta"`
-	Selected     bool    `json:"selected"`
+	OptionID             string  `json:"option_id"`
+	IsReversible         bool    `json:"is_reversible"`
+	ProjectedDoF         float64 `json:"projected_dof"`
+	NetDelta             float64 `json:"net_delta"`
+	Selected             bool    `json:"selected"`
+	EstimatedDurationMks float64 `json:"estimated_duration_mks"`
+}
+
+// RemovedOption records a candidate removed before evaluation (§6.2).
+type RemovedOption struct {
+	OptionID string `json:"option_id"`
+	Gate     string `json:"gate"`
 }
 
 // DofReport is the full Proof-of-Implementation audit (DOF-SPEC §6).
@@ -63,6 +77,10 @@ type DofReport struct {
 	GlobalTimeToCollapseMks float64           `json:"global_time_to_collapse_mks"`
 	Mode                    string            `json:"mode"`
 	Options                 []OptionReportRow `json:"options"`
+	PsiID                   string            `json:"psi_id"`
+	PsiDigest               string            `json:"psi_digest"`
+	Declaration             string            `json:"declaration"`
+	RemovedOptions          []RemovedOption   `json:"removed_options"`
 }
 
 type DOFCalculusCore struct {
@@ -167,7 +185,7 @@ func (c *DOFCalculusCore) EvaluateAndSelect(currentState *SystemStateMatrix, opt
 }
 
 // Report builds the transparent audit (DOF-SPEC §6). Required by the license (PoI).
-func (c *DOFCalculusCore) Report(currentState *SystemStateMatrix, options []*ActionOption, selected *ActionOption, mode string) *DofReport {
+func (c *DOFCalculusCore) Report(currentState *SystemStateMatrix, options []*ActionOption, selected *ActionOption, mode string, declaration *MeasurementDeclaration, removed []RemovedOption) *DofReport {
 	var entityRows []EntityReportRow
 	for _, ent := range currentState.Entities {
 		included := c.isIncluded(ent, options)
@@ -175,14 +193,20 @@ func (c *DOFCalculusCore) Report(currentState *SystemStateMatrix, options []*Act
 		if included {
 			contribution = math.Log(math.Max(ent.CurrentDoF, c.epsilon))
 		}
-		entityRows = append(entityRows, EntityReportRow{
+		row := EntityReportRow{
 			EntityID:         ent.EntityID,
 			IsCollapseSource: ent.IsCollapseSource,
 			IncludedInSum:    included,
 			CurrentDoF:       ent.CurrentDoF,
 			DoFKnown:         ent.DoFKnown,
 			Contribution:     contribution,
-		})
+		}
+		if ent.Measurement != nil {
+			row.LensTerms = ent.Measurement.Terms
+			row.BindingLens = ent.Measurement.BindingLens
+			row.Floored = ent.Measurement.Floored
+		}
+		entityRows = append(entityRows, row)
 	}
 	total := c.CalculateSystemDoF(currentState, options)
 	var optionRows []OptionReportRow
@@ -192,19 +216,30 @@ func (c *DOFCalculusCore) Report(currentState *SystemStateMatrix, options []*Act
 		net := c.netDelta(currentState, option, projected, total)
 		isSelected := selected != nil && selected.OptionID == option.OptionID
 		optionRows = append(optionRows, OptionReportRow{
-			OptionID:     option.OptionID,
-			IsReversible: option.IsReversible,
-			ProjectedDoF: projected,
-			NetDelta:     net,
-			Selected:     isSelected,
+			OptionID:             option.OptionID,
+			IsReversible:         option.IsReversible,
+			ProjectedDoF:         projected,
+			NetDelta:             net,
+			Selected:             isSelected,
+			EstimatedDurationMks: option.EstimatedDurationMks,
 		})
 	}
-	return &DofReport{
+	report := &DofReport{
 		Entities:                entityRows,
 		TotalSystemDoF:          total,
 		ContextSwitchCost:       currentState.ContextSwitchCost,
 		GlobalTimeToCollapseMks: currentState.GlobalTimeToCollapseMks,
 		Mode:                    mode,
 		Options:                 optionRows,
+		RemovedOptions:          removed,
 	}
+	if declaration != nil {
+		report.PsiID = declaration.PsiID
+		report.PsiDigest = declaration.Digest()
+		report.Declaration = declaration.CanonicalText()
+	} else if currentState.Psi != nil {
+		report.PsiID = currentState.Psi.ID
+		report.PsiDigest = currentState.Psi.Digest
+	}
+	return report
 }

@@ -16,6 +16,7 @@
 #include <cmath>
 #include <limits>
 #include <algorithm>
+#include "measurement.hpp"
 
 struct EntityState {
     std::string entity_id;
@@ -25,12 +26,16 @@ struct EntityState {
     bool is_collapse_source = false;
     bool dof_known = true;        // unknown DoF is never treated as 0 (Axiom 5)
     double time_to_collapse_mks = 0.0;
+    // Port-level extension (not a §3.1 field): the measurement that produced
+    // current_dof, kept so the audit can show the per-lens terms (§6.1).
+    std::optional<dof::EntityMeasurement> measurement;
 };
 
 struct SystemStateMatrix {
     double global_time_to_collapse_mks = 0.0;
     double context_switch_cost = 0.0;
     std::unordered_map<std::string, EntityState> entities;
+    std::optional<dof::PsiReference> psi;  // frozen measurement ruler (§3.4)
 };
 
 struct ActionOption {
@@ -49,6 +54,10 @@ struct EntityReportRow {
     double current_dof = 0.0;
     bool dof_known = true;
     double contribution = 0.0;
+    // §6.1: why, not only what.
+    std::vector<dof::LensTerm> lens_terms;
+    std::optional<std::string> binding_lens;
+    bool floored = false;
 };
 
 struct OptionReportRow {
@@ -57,6 +66,13 @@ struct OptionReportRow {
     double projected_dof = 0.0;
     double net_delta = 0.0;
     bool selected = false;
+    double estimated_duration_mks = 0.0;
+};
+
+// A candidate removed before evaluation (§6.2).
+struct RemovedOption {
+    std::string option_id;
+    std::string gate;
 };
 
 struct DofReport {
@@ -66,6 +82,10 @@ struct DofReport {
     double global_time_to_collapse_mks = 0.0;
     std::string mode;
     std::vector<OptionReportRow> options;
+    std::string psi_id;
+    std::string psi_digest;
+    std::string declaration;
+    std::vector<RemovedOption> removed_options;
 };
 
 class DOFCalculusCore {
@@ -153,7 +173,9 @@ public:
     DofReport report(const SystemStateMatrix& current_state,
                      const std::vector<ActionOption>& options,
                      const std::optional<ActionOption>& selected,
-                     const std::string& mode) const
+                     const std::string& mode,
+                     const std::optional<dof::MeasurementDeclaration>& declaration = std::nullopt,
+                     const std::vector<RemovedOption>& removed = {}) const
     {
         DofReport rep;
         for (const auto& kv : current_state.entities) {
@@ -161,6 +183,12 @@ public:
             bool included = is_included(e, options);
             double contribution = included ? std::log(std::max(e.current_dof, epsilon_)) : 0.0;
             rep.entities.push_back(EntityReportRow{e.entity_id, e.is_collapse_source, included, e.current_dof, e.dof_known, contribution});
+            EntityReportRow& row = rep.entities.back();
+            if (e.measurement) {
+                row.lens_terms = e.measurement->terms;
+                row.binding_lens = e.measurement->binding_lens;
+                row.floored = e.measurement->floored;
+            }
         }
         double total = calculate_system_dof(current_state, options);
         for (const auto& option : options) {
@@ -168,12 +196,21 @@ public:
             double projected = calculate_system_dof(sim, options);
             double net = net_delta(current_state, option, projected, total);
             bool is_selected = selected.has_value() && selected->option_id == option.option_id;
-            rep.options.push_back(OptionReportRow{option.option_id, option.is_reversible, projected, net, is_selected});
+            rep.options.push_back(OptionReportRow{option.option_id, option.is_reversible, projected, net, is_selected, option.estimated_duration_mks});
         }
         rep.total_system_dof = total;
         rep.context_switch_cost = current_state.context_switch_cost;
         rep.global_time_to_collapse_mks = current_state.global_time_to_collapse_mks;
         rep.mode = mode;
+        rep.removed_options = removed;
+        if (declaration) {
+            rep.psi_id = declaration->psi_id;
+            rep.psi_digest = declaration->digest();
+            rep.declaration = declaration->canonical_text();
+        } else if (current_state.psi) {
+            rep.psi_id = current_state.psi->id;
+            rep.psi_digest = current_state.psi->digest;
+        }
         return rep;
     }
 };

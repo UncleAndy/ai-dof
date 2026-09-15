@@ -1,60 +1,191 @@
 // DOF-Core Go SDK — entry point / smoke test.
-// Mirrors patterns/smoke_test.py for cross-language parity.
+// Mirrors patterns/smoke_test.py: it checks the same facts on the same fixture
+// and compares the canonical declaration digest with the other ports.
 
 package main
 
 import (
 	"encoding/json"
 	"fmt"
+	"math"
+	"sort"
 )
 
+// Reference digest of the shared fixture declaration (computed by the Python port).
+const expectedDigest = "e6f58a7e9dc0ac5814f58b392c19d28a30be1be3baad1d83471382b5bdf5e7c5"
+
+var failures []string
+
+func check(name string, ok bool, detail ...string) {
+	mark := "  OK   "
+	if !ok {
+		mark = "  FAIL "
+		failures = append(failures, name)
+	}
+	if len(detail) > 0 && detail[0] != "" {
+		fmt.Printf("%s%s  %s\n", mark, name, detail[0])
+	} else {
+		fmt.Printf("%s%s\n", mark, name)
+	}
+}
+
+func pts(pairs ...[2]float64) *[][2]float64 { return &pairs }
+
+func obs(agency float64, collapse bool, ttc float64, lenses LensObservation) *RawObservation {
+	return &RawObservation{
+		IsAutonomous:      true,
+		AgencyIndex:       agency,
+		IsCollapseSource:  collapse,
+		TimeToCollapseMks: ttc,
+		Lenses:            lenses,
+	}
+}
+
+// fixture is the shared observation set: the same five entities as the Python
+// port, including a passive object (no response vectors, no budget, no free
+// variables) and an entity whose Options lens was never measured.
+func fixture() map[string]*RawObservation {
+	return map[string]*RawObservation{
+		"adult": obs(0.9, false, 100000000.0, LensObservation{
+			Variety:    &VarietyObs{V: 3.0, VEnv: 2.0},
+			Options:    pts([2]float64{1.0, 10.0}),
+			Constraint: &ConstraintObs{F: 4.0, FEnv: 1.0},
+		}),
+		"child": obs(0.1, false, 4000000.0, LensObservation{
+			Variety:    &VarietyObs{V: 1.0, VEnv: 5.0},
+			Options:    pts([2]float64{2.0, 4.0}),
+			Constraint: &ConstraintObs{F: 1.0, FEnv: 3.0},
+		}),
+		"aggressor": obs(0.5, true, 100000000.0, LensObservation{
+			Variety:    &VarietyObs{V: 5.0, VEnv: 1.0},
+			Options:    pts([2]float64{1.0, 100.0}),
+			Constraint: &ConstraintObs{F: 5.0, FEnv: 1.0},
+		}),
+		"stone": obs(0.0, false, 100000000.0, LensObservation{
+			Variety:    &VarietyObs{V: 0.0, VEnv: 0.0},
+			Options:    pts(),
+			Constraint: &ConstraintObs{F: 0.0, FEnv: 0.0},
+		}),
+		"unmapped": obs(0.4, false, 100000000.0, LensObservation{
+			Variety:    &VarietyObs{V: 2.0, VEnv: 2.0},
+			Constraint: &ConstraintObs{F: 1.0, FEnv: 1.0},
+		}),
+	}
+}
+
+func withDeadline(source map[string]*RawObservation, ttc float64) map[string]*RawObservation {
+	clone := map[string]*RawObservation{}
+	for id, o := range source {
+		copied := *o
+		copied.TimeToCollapseMks = ttc
+		clone[id] = &copied
+	}
+	return clone
+}
+
 func main() {
-	obs := map[string]*RawObservation{
-		"adult": {
-			IsAutonomous:      true,
-			AgencyIndex:       0.9,
-			CurrentDoF:        0.8,
-			IsCollapseSource:  false,
-			TimeToCollapseMks: 100000000.0, // 100 s in us
-		},
-		"child": {
-			IsAutonomous:      false,
-			AgencyIndex:       0.1,
-			CurrentDoF:        0.05,
-			IsCollapseSource:  false,
-			TimeToCollapseMks: 4000000.0, // 4 s in us
-		},
-		"aggressor": {
-			IsAutonomous:      true,
-			AgencyIndex:       0.5,
-			CurrentDoF:        0.6,
-			IsCollapseSource:  true,
-			TimeToCollapseMks: 100000000.0, // 100 s in us
-		},
-	}
-
 	orch := NewDOFOrchestrator(0.05)
-	sel, rep := orch.StepWithReport(obs)
-	selID := ""
-	if sel != nil {
-		selID = sel.OptionID
-	}
-	fmt.Println("DEEP SELECTED:", selID)
-	repJSON, _ := json.Marshal(rep)
-	fmt.Println("REPORT:", string(repJSON))
+	state := orch.mapper.PollEnvironment(fixture())
+	core := NewDOFCalculusCore()
+	selected, report := orch.StepWithReport(fixture())
 
-	obs2 := map[string]*RawObservation{
-		"adult":     obs["adult"],
-		"child":     {IsAutonomous: false, AgencyIndex: 0.1, CurrentDoF: 0.05, IsCollapseSource: false, TimeToCollapseMks: 2000000.0},
-		"aggressor": obs["aggressor"],
+	fmt.Println("=== 1. §3.4.3: the canonical ruler ===")
+	check("digest matches the Python port", state.Psi.Digest == expectedDigest, state.Psi.Digest[:16]+"…")
+	canonical := state.Psi.Digest
+	selectedID := ""
+	if selected != nil {
+		selectedID = selected.OptionID
 	}
-	sel2, rep2 := orch.StepWithReport(obs2)
-	sel2ID := ""
-	if sel2 != nil {
-		sel2ID = sel2.OptionID
+	check("fixture 1 selected an option", selectedID != "", selectedID)
+	check("digest is 64 hex chars", len(canonical) == 64)
+
+	fmt.Println("=== 2. §4.1 / §4.6: per-entity values (reference: Python port) ===")
+	expected := map[string][2]float64{
+		"adult":     {0.417864270382, -0.872598611192},
+		"child":     {0.020833333333, -3.871201010908},
+		"aggressor": {0.684883822565, -0.378506057199},
+		"stone":     {0.000000000000, -13.815510557964},
+		"unmapped":  {0.125000000000, -2.079441541680},
 	}
-	fmt.Println("FAST-PASS SELECTED:", sel2ID)
-	rep2JSON, _ := json.Marshal(rep2)
-	fmt.Println("REPORT:", string(rep2JSON))
-	fmt.Println("OK")
+	ids := make([]string, 0, len(state.Entities))
+	for id := range state.Entities {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	for _, id := range ids {
+		ent := state.Entities[id]
+		exp := expected[id]
+		check(fmt.Sprintf("%s: current_dof = lens product, contribution", id),
+			math.Abs(ent.CurrentDoF-exp[0]) < 1e-9 && math.Abs(ent.Measurement.Contribution-exp[1]) < 1e-9,
+			fmt.Sprintf("dof=%.12f contrib=%.12f", ent.CurrentDoF, ent.Measurement.Contribution))
+		if !ent.Measurement.Floored {
+			check(fmt.Sprintf("%s: Σ terms == contribution", id),
+				math.Abs(ent.Measurement.TermsSum-ent.Measurement.Contribution) < 1e-12, "")
+		}
+	}
+
+	fmt.Println("=== 3. §4.6 guard and §4.2 exclusion (passive object) ===")
+	stone := state.Entities["stone"]
+	variety := 0.0
+	if stone.Measurement.Psi["variety"] != nil {
+		variety = *stone.Measurement.Psi["variety"]
+	}
+	check("stone: ψ_var = 0, no 0/0", variety == 0.0)
+	check("stone: current_dof = 0", stone.CurrentDoF == 0.0)
+	check("stone: no NaN in the index", !math.IsNaN(report.TotalSystemDoF))
+	check("stone: excluded when nothing can raise it (§4.2)", !core.isIncluded(stone, nil))
+	check("stone: floored flag is set", stone.Measurement.Floored)
+
+	fmt.Println("=== 4. §4.7: unmeasured lens ===")
+	unmapped := state.Entities["unmapped"]
+	check("unmapped: DoFKnown = false", !unmapped.DoFKnown)
+	check("unmapped: never excluded (§4.2)", core.isIncluded(unmapped, nil))
+	unknown := 0
+	for _, t := range unmapped.Measurement.Terms {
+		if !t.DoFKnown {
+			unknown++
+			check("unmapped: the unmeasured term costs ln u₀",
+				math.Abs(t.Contribution-math.Log(0.5)) < 1e-12, "")
+		}
+	}
+	check("unmapped: exactly one unmeasured term of three", unknown == 1)
+	check("u₀ band respected", UminLvl <= 0.5 && 0.5 <= UmaxLvl,
+		fmt.Sprintf("U_MIN=%.4f U_MAX=%.4f", UminLvl, UmaxLvl))
+
+	fmt.Println("=== 5. §5: viability gate, and both reactive modes ===")
+	selSlow, repSlow := orch.StepWithReport(withDeadline(fixture(), 500.0))
+	check("τ < option duration → removed and nothing selected",
+		selSlow == nil && len(repSlow.RemovedOptions) == 1 &&
+			repSlow.RemovedOptions[0].OptionID == "fallback_0" && repSlow.RemovedOptions[0].Gate == "viability")
+	check("fixture 1 runs in FAST_PASS", report.Mode == "FAST_PASS",
+		fmt.Sprintf("τ=%.0f", report.GlobalTimeToCollapseMks))
+	_, repDeep := orch.StepWithReport(withDeadline(fixture(), 100000000.0))
+	check("fixture 2 runs in DEEP_DIVERSIFICATION", repDeep.Mode == "DEEP_DIVERSIFICATION")
+	check("psi_id and digest are echoed in the report",
+		repDeep.PsiID == "perception-v1" && len(repDeep.PsiDigest) == 64)
+
+	fmt.Println("=== 6. draft §6, example 1: product collapses where a sum would mask it ===")
+	before := PsiVar(9.0, 1.0) * PsiOpt([][2]float64{{1.0, 10.0}}) * PsiCon(9.0, 1.0)
+	after := PsiVar(19.0, 1.0) * PsiOpt([][2]float64{{5.0, 1.0}}) * PsiCon(9.0, 1.0)
+	sumBefore := PsiVar(9.0, 1.0) + PsiOpt([][2]float64{{1.0, 10.0}}) + PsiCon(9.0, 1.0)
+	sumAfter := PsiVar(19.0, 1.0) + PsiOpt([][2]float64{{5.0, 1.0}}) + PsiCon(9.0, 1.0)
+	check(fmt.Sprintf("product collapses (ΔIndex ≈ %.2f nats)", math.Log(after/before)),
+		after/before < 0.01, fmt.Sprintf("×%.5f", after/before))
+	check("a sum would mask it", sumAfter/sumBefore > 0.6, fmt.Sprintf("×%.3f", sumAfter/sumBefore))
+
+	blob, _ := json.Marshal(report)
+	text := string(blob)
+	if len(text) > 600 {
+		text = text[:600] + "…"
+	}
+	fmt.Println()
+	fmt.Println("REPORT (fixture 1):", text)
+	fmt.Println()
+	if len(failures) == 0 {
+		fmt.Println("FAILURES: none")
+		fmt.Println("OK")
+	} else {
+		fmt.Println("FAILURES:", failures)
+		fmt.Println("FAILED")
+	}
 }

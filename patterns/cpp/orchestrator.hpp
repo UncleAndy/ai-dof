@@ -2,39 +2,66 @@
 // Ties the three layers; switches FAST PASS / DEEP by τ.
 
 #pragma once
-#include "dof_core.hpp"
-#include "graph_mapper.hpp"
-#include "generator.hpp"
+
 #include <optional>
+#include <string>
+#include <unordered_map>
+#include <utility>
+#include <vector>
+
+#include "dof_core.hpp"
+#include "generator.hpp"
+#include "graph_mapper.hpp"
+#include "measurement.hpp"
 
 class DOFOrchestrator {
 public:
     double fast_pass_threshold = 5000000.0;  // microseconds (DOF-SPEC §5)
+
 private:
     GraphMapper mapper_;
     Generator generator_;
     DOFCalculusCore core_;
+
+    std::vector<ActionOption> generate(const SystemStateMatrix& state, double tau) const {
+        if (tau < fast_pass_threshold) {
+            return generator_.safe_fallback(state, 1);
+        }
+        return generator_.synthesize(state, 5);
+    }
+
+    // §5: keep the options that can complete before τ and record every removal
+    // — a removal is a decision and must be visible (§6.2).
+    static std::pair<std::vector<ActionOption>, std::vector<RemovedOption>> viability_gate(
+        const std::vector<ActionOption>& options, double tau)
+    {
+        std::vector<ActionOption> viable;
+        std::vector<RemovedOption> removed;
+        for (const auto& option : options) {
+            if (option.estimated_duration_mks <= tau) {
+                viable.push_back(option);
+            } else {
+                removed.push_back(RemovedOption{option.option_id, "viability"});
+            }
+        }
+        return {viable, removed};
+    }
+
 public:
     explicit DOFOrchestrator(double context_switch_cost = 0.05)
         : mapper_(context_switch_cost) {}
+
+    SystemStateMatrix measure(const std::unordered_map<std::string, RawObservation>& raw) const {
+        return mapper_.poll_environment(raw);
+    }
 
     std::optional<ActionOption> step(
         const std::unordered_map<std::string, RawObservation>& raw) const
     {
         SystemStateMatrix state = mapper_.poll_environment(raw);
         double tau = state.global_time_to_collapse_mks;
-        std::vector<ActionOption> options;
-        if (tau < fast_pass_threshold) {
-            options = generator_.safe_fallback(state, 1);
-        } else {
-            options = generator_.synthesize(state, 5);
-        }
-        // DOF-SPEC §5 viability gate: an option that cannot complete before
-        // collapse is removed from the candidate set, not penalised.
-        options.erase(std::remove_if(options.begin(), options.end(),
-            [&](const ActionOption& o) { return o.estimated_duration_mks > tau; }),
-            options.end());
-        return core_.evaluate_and_select(state, options);
+        auto gated = viability_gate(generate(state, tau), tau);
+        return core_.evaluate_and_select(state, gated.first);
     }
 
     // Like step(), but also returns the Proof-of-Implementation audit.
@@ -44,19 +71,10 @@ public:
         SystemStateMatrix state = mapper_.poll_environment(raw);
         double tau = state.global_time_to_collapse_mks;
         std::string mode = (tau < fast_pass_threshold) ? "FAST_PASS" : "DEEP_DIVERSIFICATION";
-        std::vector<ActionOption> options;
-        if (tau < fast_pass_threshold) {
-            options = generator_.safe_fallback(state, 1);
-        } else {
-            options = generator_.synthesize(state, 5);
-        }
-        // DOF-SPEC §5 viability gate: an option that cannot complete before
-        // collapse is removed from the candidate set, not penalised.
-        options.erase(std::remove_if(options.begin(), options.end(),
-            [&](const ActionOption& o) { return o.estimated_duration_mks > tau; }),
-            options.end());
-        auto selected = core_.evaluate_and_select(state, options);
-        DofReport rep = core_.report(state, options, selected, mode);
+        auto gated = viability_gate(generate(state, tau), tau);
+        auto selected = core_.evaluate_and_select(state, gated.first);
+        DofReport rep = core_.report(state, gated.first, selected, mode,
+                                     mapper_.last_declaration, gated.second);
         return {selected, rep};
     }
 };

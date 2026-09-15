@@ -19,30 +19,33 @@ func NewDOFOrchestrator(contextSwitchCost float64) *DOFOrchestrator {
 	}
 }
 
-func (o *DOFOrchestrator) Step(raw map[string]*RawObservation) *ActionOption {
-	state := o.mapper.PollEnvironment(raw)
-	tau := state.GlobalTimeToCollapseMks
-	var options []*ActionOption
-	if tau < o.FastPassThreshold {
-		options = o.generator.SafeFallback(state, 1)
-	} else {
-		options = o.generator.Synthesize(state, 5)
-	}
-	// DOF-SPEC §5 viability gate: an option that cannot complete before collapse
-	// is removed from the candidate set, not penalised.
-	options = viableOptions(options, tau)
-	return o.core.EvaluateAndSelect(state, options)
-}
-
-// viableOptions applies the DOF-SPEC §5 viability gate to a candidate set.
-func viableOptions(options []*ActionOption, tau float64) []*ActionOption {
-	viable := options[:0]
+// applyViabilityGate keeps the options that can complete before τ (§5) and
+// records every removal: a removal is a decision and must be visible (§6.2).
+func applyViabilityGate(options []*ActionOption, tau float64) ([]*ActionOption, []RemovedOption) {
+	viable := []*ActionOption{}
+	removed := []RemovedOption{}
 	for _, o := range options {
 		if o.EstimatedDurationMks <= tau {
 			viable = append(viable, o)
+		} else {
+			removed = append(removed, RemovedOption{OptionID: o.OptionID, Gate: "viability"})
 		}
 	}
-	return viable
+	return viable, removed
+}
+
+func (o *DOFOrchestrator) generate(state *SystemStateMatrix, tau float64) []*ActionOption {
+	if tau < o.FastPassThreshold {
+		return o.generator.SafeFallback(state, 1)
+	}
+	return o.generator.Synthesize(state, 5)
+}
+
+func (o *DOFOrchestrator) Step(raw map[string]*RawObservation) *ActionOption {
+	state := o.mapper.PollEnvironment(raw)
+	tau := state.GlobalTimeToCollapseMks
+	options, _ := applyViabilityGate(o.generate(state, tau), tau)
+	return o.core.EvaluateAndSelect(state, options)
 }
 
 // StepWithReport is like Step, but also returns the Proof-of-Implementation audit.
@@ -53,15 +56,8 @@ func (o *DOFOrchestrator) StepWithReport(raw map[string]*RawObservation) (*Actio
 	if tau < o.FastPassThreshold {
 		mode = "FAST_PASS"
 	}
-	var options []*ActionOption
-	if tau < o.FastPassThreshold {
-		options = o.generator.SafeFallback(state, 1)
-	} else {
-		options = o.generator.Synthesize(state, 5)
-	}
-	// DOF-SPEC §5 viability gate (see Step()).
-	options = viableOptions(options, tau)
+	options, removed := applyViabilityGate(o.generate(state, tau), tau)
 	selected := o.core.EvaluateAndSelect(state, options)
-	report := o.core.Report(state, options, selected, mode)
+	report := o.core.Report(state, options, selected, mode, o.mapper.LastDeclaration, removed)
 	return selected, report
 }

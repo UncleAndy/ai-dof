@@ -9,6 +9,8 @@
 
 use std::collections::HashMap;
 
+use crate::measurement::{EntityMeasurement, LensTerm, MeasurementDeclaration, PsiReference};
+
 #[derive(Clone, Debug)]
 pub struct EntityState {
     pub entity_id: String,
@@ -19,6 +21,9 @@ pub struct EntityState {
     /// Whether `current_dof` is a known value; unknown DoF is never treated as 0 (Axiom 5).
     pub dof_known: bool,
     pub time_to_collapse_mks: f64,
+    /// Port-level extension (not a §3.1 field): the measurement that produced
+    /// `current_dof`, kept so the audit can show the per-lens terms (§6.1).
+    pub measurement: Option<EntityMeasurement>,
 }
 
 impl EntityState {
@@ -38,6 +43,7 @@ impl EntityState {
             is_collapse_source,
             dof_known: true,
             time_to_collapse_mks,
+            measurement: None,
         }
     }
 }
@@ -47,6 +53,8 @@ pub struct SystemStateMatrix {
     pub global_time_to_collapse_mks: f64,
     pub context_switch_cost: f64,
     pub entities: HashMap<String, EntityState>,
+    /// The frozen measurement ruler (§3.4). `S'` keeps the ruler of `S`.
+    pub psi: Option<PsiReference>,
 }
 
 #[derive(Clone, Debug)]
@@ -87,6 +95,19 @@ pub struct EntityReportRow {
     /// Whether `current_dof` is a known value; unknown DoF is never treated as 0 (Axiom 5).
     pub dof_known: bool,
     pub contribution: f64,
+    /// §6.1: why, not only what — one row per lens of the frozen set.
+    pub lens_terms: Vec<LensTerm>,
+    /// The lens that actually holds this entity back.
+    pub binding_lens: Option<String>,
+    /// The ε-floor of §4.1 was applied at the entity level, not to one term.
+    pub floored: bool,
+}
+
+/// A candidate removed before evaluation (§6.2).
+#[derive(Clone, Debug)]
+pub struct RemovedOption {
+    pub option_id: String,
+    pub gate: String,
 }
 
 /// One option row of the audit report.
@@ -97,6 +118,7 @@ pub struct OptionReportRow {
     pub projected_dof: f64,
     pub net_delta: f64,
     pub selected: bool,
+    pub estimated_duration_mks: f64,
 }
 
 /// Full Proof-of-Implementation audit (DOF-SPEC §6).
@@ -108,6 +130,10 @@ pub struct DofReport {
     pub global_time_to_collapse_mks: f64,
     pub mode: String,
     pub options: Vec<OptionReportRow>,
+    pub psi_id: String,
+    pub psi_digest: String,
+    pub declaration: String,
+    pub removed_options: Vec<RemovedOption>,
 }
 
 pub struct DofCalculusCore {
@@ -124,7 +150,7 @@ impl DofCalculusCore {
     /// available option can raise it (a node with no recovery path). A node at
     /// DoF = 0 that *can* be revived stays in the set. A node with unknown DoF
     /// (`dof_known == false`) is never excluded (Axiom 5).
-    fn is_included(&self, entity: &EntityState, options: &[ActionOption]) -> bool {
+    pub fn is_included(&self, entity: &EntityState, options: &[ActionOption]) -> bool {
         if entity.is_collapse_source {
             return false;
         }
@@ -178,6 +204,7 @@ impl DofCalculusCore {
             global_time_to_collapse_mks: current.global_time_to_collapse_mks,
             context_switch_cost: current.context_switch_cost,
             entities: simulated,
+            psi: current.psi.clone(),
         }
     }
 
@@ -227,6 +254,8 @@ impl DofCalculusCore {
         options: &[ActionOption],
         selected: &Option<ActionOption>,
         mode: &str,
+        declaration: Option<&MeasurementDeclaration>,
+        removed: Vec<RemovedOption>,
     ) -> DofReport {
         let mut entity_rows: Vec<EntityReportRow> = Vec::new();
         for (_eid, ent) in &current_state.entities {
@@ -236,6 +265,10 @@ impl DofCalculusCore {
             } else {
                 0.0
             };
+            let (lens_terms, binding_lens, floored) = match &ent.measurement {
+                Some(m) => (m.terms.clone(), m.binding_lens.clone(), m.floored),
+                None => (Vec::new(), None, false),
+            };
             entity_rows.push(EntityReportRow {
                 entity_id: ent.entity_id.clone(),
                 is_collapse_source: ent.is_collapse_source,
@@ -243,6 +276,9 @@ impl DofCalculusCore {
                 current_dof: ent.current_dof,
                 dof_known: ent.dof_known,
                 contribution,
+                lens_terms,
+                binding_lens,
+                floored,
             });
         }
         let total = self.calculate_system_dof(current_state, options);
@@ -261,8 +297,16 @@ impl DofCalculusCore {
                 projected_dof: projected,
                 net_delta: net,
                 selected: is_selected,
+                estimated_duration_mks: option.estimated_duration_mks,
             });
         }
+        let (psi_id, psi_digest, declaration_text) = match declaration {
+            Some(d) => (d.psi_id.clone(), d.digest(), d.canonical_text()),
+            None => match &current_state.psi {
+                Some(p) => (p.id.clone(), p.digest.clone(), String::new()),
+                None => (String::new(), String::new(), String::new()),
+            },
+        };
         DofReport {
             entities: entity_rows,
             total_system_dof: total,
@@ -270,6 +314,10 @@ impl DofCalculusCore {
             global_time_to_collapse_mks: current_state.global_time_to_collapse_mks,
             mode: mode.to_string(),
             options: option_rows,
+            psi_id,
+            psi_digest,
+            declaration: declaration_text,
+            removed_options: removed,
         }
     }
 }

@@ -42,6 +42,8 @@ impl Generator {
                 format!("Safe diversification path #{}", i),
                 delta,
                 true,
+                // Deployment: the duration comes from the Perception layer (DOF-SPEC §3.3).
+                1000.0,
             ));
         }
         opts

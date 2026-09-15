@@ -18,7 +18,7 @@ pub struct EntityState {
     pub is_collapse_source: bool,
     /// Whether `current_dof` is a known value; unknown DoF is never treated as 0 (Axiom 5).
     pub dof_known: bool,
-    pub time_to_collapse: f64,
+    pub time_to_collapse_mks: f64,
 }
 
 impl EntityState {
@@ -28,7 +28,7 @@ impl EntityState {
         agency_index: f64,
         current_dof: f64,
         is_collapse_source: bool,
-        time_to_collapse: f64,
+        time_to_collapse_mks: f64,
     ) -> Self {
         EntityState {
             entity_id,
@@ -37,14 +37,14 @@ impl EntityState {
             current_dof,
             is_collapse_source,
             dof_known: true,
-            time_to_collapse,
+            time_to_collapse_mks,
         }
     }
 }
 
 #[derive(Clone, Debug)]
 pub struct SystemStateMatrix {
-    pub global_time_to_collapse: f64,
+    pub global_time_to_collapse_mks: f64,
     pub context_switch_cost: f64,
     pub entities: HashMap<String, EntityState>,
 }
@@ -55,6 +55,8 @@ pub struct ActionOption {
     pub description: String,
     pub projected_dof_delta: HashMap<String, f64>,
     pub is_reversible: bool,
+    /// Estimated execution time in microseconds (DOF-SPEC §3.3).
+    pub estimated_duration_mks: f64,
 }
 
 impl ActionOption {
@@ -63,12 +65,14 @@ impl ActionOption {
         description: String,
         projected_dof_delta: HashMap<String, f64>,
         is_reversible: bool,
+        estimated_duration_mks: f64,
     ) -> Self {
         ActionOption {
             option_id,
             description,
             projected_dof_delta,
             is_reversible,
+            estimated_duration_mks,
         }
     }
 }
@@ -101,7 +105,7 @@ pub struct DofReport {
     pub entities: Vec<EntityReportRow>,
     pub total_system_dof: f64,
     pub context_switch_cost: f64,
-    pub global_time_to_collapse: f64,
+    pub global_time_to_collapse_mks: f64,
     pub mode: String,
     pub options: Vec<OptionReportRow>,
 }
@@ -171,7 +175,7 @@ impl DofCalculusCore {
             }
         }
         SystemStateMatrix {
-            global_time_to_collapse: current.global_time_to_collapse,
+            global_time_to_collapse_mks: current.global_time_to_collapse_mks,
             context_switch_cost: current.context_switch_cost,
             entities: simulated,
         }
@@ -263,7 +267,7 @@ impl DofCalculusCore {
             entities: entity_rows,
             total_system_dof: total,
             context_switch_cost: current_state.context_switch_cost,
-            global_time_to_collapse: current_state.global_time_to_collapse,
+            global_time_to_collapse_mks: current_state.global_time_to_collapse_mks,
             mode: mode.to_string(),
             options: option_rows,
         }

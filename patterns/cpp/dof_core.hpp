@@ -24,11 +24,11 @@ struct EntityState {
     double current_dof = 0.0;     // 0..1
     bool is_collapse_source = false;
     bool dof_known = true;        // unknown DoF is never treated as 0 (Axiom 5)
-    double time_to_collapse = 0.0;
+    double time_to_collapse_mks = 0.0;
 };
 
 struct SystemStateMatrix {
-    double global_time_to_collapse = 0.0;
+    double global_time_to_collapse_mks = 0.0;
     double context_switch_cost = 0.0;
     std::unordered_map<std::string, EntityState> entities;
 };
@@ -38,6 +38,7 @@ struct ActionOption {
     std::string description;
     std::unordered_map<std::string, double> projected_dof_delta;
     bool is_reversible = true;
+    double estimated_duration_mks = 0.0;  // execution time, microseconds (DOF-SPEC §3.3)
 };
 
 // Audit report rows and container (DOF-SPEC §6)
@@ -62,7 +63,7 @@ struct DofReport {
     std::vector<EntityReportRow> entities;
     double total_system_dof = 0.0;
     double context_switch_cost = 0.0;
-    double global_time_to_collapse = 0.0;
+    double global_time_to_collapse_mks = 0.0;
     std::string mode;
     std::vector<OptionReportRow> options;
 };
@@ -171,7 +172,7 @@ public:
         }
         rep.total_system_dof = total;
         rep.context_switch_cost = current_state.context_switch_cost;
-        rep.global_time_to_collapse = current_state.global_time_to_collapse;
+        rep.global_time_to_collapse_mks = current_state.global_time_to_collapse_mks;
         rep.mode = mode;
         return rep;
     }

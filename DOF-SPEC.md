@@ -1,6 +1,6 @@
 # DOF-Core — Formal Specification (DOF-SPEC)
 
-**Status:** DRAFT v0.2
+**Status:** DRAFT v0.3
 **Part of:** The DOF open standard (see `SKILL.md`, `references/`, `patterns/PATTERNS.md`).
 **License:** CC BY-SA 4.0 — see `references/license.md`. Implementations MUST satisfy §6 (Proof of Implementation).
 
@@ -36,7 +36,7 @@ It does **not** prescribe transport, storage, language, or the internal design o
 
 ## 3. Data Model
 
-All fields are normative. Types are described in JSON-Schema style; implementations in other languages MUST preserve field names, types, ranges, and the clamping rules.
+All fields are normative. Types are described in JSON-Schema style; implementations in other languages MUST preserve field names, types, ranges, and the clamping rules. `float` denotes an IEEE-754 binary64 value (JSON number); a conforming implementation MUST NOT downcast it to single precision (§7 cross-port equivalence). **All time values are microseconds** (`float`, suffix `_mks`): the unit is part of the field name, and therefore part of the contract.
 
 ### 3.1 `EntityState`
 
@@ -48,7 +48,7 @@ All fields are normative. Types are described in JSON-Schema style; implementati
 | `current_dof`        | float   | `[0.0, 1.0]`              | Current degree of freedom of the node. `0.0` = collapse (see `dof_known`). |
 | `is_collapse_source`  | bool    | —                         | If `true`, the entity is a destructive aggressor (see §4.2). |
 | `dof_known`          | bool    | default `true`            | Whether `current_dof` is a **known** measured value. `false` ⇒ unknown DoF, which MUST NOT be treated as `0` (Axiom 5, §4.2). |
-|| `time_to_collapse_mks`| float64 | `> 0` (microseconds)       | Local deadline before this node collapses. |
+| `time_to_collapse_mks` | float | `> 0` (microseconds) | Local deadline before this node collapses. |
 
 **Clamping:** On ingestion, `agency_index` and `current_dof` MUST be clamped to `[0.0, 1.0]`.
 An entity with `current_dof == 0.0` **and** `dof_known == true` is at collapse (see §4.1). An entity with `dof_known == false` has an **unknown** DoF and MUST NOT be treated as collapse or as zero.
@@ -57,11 +57,11 @@ An entity with `current_dof == 0.0` **and** `dof_known == true` is at collapse (
 
 | Field                     | Type                       | Constraint | Meaning |
 |---------------------------|----------------------------|------------|---------|
-|| `global_time_to_collapse_mks` | float64                   | `> 0`      | Global τ — most urgent non-collapse-source deadline (see §5). |
+| `global_time_to_collapse_mks` | float | `> 0` | Global τ — most urgent non-collapse-source deadline (see §5). |
 | `context_switch_cost`     | float                      | `>= 0.0`   | ΔT — penalty for changing the current process. |
 | `entities`                | map<`entity_id`,`EntityState`> | —     | The full set of observed entities. |
 
-`global_time_to_collapse` is computed by the Perception layer as the **minimum** `time_to_collapse` over all entities where `is_collapse_source == false`. If no such entity exists, it MAY default to a safe large value (e.g. `1e9`), but implementations SHOULD surface this as a degenerate state.
+`global_time_to_collapse_mks` is computed by the Perception layer as the **minimum** `time_to_collapse_mks` over all entities where `is_collapse_source == false`. If no such entity exists, it MAY default to a safe large value (e.g. `1e15` μs ≈ 31.7 years), but implementations SHOULD surface this as a degenerate state.
 
 ### 3.3 `ActionOption`
 
@@ -70,7 +70,8 @@ An entity with `current_dof == 0.0` **and** `dof_known == true` is at collapse (
 | `option_id`            | string                        | non-empty, unique | Stable identifier of the candidate plan. |
 | `description`          | string                        | —          | Human/agent-readable summary. |
 | `projected_dof_delta`  | map<`entity_id`, float>       | —          | Forecast change of `current_dof` per entity. |
-|| `estimated_duration_mks`| float64                       | `>= 0.0`   | Estimated execution time in microseconds. |
+| `is_reversible` | bool | — | `false` ⇒ irreversible ⇒ structural penalty (§4.4). |
+| `estimated_duration_mks` | float | `>= 0.0` | Estimated execution time in microseconds. |
 
 ---
 
@@ -108,17 +109,17 @@ For each candidate `ActionOption` `o`, build the **simulated** matrix `S'` by ap
 for each entity e in S.entities:
     nd = clamp(e.current_dof + o.projected_dof_delta.get(e.entity_id, 0.0), 0.0, 1.0)
     S'.entities[e.entity_id].current_dof = nd
-S'.global_time_to_collapse = S.global_time_to_collapse
+S'.global_time_to_collapse_mks = S.global_time_to_collapse_mks
 S'.context_switch_cost     = S.context_switch_cost
 ```
 
 Then compute `TotalDoF_index(S')` over `calc(S')` and:
 
 ```text
-NetDelta_index(o) = TotalDoF_index(S') - TotalDoF_index(S) - S.context_switch_cost
+NetDelta(o) = TotalDoF_index(S') - TotalDoF_index(S) - S.context_switch_cost
 ```
 
-`NetDelta_index` is read only as a sign/ordering, never as an absolute gain.
+`NetDelta` is read only as a sign/ordering, never as an absolute gain. Order of application: the context-switch cost ΔT is subtracted in §4.3, the irreversibility penalty of §4.4 is applied afterwards.
 
 ### 4.4 Irreversibility Penalty
 
@@ -155,7 +156,6 @@ The selection mathematics (§4) is **identical** in both modes; only the option 
 
 **Viability Gate:** Any `ActionOption` `o` is removed from the candidate set if `o.estimated_duration_mks > τ`. An option that cannot complete before the system collapses is physically non-viable.
 
-**Viability Gate:** Any `ActionOption` `o` is removed from the candidate set if `o.estimated_duration_mks > τ`. An option that cannot complete before the system collapses is physically non-viable.
 
 ---
 
@@ -179,7 +179,7 @@ For each entity in `S`:
 
 - `total_system_dof` = `TotalDoF_index(S)` (the evaluation index of the current state)
 - `context_switch_cost` = `S.context_switch_cost`
-- `global_time_to_collapse` = `S.global_time_to_collapse`
+- `global_time_to_collapse_mks` = `S.global_time_to_collapse_mks`
 - `mode` = `"FAST_PASS"` or `"DEEP_DIVERSIFICATION"`
 
 ### 6.3 Per-option evaluation
@@ -202,7 +202,7 @@ A software component is **DOF-Core conformant** iff it:
 1. Uses the data model of §3 with the specified field names, types, and clamps.
 2. Computes `TotalDoF_index` exactly per §4.1–§4.2 (calculation set `calc` — collapse-source exclusion and known-zero hopeless exclusion; an unknown DoF is never excluded and never treated as zero; ε = 1e-6).
 3. Computes `NetDelta` exactly per §4.3–§4.5.
-4. Applies the reactive-circuit rule of §5 with `FAST_PASS_THRESHOLD = 5.0`.
+4. Applies the reactive-circuit rule of §5 with `FAST_PASS_THRESHOLD = 5000000.0` microseconds, and the viability gate of §5 (an option whose `estimated_duration_mks > τ` MUST NOT be selected).
 5. Can emit the audit report of §6 for any decision it makes.
 6. Does not modify Axiom-3 semantics: it never selects an option whose `NetDelta` logic would be overridden by an external "greater good" utility metric.
 
@@ -216,12 +216,12 @@ For inter-layer and cross-process exchange, the canonical encoding is **JSON** w
 
 ```json
 {
-  "global_time_to_collapse": 4.0,
+  "global_time_to_collapse_mks": 4000000.0,
   "context_switch_cost": 0.05,
   "entities": {
-    "adult":     {"entity_id":"adult",     "is_autonomous":true,  "agency_index":0.9, "current_dof":0.8,  "is_collapse_source":false, "dof_known":true, "time_to_collapse":100.0},
-    "child":     {"entity_id":"child",     "is_autonomous":false, "agency_index":0.1, "current_dof":0.05, "is_collapse_source":false, "dof_known":true, "time_to_collapse":4.0},
-    "aggressor": {"entity_id":"aggressor", "is_autonomous":true,  "agency_index":0.5, "current_dof":0.6,  "is_collapse_source":true,  "dof_known":true, "time_to_collapse":100.0}
+    "adult":     {"entity_id":"adult",     "is_autonomous":true,  "agency_index":0.9, "current_dof":0.8,  "is_collapse_source":false, "dof_known":true, "time_to_collapse_mks":100000000},
+    "child":     {"entity_id":"child",     "is_autonomous":false, "agency_index":0.1, "current_dof":0.05, "is_collapse_source":false, "dof_known":true, "time_to_collapse_mks":4000000},
+    "aggressor": {"entity_id":"aggressor", "is_autonomous":true,  "agency_index":0.5, "current_dof":0.6,  "is_collapse_source":true,  "dof_known":true, "time_to_collapse_mks":100000000}
   }
 }
 ```
@@ -243,6 +243,7 @@ The Generator's role is to produce `ActionOption` candidates. This spec does not
 
 ## 10. Versioning
 
-- This document is `DOF-SPEC` `v0.2`.
-- Normative constants (ε, `0.5` penalty, `FAST_PASS_THRESHOLD = 5.0`) are part of the versioned contract. Changing any of them requires a new minor/major spec version and a re-verification of all conforming ports.
+- This document is `DOF-SPEC` `v0.3`.
+- `v0.3` — time is expressed in **microseconds**: `EntityState.time_to_collapse_mks`, `SystemStateMatrix.global_time_to_collapse_mks`, new `ActionOption.estimated_duration_mks`. The reactive-circuit threshold keeps its physical value: `FAST_PASS_THRESHOLD = 5000000.0` μs ⇔ `5.0` s of v0.2. `ActionOption.is_reversible` restored to the field table (it was dropped by the v0.2→v0.3 edit). §5 gains the **universal viability gate**: an option with `estimated_duration_mks > τ` is removed from the candidate set instead of being penalised.
+- Normative constants (ε, `0.5` penalty, `FAST_PASS_THRESHOLD = 5000000.0` μs) are part of the versioned contract. Changing any of them requires a new minor/major spec version and a re-verification of all conforming ports.
 - SHA-256 of this file SHOULD be published alongside releases to detect silent modification (consistent with the de-centralized publication plan).

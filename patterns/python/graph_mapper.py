@@ -20,7 +20,7 @@ class GraphMapper:
         raw_observations: dict of entity_id -> dict with keys:
             is_autonomous (bool), agency_index (float 0..1),
             current_dof (float 0..1), is_collapse_source (bool),
-            time_to_collapse (float seconds).
+            time_to_collapse_mks (float microseconds).
         """
         entities: Dict[str, EntityState] = {}
         min_ttc = float("inf")
@@ -32,17 +32,17 @@ class GraphMapper:
                 agency_index=max(0.0, min(1.0, float(obs.get("agency_index", 0.0)))),
                 current_dof=max(0.0, min(1.0, float(obs.get("current_dof", 0.0)))),
                 is_collapse_source=obs.get("is_collapse_source", False),
-                time_to_collapse=float(obs.get("time_to_collapse", float("inf"))),
+                time_to_collapse_mks=float(obs.get("time_to_collapse_mks", float("inf"))),
             )
             entities[eid] = ent
             # Global tau is driven by the most urgent non-collapse-source entity
             if not ent.is_collapse_source:
-                min_ttc = min(min_ttc, ent.time_to_collapse)
+                min_ttc = min(min_ttc, ent.time_to_collapse_mks)
 
-        global_ttc = min_ttc if min_ttc != float("inf") else 1e9
+        global_ttc = min_ttc if min_ttc != float("inf") else 1e15  # safe large value, ~31.7 years (DOF-SPEC §3.2)
 
         return SystemStateMatrix(
-            global_time_to_collapse=global_ttc,
+            global_time_to_collapse_mks=global_ttc,
             context_switch_cost=self.context_switch_cost,
             entities=entities,
         )

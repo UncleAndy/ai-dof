@@ -10,7 +10,7 @@ pub struct RawObservation {
     pub agency_index: f64,
     pub current_dof: f64,
     pub is_collapse_source: bool,
-    pub time_to_collapse: f64,
+    pub time_to_collapse_mks: f64,
 }
 
 pub struct GraphMapper {
@@ -33,18 +33,18 @@ impl GraphMapper {
                 obs.agency_index.max(0.0).min(1.0),
                 obs.current_dof.max(0.0).min(1.0),
                 obs.is_collapse_source,
-                obs.time_to_collapse,
+                obs.time_to_collapse_mks,
             );
-            if !ent.is_collapse_source && obs.time_to_collapse < min_ttc {
-                min_ttc = obs.time_to_collapse;
+            if !ent.is_collapse_source && obs.time_to_collapse_mks < min_ttc {
+                min_ttc = obs.time_to_collapse_mks;
             }
             entities.insert(eid.clone(), ent);
         }
 
-        let global_ttc = if min_ttc.is_finite() { min_ttc } else { 1e9 };
+        let global_ttc = if min_ttc.is_finite() { min_ttc } else { 1e15 };
 
         SystemStateMatrix {
-            global_time_to_collapse: global_ttc,
+            global_time_to_collapse_mks: global_ttc,
             context_switch_cost: self.context_switch_cost,
             entities,
         }

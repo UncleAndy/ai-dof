@@ -19,7 +19,7 @@ fn main() {
             agency_index: 0.9,
             current_dof: 0.8,
             is_collapse_source: false,
-            time_to_collapse: 100.0,
+            time_to_collapse_mks: 100000000.0, // 100 s in us
         },
     );
     obs.insert(
@@ -29,7 +29,7 @@ fn main() {
             agency_index: 0.1,
             current_dof: 0.05,
             is_collapse_source: false,
-            time_to_collapse: 4.0,
+            time_to_collapse_mks: 4000000.0,   // 4 s in us
         },
     );
     obs.insert(
@@ -39,7 +39,7 @@ fn main() {
             agency_index: 0.5,
             current_dof: 0.6,
             is_collapse_source: true,
-            time_to_collapse: 100.0,
+            time_to_collapse_mks: 100000000.0, // 100 s in us
         },
     );
 
@@ -53,7 +53,7 @@ fn main() {
 
     let mut obs2 = obs.clone();
     if let Some(c) = obs2.get_mut("child") {
-        c.time_to_collapse = 2.0;
+        c.time_to_collapse_mks = 2000000.0;  // 2 s in us
     }
     let (sel2, rep2) = orch.step_with_report(&obs2);
     println!(

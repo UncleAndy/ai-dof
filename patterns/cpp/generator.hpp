@@ -35,6 +35,8 @@ public:
             opt.description = "Safe diversification path #" + std::to_string(i);
             opt.projected_dof_delta = delta;
             opt.is_reversible = true;
+            // In a deployment the duration is a Perception-layer value (DOF-SPEC §3.3).
+            opt.estimated_duration_mks = 1000.0;
             opts.push_back(std::move(opt));
         }
         return opts;

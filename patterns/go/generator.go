@@ -42,6 +42,8 @@ func (g *Generator) SafeFallback(state *SystemStateMatrix, nOptions int) []*Acti
 			Description:       "Safe diversification path #" + itoa(i),
 			ProjectedDoFDelta: delta,
 			IsReversible:      true,
+			// Deployment: the duration comes from the Perception layer (DOF-SPEC §3.3).
+			EstimatedDurationMks: 1000.0,
 		})
 	}
 	return opts

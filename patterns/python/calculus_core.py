@@ -23,11 +23,11 @@ class EntityState(BaseModel):
     current_dof: float = Field(..., ge=0.0, le=1.0)  # Degree of freedom of the node
     is_collapse_source: bool = False                 # Virus/aggressor flag
     dof_known: bool = True                           # Whether current_dof is a known value (Axiom 5)
-    time_to_collapse: float                          # Local node timer (in sec)
+    time_to_collapse_mks: float                     # Local node timer (microseconds)
 
 
 class SystemStateMatrix(BaseModel):
-    global_time_to_collapse: float                   # Global timeout (τ)
+    global_time_to_collapse_mks: float               # Global deadline (τ)
     context_switch_cost: float                       # Penalty for changing current process (ΔT)
     entities: Dict[str, EntityState]
 
@@ -37,6 +37,7 @@ class ActionOption(BaseModel):
     description: str
     projected_dof_delta: Dict[str, float]            # Forecast of DoF change for each node
     is_reversible: bool = True
+    estimated_duration_mks: float = Field(0.0, ge=0.0)  # Execution time (us); a Perception-layer output (§3.3)
 
 
 class DofReport(BaseModel):
@@ -44,7 +45,7 @@ class DofReport(BaseModel):
     entities: List[Dict[str, object]]
     total_system_dof: float
     context_switch_cost: float
-    global_time_to_collapse: float
+    global_time_to_collapse_mks: float
     mode: str
     options: List[Dict[str, object]]
 
@@ -101,10 +102,10 @@ class DOFCalculusCore:
                 current_dof=new_dof,
                 is_collapse_source=e_state.is_collapse_source,
                 dof_known=e_state.dof_known,
-                time_to_collapse=e_state.time_to_collapse,
+                time_to_collapse_mks=e_state.time_to_collapse_mks,
             )
         return SystemStateMatrix(
-            global_time_to_collapse=current_state.global_time_to_collapse,
+            global_time_to_collapse_mks=current_state.global_time_to_collapse_mks,
             context_switch_cost=current_state.context_switch_cost,
             entities=simulated_entities,
         )
@@ -166,7 +167,7 @@ class DOFCalculusCore:
             entities=entity_rows,
             total_system_dof=total,
             context_switch_cost=current_state.context_switch_cost,
-            global_time_to_collapse=current_state.global_time_to_collapse,
+            global_time_to_collapse_mks=current_state.global_time_to_collapse_mks,
             mode=mode,
             options=option_rows,
         )

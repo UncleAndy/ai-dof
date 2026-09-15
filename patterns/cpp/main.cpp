@@ -10,7 +10,7 @@ struct ReportPrinter {
         std::cout << "  mode=" << r.mode
                   << " total_dof=" << r.total_system_dof
                   << " dt=" << r.context_switch_cost
-                  << " tau=" << r.global_time_to_collapse << "\n";
+                  << " tau=" << r.global_time_to_collapse_mks << "\n";
         std::cout << "  entities:\n";
         for (const auto& e : r.entities) {
             std::cout << "    " << e.entity_id
@@ -32,9 +32,9 @@ struct ReportPrinter {
 
 int main() {
     std::unordered_map<std::string, RawObservation> obs;
-    obs["adult"]     = {true,  0.9, 0.8,  false, 100.0};
-    obs["child"]     = {false, 0.1, 0.05, false, 4.0};
-    obs["aggressor"] = {true,  0.5, 0.6,  true,  100.0};
+    obs["adult"]     = {true,  0.9, 0.8,  false, 100000000.0};  // 100 s in us
+    obs["child"]     = {false, 0.1, 0.05, false, 4000000.0};    // 4 s in us
+    obs["aggressor"] = {true,  0.5, 0.6,  true,  100000000.0};  // 100 s in us
 
     DOFOrchestrator orch(0.05);
     auto [sel, rep] = orch.step_with_report(obs);
@@ -42,7 +42,7 @@ int main() {
     ReportPrinter::print(rep);
 
     std::unordered_map<std::string, RawObservation> obs2 = obs;
-    obs2["child"].time_to_collapse = 2.0;
+    obs2["child"].time_to_collapse_mks = 2000000.0;  // 2 s in us
     auto [sel2, rep2] = orch.step_with_report(obs2);
     std::cout << "FAST-PASS SELECTED: " << (sel2 ? sel2->option_id : std::string("")) << std::endl;
     ReportPrinter::print(rep2);

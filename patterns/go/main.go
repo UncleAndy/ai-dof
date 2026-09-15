@@ -11,25 +11,25 @@ import (
 func main() {
 	obs := map[string]*RawObservation{
 		"adult": {
-			IsAutonomous:    true,
-			AgencyIndex:     0.9,
-			CurrentDoF:      0.8,
-			IsCollapseSource: false,
-			TimeToCollapse:  100.0,
+			IsAutonomous:      true,
+			AgencyIndex:       0.9,
+			CurrentDoF:        0.8,
+			IsCollapseSource:  false,
+			TimeToCollapseMks: 100000000.0, // 100 s in us
 		},
 		"child": {
-			IsAutonomous:    false,
-			AgencyIndex:     0.1,
-			CurrentDoF:      0.05,
-			IsCollapseSource: false,
-			TimeToCollapse:  4.0,
+			IsAutonomous:      false,
+			AgencyIndex:       0.1,
+			CurrentDoF:        0.05,
+			IsCollapseSource:  false,
+			TimeToCollapseMks: 4000000.0, // 4 s in us
 		},
 		"aggressor": {
-			IsAutonomous:    true,
-			AgencyIndex:     0.5,
-			CurrentDoF:      0.6,
-			IsCollapseSource: true,
-			TimeToCollapse:  100.0,
+			IsAutonomous:      true,
+			AgencyIndex:       0.5,
+			CurrentDoF:        0.6,
+			IsCollapseSource:  true,
+			TimeToCollapseMks: 100000000.0, // 100 s in us
 		},
 	}
 
@@ -45,7 +45,7 @@ func main() {
 
 	obs2 := map[string]*RawObservation{
 		"adult":     obs["adult"],
-		"child":     {IsAutonomous: false, AgencyIndex: 0.1, CurrentDoF: 0.05, IsCollapseSource: false, TimeToCollapse: 2.0},
+		"child":     {IsAutonomous: false, AgencyIndex: 0.1, CurrentDoF: 0.05, IsCollapseSource: false, TimeToCollapseMks: 2000000.0},
 		"aggressor": obs["aggressor"],
 	}
 	sel2, rep2 := orch.StepWithReport(obs2)

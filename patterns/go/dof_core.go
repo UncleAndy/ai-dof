@@ -13,55 +13,56 @@ package main
 import "math"
 
 type EntityState struct {
-	EntityID         string
-	IsAutonomous     bool
-	AgencyIndex      float64
-	CurrentDoF       float64
-	IsCollapseSource bool
-	DoFKnown         bool
-	TimeToCollapse   float64
+	EntityID          string  `json:"entity_id"`
+	IsAutonomous      bool    `json:"is_autonomous"`
+	AgencyIndex       float64 `json:"agency_index"`
+	CurrentDoF        float64 `json:"current_dof"`
+	IsCollapseSource  bool    `json:"is_collapse_source"`
+	DoFKnown          bool    `json:"dof_known"`
+	TimeToCollapseMks float64 `json:"time_to_collapse_mks"`
 }
 
 type SystemStateMatrix struct {
-	GlobalTimeToCollapse float64
-	ContextSwitchCost    float64
-	Entities             map[string]*EntityState
+	GlobalTimeToCollapseMks float64                 `json:"global_time_to_collapse_mks"`
+	ContextSwitchCost       float64                 `json:"context_switch_cost"`
+	Entities                map[string]*EntityState `json:"entities"`
 }
 
 type ActionOption struct {
-	OptionID          string
-	Description       string
-	ProjectedDoFDelta map[string]float64
-	IsReversible      bool
+	OptionID             string             `json:"option_id"`
+	Description          string             `json:"description"`
+	ProjectedDoFDelta    map[string]float64 `json:"projected_dof_delta"`
+	IsReversible         bool               `json:"is_reversible"`
+	EstimatedDurationMks float64            `json:"estimated_duration_mks"` // microseconds (DOF-SPEC §3.3)
 }
 
 // EntityReportRow is one entity row of the audit report.
 type EntityReportRow struct {
-	EntityID         string
-	IsCollapseSource bool
-	IncludedInSum    bool
-	CurrentDoF       float64
-	DoFKnown         bool
-	Contribution     float64
+	EntityID         string  `json:"entity_id"`
+	IsCollapseSource bool    `json:"is_collapse_source"`
+	IncludedInSum    bool    `json:"included_in_sum"`
+	CurrentDoF       float64 `json:"current_dof"`
+	DoFKnown         bool    `json:"dof_known"`
+	Contribution     float64 `json:"contribution"`
 }
 
 // OptionReportRow is one option row of the audit report.
 type OptionReportRow struct {
-	OptionID     string
-	IsReversible bool
-	ProjectedDoF float64
-	NetDelta     float64
-	Selected     bool
+	OptionID     string  `json:"option_id"`
+	IsReversible bool    `json:"is_reversible"`
+	ProjectedDoF float64 `json:"projected_dof"`
+	NetDelta     float64 `json:"net_delta"`
+	Selected     bool    `json:"selected"`
 }
 
 // DofReport is the full Proof-of-Implementation audit (DOF-SPEC §6).
 type DofReport struct {
-	Entities             []EntityReportRow
-	TotalSystemDoF       float64
-	ContextSwitchCost    float64
-	GlobalTimeToCollapse float64
-	Mode                 string
-	Options              []OptionReportRow
+	Entities                []EntityReportRow `json:"entities"`
+	TotalSystemDoF          float64           `json:"total_system_dof"`
+	ContextSwitchCost       float64           `json:"context_switch_cost"`
+	GlobalTimeToCollapseMks float64           `json:"global_time_to_collapse_mks"`
+	Mode                    string            `json:"mode"`
+	Options                 []OptionReportRow `json:"options"`
 }
 
 type DOFCalculusCore struct {
@@ -130,9 +131,9 @@ func (c *DOFCalculusCore) simulate(current *SystemStateMatrix, option *ActionOpt
 		simulated[eid] = &ent
 	}
 	return &SystemStateMatrix{
-		GlobalTimeToCollapse: current.GlobalTimeToCollapse,
-		ContextSwitchCost:    current.ContextSwitchCost,
-		Entities:             simulated,
+		GlobalTimeToCollapseMks: current.GlobalTimeToCollapseMks,
+		ContextSwitchCost:       current.ContextSwitchCost,
+		Entities:                simulated,
 	}
 }
 
@@ -199,11 +200,11 @@ func (c *DOFCalculusCore) Report(currentState *SystemStateMatrix, options []*Act
 		})
 	}
 	return &DofReport{
-		Entities:             entityRows,
-		TotalSystemDoF:       total,
-		ContextSwitchCost:    currentState.ContextSwitchCost,
-		GlobalTimeToCollapse: currentState.GlobalTimeToCollapse,
-		Mode:                 mode,
-		Options:              optionRows,
+		Entities:                entityRows,
+		TotalSystemDoF:          total,
+		ContextSwitchCost:       currentState.ContextSwitchCost,
+		GlobalTimeToCollapseMks: currentState.GlobalTimeToCollapseMks,
+		Mode:                    mode,
+		Options:                 optionRows,
 	}
 }

@@ -6,11 +6,11 @@ package main
 import "math"
 
 type RawObservation struct {
-	IsAutonomous    bool
-	AgencyIndex     float64
-	CurrentDoF      float64
-	IsCollapseSource bool
-	TimeToCollapse  float64
+	IsAutonomous      bool    `json:"is_autonomous"`
+	AgencyIndex       float64 `json:"agency_index"`
+	CurrentDoF        float64 `json:"current_dof"`
+	IsCollapseSource  bool    `json:"is_collapse_source"`
+	TimeToCollapseMks float64 `json:"time_to_collapse_mks"`
 }
 
 type GraphMapper struct {
@@ -29,28 +29,28 @@ func (m *GraphMapper) PollEnvironment(raw map[string]*RawObservation) *SystemSta
 		agency := math.Max(0.0, math.Min(1.0, obs.AgencyIndex))
 		dof := math.Max(0.0, math.Min(1.0, obs.CurrentDoF))
 		ent := &EntityState{
-			EntityID:        eid,
-			IsAutonomous:    obs.IsAutonomous,
-			AgencyIndex:     agency,
-			CurrentDoF:      dof,
-			IsCollapseSource: obs.IsCollapseSource,
-			DoFKnown:        true, // observations carry a known DoF by default (Axiom 5)
-			TimeToCollapse:  obs.TimeToCollapse,
+			EntityID:          eid,
+			IsAutonomous:      obs.IsAutonomous,
+			AgencyIndex:       agency,
+			CurrentDoF:        dof,
+			IsCollapseSource:  obs.IsCollapseSource,
+			DoFKnown:          true, // observations carry a known DoF by default (Axiom 5)
+			TimeToCollapseMks: obs.TimeToCollapseMks,
 		}
-		if !ent.IsCollapseSource && obs.TimeToCollapse < minTTC {
-			minTTC = obs.TimeToCollapse
+		if !ent.IsCollapseSource && obs.TimeToCollapseMks < minTTC {
+			minTTC = obs.TimeToCollapseMks
 		}
 		entities[eid] = ent
 	}
 
 	globalTTC := minTTC
 	if math.IsInf(globalTTC, 1) {
-		globalTTC = 1e9
+		globalTTC = 1e15
 	}
 
 	return &SystemStateMatrix{
-		GlobalTimeToCollapse: globalTTC,
-		ContextSwitchCost:    m.ContextSwitchCost,
-		Entities:             entities,
+		GlobalTimeToCollapseMks: globalTTC,
+		ContextSwitchCost:       m.ContextSwitchCost,
+		Entities:                entities,
 	}
 }

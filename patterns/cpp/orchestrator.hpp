@@ -9,7 +9,7 @@
 
 class DOFOrchestrator {
 public:
-    double fast_pass_threshold = 5.0;
+    double fast_pass_threshold = 5000000.0;  // microseconds (DOF-SPEC §5)
 private:
     GraphMapper mapper_;
     Generator generator_;
@@ -22,13 +22,18 @@ public:
         const std::unordered_map<std::string, RawObservation>& raw) const
     {
         SystemStateMatrix state = mapper_.poll_environment(raw);
-        double tau = state.global_time_to_collapse;
+        double tau = state.global_time_to_collapse_mks;
         std::vector<ActionOption> options;
         if (tau < fast_pass_threshold) {
             options = generator_.safe_fallback(state, 1);
         } else {
             options = generator_.synthesize(state, 5);
         }
+        // DOF-SPEC §5 viability gate: an option that cannot complete before
+        // collapse is removed from the candidate set, not penalised.
+        options.erase(std::remove_if(options.begin(), options.end(),
+            [&](const ActionOption& o) { return o.estimated_duration_mks > tau; }),
+            options.end());
         return core_.evaluate_and_select(state, options);
     }
 
@@ -37,7 +42,7 @@ public:
         const std::unordered_map<std::string, RawObservation>& raw) const
     {
         SystemStateMatrix state = mapper_.poll_environment(raw);
-        double tau = state.global_time_to_collapse;
+        double tau = state.global_time_to_collapse_mks;
         std::string mode = (tau < fast_pass_threshold) ? "FAST_PASS" : "DEEP_DIVERSIFICATION";
         std::vector<ActionOption> options;
         if (tau < fast_pass_threshold) {
@@ -45,6 +50,11 @@ public:
         } else {
             options = generator_.synthesize(state, 5);
         }
+        // DOF-SPEC §5 viability gate: an option that cannot complete before
+        // collapse is removed from the candidate set, not penalised.
+        options.erase(std::remove_if(options.begin(), options.end(),
+            [&](const ActionOption& o) { return o.estimated_duration_mks > tau; }),
+            options.end());
         auto selected = core_.evaluate_and_select(state, options);
         DofReport rep = core_.report(state, options, selected, mode);
         return {selected, rep};

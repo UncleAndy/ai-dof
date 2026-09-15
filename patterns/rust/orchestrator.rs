@@ -16,7 +16,7 @@ pub struct DofOrchestrator {
 impl DofOrchestrator {
     pub fn new(context_switch_cost: f64) -> Self {
         DofOrchestrator {
-            fast_pass_threshold: 5.0,
+            fast_pass_threshold: 5000000.0, // microseconds (DOF-SPEC §5)
             mapper: GraphMapper::new(context_switch_cost),
             generator: Generator::new(),
             core: DofCalculusCore::new(),
@@ -25,12 +25,15 @@ impl DofOrchestrator {
 
     pub fn step(&self, raw: &HashMap<String, RawObservation>) -> Option<ActionOption> {
         let state: SystemStateMatrix = self.mapper.poll_environment(raw);
-        let tau = state.global_time_to_collapse;
-        let options = if tau < self.fast_pass_threshold {
+        let tau = state.global_time_to_collapse_mks;
+        let mut options = if tau < self.fast_pass_threshold {
             self.generator.safe_fallback(&state, 1)
         } else {
             self.generator.synthesize(&state, 5)
         };
+        // DOF-SPEC §5 viability gate: an option that cannot complete before
+        // collapse is removed from the candidate set, not penalised.
+        options.retain(|o| o.estimated_duration_mks <= tau);
         self.core.evaluate_and_select(&state, &options)
     }
 
@@ -40,17 +43,20 @@ impl DofOrchestrator {
         raw: &HashMap<String, RawObservation>,
     ) -> (Option<ActionOption>, DofReport) {
         let state: SystemStateMatrix = self.mapper.poll_environment(raw);
-        let tau = state.global_time_to_collapse;
+        let tau = state.global_time_to_collapse_mks;
         let mode = if tau < self.fast_pass_threshold {
             "FAST_PASS"
         } else {
             "DEEP_DIVERSIFICATION"
         };
-        let options = if tau < self.fast_pass_threshold {
+        let mut options = if tau < self.fast_pass_threshold {
             self.generator.safe_fallback(&state, 1)
         } else {
             self.generator.synthesize(&state, 5)
         };
+        // DOF-SPEC §5 viability gate: an option that cannot complete before
+        // collapse is removed from the candidate set, not penalised.
+        options.retain(|o| o.estimated_duration_mks <= tau);
         let selected = self.core.evaluate_and_select(&state, &options);
         let report = self.core.report(&state, &options, &selected, mode);
         (selected, report)

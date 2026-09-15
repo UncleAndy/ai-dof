@@ -15,7 +15,7 @@ class DOFOrchestrator:
     fallback (Axiom 5: never assume unmapped possibilities have zero DoF).
     """
 
-    FAST_PASS_THRESHOLD = 5.0  # seconds
+    FAST_PASS_THRESHOLD = 5000000.0  # microseconds (DOF-SPEC §5)
 
     def __init__(self, context_switch_cost: float = 0.05, llm_client=None):
         self.mapper = GraphMapper(context_switch_cost=context_switch_cost)
@@ -25,25 +25,32 @@ class DOFOrchestrator:
     def step(self, raw_observations: dict) -> Optional[ActionOption]:
         """Run one decision cycle and return the verified safe vector."""
         state: SystemStateMatrix = self.mapper.poll_environment(raw_observations)
-        tau = state.global_time_to_collapse
+        tau = state.global_time_to_collapse_mks
 
         if tau < self.FAST_PASS_THRESHOLD:
             options: List[ActionOption] = self.generator.safe_fallback(state, n_options=1)
         else:
             options = self.generator.synthesize(state, n_options=5)
+
+        # DOF-SPEC §5 viability gate: an option that cannot complete before
+        # collapse is removed from the candidate set, not penalised.
+        options = [o for o in options if o.estimated_duration_mks <= tau]
 
         return self.core.evaluate_and_select(state, options)
 
     def step_with_report(self, raw_observations: dict) -> Tuple[Optional[ActionOption], DofReport]:
         """Like step(), but also returns the Proof-of-Implementation audit."""
         state: SystemStateMatrix = self.mapper.poll_environment(raw_observations)
-        tau = state.global_time_to_collapse
+        tau = state.global_time_to_collapse_mks
         mode = "FAST_PASS" if tau < self.FAST_PASS_THRESHOLD else "DEEP_DIVERSIFICATION"
 
         if tau < self.FAST_PASS_THRESHOLD:
             options: List[ActionOption] = self.generator.safe_fallback(state, n_options=1)
         else:
             options = self.generator.synthesize(state, n_options=5)
+
+        # DOF-SPEC §5 viability gate (see step()).
+        options = [o for o in options if o.estimated_duration_mks <= tau]
 
         selected = self.core.evaluate_and_select(state, options)
         report = self.core.report(state, options, selected, mode)

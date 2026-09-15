@@ -4,6 +4,12 @@ from typing import List
 from calculus_core import ActionOption, SystemStateMatrix
 
 
+# In a deployment the execution time of an option is a Perception-layer output
+# (DOF-SPEC §3.3 `estimated_duration_mks`), not a Generator guess: the option set
+# must not be able to talk itself past the §5 viability gate.
+FALLBACK_DURATION_MKS = 1000.0  # placeholder: 1 ms, deterministic local step
+
+
 class Generator:
     """Synthesis Layer (The Generator).
 
@@ -47,6 +53,7 @@ class Generator:
                     description=f"Safe diversification path #{i}",
                     projected_dof_delta=delta,
                     is_reversible=True,
+                    estimated_duration_mks=FALLBACK_DURATION_MKS,
                 )
             )
         return opts

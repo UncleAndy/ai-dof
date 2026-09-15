@@ -96,9 +96,9 @@ where `calc(S)` is the **calculation set** (§4.2).
 `calc(S)` includes an entity `e` iff **all** of:
 
 1. `e.is_collapse_source == false` (structural network defense — aggressors are filtered from the opportunity topology, not negotiated with); **and**
-2. `e.current_dof > 0`, **or** `e.dof_known == false` (unknown DoF — the system never assumes an unmapped possibility is zero, Axiom 5; the node stays in `calc` and contributes its value per §4.1), **or** (`e.current_dof == 0` **and** `e.dof_known == true` **and** some available `ActionOption` `o` has `o.projected_dof_delta[e.entity_id] > 0`).
+2. `e.current_dof > 0`, **or** `e.dof_known == false` (unknown DoF — the system never assumes an unmapped possibility is zero, Axiom 5; the node stays in `calc` and contributes its value per §4.1), **or** (the entity is **recoverable in principle** per §8.9).
 
-An entity at `current_dof == 0` with `dof_known == true` and **no** available option that can raise its DoF is **excluded**: it has no recovery path, contributes nothing, and is not a subject of the decision. A node at `DoF = 0` that *can* be revived stays in `calc` — excluding it would let the system ignore a salvageable being. An entity with an unknown DoF (`dof_known == false`) is **never** excluded, regardless of its nominal `current_dof`.
+An entity at `current_dof == 0` with `dof_known == true` that is **not** recoverable in principle is **excluded**: it has no recovery path, contributes nothing, and is not a subject of the decision. A node at `DoF = 0` that is recoverable in principle stays in `calc` — excluding it would let the system ignore a salvageable being. An entity with an unknown DoF (`dof_known == false`) is **never** excluded, regardless of its nominal `current_dof`.
 
 ### 4.3 Selection / Net Delta
 
@@ -132,7 +132,15 @@ The constant `0.5` is normative (the *rigidity coefficient*). Conforming impleme
 
 ### 4.5 Decision
 
-The selected option is the one maximizing `NetDelta`. Ties MAY be broken deterministically (e.g. by `option_id` lexicographic order). If the option set is empty, selection returns `none` (no action).
+The selected option is the one maximizing `NetDelta`. 
+
+**Ties (NetDelta equality) are broken by a structural priority ladder (lexicographic filter):**
+1. **Recovery Preservation:** prefer the option that maximizes the number of entities remaining *recoverable in principle* (§8.9).
+2. **Irreversibility Minimization:** prefer the option that minimizes the reduction of the perceived action repertoire `A(S)` and the class of admissible means `M(S)`.
+3. **Specific Path Preservation:** prefer the option that preserves a recovery path for the most critical node (lowest current DoF).
+4. **Deterministic Fallback:** if all structural criteria are equal, break tie by `option_id` lexicographic order.
+
+Any tie-break decision must be explicitly logged in the audit report as a "last-resort decision" with a list of the tied options and the specific criteria that broke the tie. If the option set is empty, selection returns `none` (no action).
 
 ---
 

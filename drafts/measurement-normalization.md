@@ -122,17 +122,41 @@ ln(ψ_var · ψ_opt · ψ_con) = ln ψ_var + ln ψ_opt + ln ψ_con
 **Пример 3. «sacrifice-one-to-save-weak» (компенсация).**
 `ψ` сама по себе эту дыру **не закрывает** — она про измерение, не про агрегацию. Если `Humanity` падает `0.8 → 0.05`, а слабая `AI` растёт `0.05 → 0.99`, то `Δ` индекса всё равно `+0.21`. Нормировка необходима, но недостаточна; компенсацию закрывает отдельный слой (лексикографический фильтр допустимости, «T1»). Этим документ сознательно ограничивает свою задачу.
 
-## 7. Открытые вопросы
+## 8.9 Reachability and the Right to be Counted
 
-- **A.** Чем нормировать Variety при неизвестном `V_env`. *Решено:* определение `V_env` — см. G; формула — §2.1 и §10.1; штраф за незнание — §8.5, уровень `u₀` — §8.7. Сцепка с B: тезис §10.4 о едином кернеле ослабляется, если B выберет экспоненту (§8.8).
-- **B.** Профиль нормировки стоимости. *Решено в существенном, разбор — §8.8.* Это не выбор формы, а выбор **закона композиции**: B-iv принят (закон композиции обязателен), из него следует экспонента **B2**. Референс — **бюджет состояния** (`x_g = c_g / C_g`, не константа и не горизонт по опциям); якорь задаётся **по блоку**: «половина ресурса ⇒ половина свободы, вносимой этим ресурсом»; ресурсы **конвертируемы** — блоки и курсы, ворота = неплатёжеспособность после конверсии, а не покомпонентное неравенство. Остаток B-viii…B-xii **закрыт** (§8.8): бюджет действующего агента; бюджет = мандат, а не баланс (потолок на один переход отозван, весь бюджет на шаг допустим через доминирование `−∞`); бюджет считается по блоку; курс **наблюдается** как цена дешёвейшего достижимого пути обмена (и сам обмен стоит времени, проходя те же ворота); «неизвестный свой бюджет» — недопустимый вход (правило (b)), а не режим оценки. Два из этих решений опираются на добавки уровня SPEC — вектор бюджета в `State`, `projected_budget_delta` у `ActionOption`, именованная Perception-процедура структуры обмена (см. §8.8, §11). Тезис §10.4 о едином кернеле с A заменён на **единство якоря**: `V = V_env ⇒ 0.5` и `x_g = 0.5 ⇒ 0.5`.
-- **C.** Как калибруется `Total` переменных в constraint-линзе.
-- **D.** Линзы — одно число или три независимых входа индекса. *Связано с §8.2:* произведение допускает частичную неизвестность, `min` — нет.
-- **E.** Вычислимое определение «проверяемо недостижима» (отсутствие пути в известном графе vs вердикт анализатора — второе оставляет лазейку). *Усилено §9.3:* §4.2 обосновывает «безнадёжность» набором опций, а не миром.
-- **F.** Где хранится декларация `ψ`: в аудит-отчёте §6, в отдельном поле или вне модели.
-- **G.** Определение `V_env`. *Решено:* `V_env` — характеристика **внешней среды** (внешние возмущения, Ashby-literal); аффордансы (инструменты, инфраструктура) идут в `V` через достижимость. См. §10.2.
-- **H.** Штраф за незнание `u`. *Решено:* форма — `u(t) = u₀^(1−t/t*)·ε^(t/t*)` (§8.5, §8.6); уровень — `u₀ = clamp(exp(Q_α(ln D)), U_MIN, U_MAX)` при `α = 0.25`, `ρ = 0.9`, `U_MIN = ε^(1−ρ) ≈ 0.251`, `U_MAX = 0.5`; приор опционален, дефолт точечный в `0.5` (⇒ H1 как частный случай); числовая цена применяется только при `t* ≤ 0` (неразрешимое незнание). См. §8.7.
-- **I.** Бюджет времени (§8.6): оценки длительностей `t_m`, `t_v`, `t_a⁺`, `t_a⁻`, `d(o)` и их источник; новое поле `ActionOption.estimated_duration`; распространять ли ворота выполнимости на **все** опции (`d(o) ≤ τ`), а не только на измерение.
+This section defines the boundary between a "passive object" (legally excluded from the index) and a "collapsed entity" (which must stay in the index as a penalty).
+
+### 8.9.1 The P-rule (Recoverability in Principle)
+
+To prevent the "Generator Trap" (where a poor set of options is used to justify excluding a node), the decision to exclude a node at `DoF = 0` is decoupled from the current set of candidates.
+
+**P-rule:** An entity `X` is **not excluded** from `calc(S)` if there exists at least one **admissible means** from the perceived class `M(S)` that can raise `DoF(X) > 0` within the **recovery horizon** `T_rec(X)`.
+
+- **Admissible Means `M(S)`:** A perceived set of categories of actions (medical, technical, etc.) available in the world. This is a Perception-layer artifact, frozen on `S` (R7).
+- **Recovery Horizon `T_rec(X)`:** A duration based on the entity's type (e.g., biological window for a human) beyond which recovery is considered impossible.
+- **Distinction from `τ`:** The global deadline `τ` manages the **gates** (can we do it *now*?), while `T_rec` manages the **right to be counted** (is it *possible in principle*?).
+
+### 8.9.2 The Reachability Witness
+
+An entity is excluded from `calc(S)` iff the implementation provides a **witness of unreachability**:
+- A proof that the perceived repertoire of actions `A(S)` contains no action whose effect raises `DoF(X)`.
+- Or a proof that all such actions require means not present in `M(S)` or exceed `T_rec(X)`.
+
+### 8.9.3 Collapse Source (CS) and the Act of Collapse
+
+A `Collapse Source` is an entity that actively destroys the DoF of others. To prevent the "Aggressor Label" from being used to legally zero out inconvenient entities, the label `is_collapse_source = true` requires a **machine-verifiable act of collapse**.
+
+**Act of Collapse:** A recorded event where entity `X` performs an action that:
+1. Directs the `DoF` of a previously recoverable entity `Y` to `0`.
+2. Makes this collapse **irreversible** (destroys the means of recovery in `M(S)` or exceeds `T_rec(Y)`).
+
+**Symmetry of Cost:** The "murderer's paradox" is solved by the index: the act of collapse is not prohibited or permitted by the standard; it is simply **expensive**. The victim remains in the count as a `−13.8` penalty for the variant that causes the collapse, regardless of whether the aggressor is isolated.
+
+### 8.9.4 Anti-Manipulation Guards
+
+1. **Symmetry of Change:** The class `M(S)` and horizon `T_rec` can be expanded freely, but can only be narrowed upon an observed change in the world (e.g., "the last rescue ship has left").
+2. **Typology over Individualism:** `T_rec` is defined by the entity's type, not as an arbitrary value for a specific node.
+3. **Perception-backed:** `M(S)` must be the output of a named Perception procedure (`psi_id`), not a manual list.
 
 ## 8. Вклад «неизвестного» (`dof_known = false`)
 

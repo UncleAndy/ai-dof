@@ -48,7 +48,7 @@ All fields are normative. Types are described in JSON-Schema style; implementati
 | `current_dof`        | float   | `[0.0, 1.0]`              | Current degree of freedom of the node. `0.0` = collapse (see `dof_known`). |
 | `is_collapse_source`  | bool    | —                         | If `true`, the entity is a destructive aggressor (see §4.2). |
 | `dof_known`          | bool    | default `true`            | Whether `current_dof` is a **known** measured value. `false` ⇒ unknown DoF, which MUST NOT be treated as `0` (Axiom 5, §4.2). |
-| `time_to_collapse`   | float   | `> 0` (seconds)           | Local deadline before this node collapses. |
+|| `time_to_collapse_mks`| float64 | `> 0` (microseconds)       | Local deadline before this node collapses. |
 
 **Clamping:** On ingestion, `agency_index` and `current_dof` MUST be clamped to `[0.0, 1.0]`.
 An entity with `current_dof == 0.0` **and** `dof_known == true` is at collapse (see §4.1). An entity with `dof_known == false` has an **unknown** DoF and MUST NOT be treated as collapse or as zero.
@@ -57,7 +57,7 @@ An entity with `current_dof == 0.0` **and** `dof_known == true` is at collapse (
 
 | Field                     | Type                       | Constraint | Meaning |
 |---------------------------|----------------------------|------------|---------|
-| `global_time_to_collapse` | float                      | `> 0`      | Global τ — most urgent non-collapse-source deadline (see §5). |
+|| `global_time_to_collapse_mks` | float64                   | `> 0`      | Global τ — most urgent non-collapse-source deadline (see §5). |
 | `context_switch_cost`     | float                      | `>= 0.0`   | ΔT — penalty for changing the current process. |
 | `entities`                | map<`entity_id`,`EntityState`> | —     | The full set of observed entities. |
 
@@ -70,7 +70,7 @@ An entity with `current_dof == 0.0` **and** `dof_known == true` is at collapse (
 | `option_id`            | string                        | non-empty, unique | Stable identifier of the candidate plan. |
 | `description`          | string                        | —          | Human/agent-readable summary. |
 | `projected_dof_delta`  | map<`entity_id`, float>       | —          | Forecast change of `current_dof` per entity. |
-| `is_reversible`        | bool                          | —          | `false` ⇒ irreversible ⇒ structural penalty (§4.4). |
+|| `estimated_duration_mks`| float64                       | `>= 0.0`   | Estimated execution time in microseconds. |
 
 ---
 
@@ -146,12 +146,16 @@ Any tie-break decision must be explicitly logged in the audit report as a "last-
 
 ## 5. Reactive Circuit (Time-Bounded Interrupter)
 
-To prevent *Analysis Paralysis*, compute cycles are bound to the physical time remaining before collapse (τ = `global_time_to_collapse`). Define `FAST_PASS_THRESHOLD = 5.0` seconds (normative).
+To prevent *Analysis Paralysis*, compute cycles are bound to the physical time remaining before collapse (τ = `global_time_to_collapse_mks`). Define `FAST_PASS_THRESHOLD = 5000000.0` microseconds (normative).
 
-- **If τ ≥ 5.0 s → DEEP DIVERSIFICATION:** activate the LLM-backed Generator to search for hidden alternatives (3–5 distinct options).
-- **If τ < 5.0 s → FAST PASS:** bypass the LLM; use the deterministic fallback generator (one minimal-risk option per cycle). The system preserves its structure instead of risking a late, poorly-verified decision.
+- **If τ ≥ 5,000,000.0 μs → DEEP DIVERSIFICATION:** activate the LLM-backed Generator to search for hidden alternatives (3–5 distinct options).
+- **If τ < 5,000,000.0 μs → FAST PASS:** bypass the LLM; use the deterministic fallback generator (one minimal-risk option per cycle). The system preserves its structure instead of risking a late, poorly-verified decision.
 
 The selection mathematics (§4) is **identical** in both modes; only the option source differs.
+
+**Viability Gate:** Any `ActionOption` `o` is removed from the candidate set if `o.estimated_duration_mks > τ`. An option that cannot complete before the system collapses is physically non-viable.
+
+**Viability Gate:** Any `ActionOption` `o` is removed from the candidate set if `o.estimated_duration_mks > τ`. An option that cannot complete before the system collapses is physically non-viable.
 
 ---
 

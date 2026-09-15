@@ -133,13 +133,13 @@ func main() {
 	check("stone: ψ_var = 0, no 0/0", variety == 0.0)
 	check("stone: current_dof = 0", stone.CurrentDoF == 0.0)
 	check("stone: no NaN in the index", !math.IsNaN(report.TotalSystemDoF))
-	check("stone: excluded when nothing can raise it (§4.2)", !core.isIncluded(stone, nil))
+	check("stone: excluded when nothing can raise it (§4.2)", !core.isIncluded(stone))
 	check("stone: floored flag is set", stone.Measurement.Floored)
 
 	fmt.Println("=== 4. §4.7: unmeasured lens ===")
 	unmapped := state.Entities["unmapped"]
 	check("unmapped: DoFKnown = false", !unmapped.DoFKnown)
-	check("unmapped: never excluded (§4.2)", core.isIncluded(unmapped, nil))
+	check("unmapped: never excluded (§4.2)", core.isIncluded(unmapped))
 	unknown := 0
 	for _, t := range unmapped.Measurement.Terms {
 		if !t.DoFKnown {
@@ -164,7 +164,82 @@ func main() {
 	check("psi_id and digest are echoed in the report",
 		repDeep.PsiID == "perception-v1" && len(repDeep.PsiDigest) == 64)
 
-	fmt.Println("=== 6. draft §6, example 1: product collapses where a sum would mask it ===")
+	fmt.Println("=== 6. §4.2/§4.5 (v0.5): frozen calc set, collapse charge, gate, stay-put ===")
+	adult := state.Entities["adult"]
+	totalBefore := report.TotalSystemDoF
+	killer := &ActionOption{
+		OptionID: "kill_adult", Description: "liquidate the counted adult",
+		ProjectedDoFDelta:    map[string]float64{"adult": -1.0, "unmapped": 0.0},
+		IsReversible:         true,
+		EstimatedDurationMks: 1000.0,
+	}
+	charges := core.collapseCharges(state, killer)
+	check("charge: the destroyed entity is named with its DoF before the option",
+		len(charges) == 1 && charges[0].EntityID == "adult" && charges[0].DoFBefore == adult.CurrentDoF,
+		fmt.Sprintf("charges=%v", charges))
+	simKill, members := core.simulate(state, killer)
+	projectedKill := core.CalculateSystemDoF(simKill, members)
+	expectedKill := totalBefore - math.Log(adult.CurrentDoF) + math.Log(core.epsilon)
+	check("charge: the term stays at the floor instead of disappearing",
+		math.Abs(projectedKill-expectedKill) < 1e-9,
+		fmt.Sprintf("Δ=%+.4f nats", projectedKill-totalBefore))
+	check("charge: destroying a counted entity can never raise the index", projectedKill < totalBefore)
+	passive := &ActionOption{
+		OptionID: "raise_stone", Description: "act on a passive object",
+		ProjectedDoFDelta:    map[string]float64{"stone": 1.0, "unmapped": 0.0},
+		IsReversible:         true,
+		EstimatedDurationMks: 1000.0,
+	}
+	passiveSim, passiveMembers := core.simulate(state, passive)
+	check("frozen set: a passive object is neither charged nor rewarded",
+		len(core.collapseCharges(state, passive)) == 0 &&
+			math.Abs(core.CalculateSystemDoF(passiveSim, passiveMembers)-totalBefore) < 1e-12)
+	spare := &ActionOption{
+		OptionID: "rescue_child", Description: "raise the weakest counted entity",
+		ProjectedDoFDelta:    map[string]float64{"child": 0.2, "unmapped": 0.0},
+		IsReversible:         true,
+		EstimatedDurationMks: 1000.0,
+	}
+	admissible, gateRemoved := core.ApplyStructuralGate(state, []*ActionOption{killer, spare})
+	check("structural gate: the destructive option is removed while a charge-free one exists",
+		len(admissible) == 1 && admissible[0].OptionID == "rescue_child" &&
+			len(gateRemoved) == 1 && gateRemoved[0].Gate == "collapse",
+		fmt.Sprintf("removed=%v", gateRemoved))
+	check("Axiom 3: the charge alone already makes destruction unprofitable",
+		core.EvaluateAndSelect(state, []*ActionOption{killer}) == nil)
+	onlyDestructive, _ := core.ApplyStructuralGate(state, []*ActionOption{killer})
+	check("structural gate: when every candidate destroys, they stay admissible", len(onlyDestructive) == 1)
+	harm := &ActionOption{
+		OptionID: "harm_child", Description: "degrade the child",
+		ProjectedDoFDelta:    map[string]float64{"child": -1.0, "unmapped": 0.0},
+		IsReversible:         true,
+		EstimatedDurationMks: 1000.0,
+	}
+	check("stay-put baseline: an all-negative candidate set selects nothing",
+		core.EvaluateAndSelect(state, []*ActionOption{harm}) == nil &&
+			core.EvaluateAndSelect(state, nil) == nil)
+	check("fixture 1: a strictly positive option is selected", selected != nil)
+
+	fmt.Println("=== 7. §4.7 (v0.5): coverage and completeness of unmapped entities ===")
+	generated := orch.generator.SafeFallback(state, 3)
+	covered := true
+	for _, o := range generated {
+		if _, ok := o.ProjectedDoFDelta["unmapped"]; !ok {
+			covered = false
+		}
+	}
+	check("coverage: every candidate names the unmapped entity", covered)
+	check("completeness: the fallback leaves a resolvable unknown unmeasured ⇒ incomplete", report.Incomplete)
+	measuring := []*ActionOption{{
+		OptionID: "measure_unmapped", Description: "resolve the unknown",
+		ProjectedDoFDelta:    map[string]float64{"unmapped": 0.1},
+		IsReversible:         true,
+		EstimatedDurationMks: 1000.0,
+	}}
+	check("completeness: a candidate that resolves the unknown clears the flag",
+		!core.isIncomplete(state, measuring))
+
+	fmt.Println("=== 8. draft §6, example 1: product collapses where a sum would mask it ===")
 	before := PsiVar(9.0, 1.0) * PsiOpt([][2]float64{{1.0, 10.0}}) * PsiCon(9.0, 1.0)
 	after := PsiVar(19.0, 1.0) * PsiOpt([][2]float64{{5.0, 1.0}}) * PsiCon(9.0, 1.0)
 	sumBefore := PsiVar(9.0, 1.0) + PsiOpt([][2]float64{{1.0, 10.0}}) + PsiCon(9.0, 1.0)

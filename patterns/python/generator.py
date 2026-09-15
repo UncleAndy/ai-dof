@@ -1,5 +1,5 @@
 import json
-from typing import List
+from typing import Dict, List
 
 from calculus_core import ActionOption, SystemStateMatrix
 
@@ -41,9 +41,18 @@ class Generator:
     def safe_fallback(self, state: SystemStateMatrix, n_options: int = 1) -> List[ActionOption]:
         """Deterministic minimal-risk options used during Fast Pass / offline."""
         opts: List[ActionOption] = []
-        candidates = [e for e in state.entities.values() if not e.is_collapse_source]
+        # The target must be a subject of the decision: an entity at a known zero
+        # is outside `calc` (§4.2), so raising it would not move the index and the
+        # fallback would be a no-op.
+        candidates = [e for e in state.entities.values()
+                      if not e.is_collapse_source and (e.current_dof > 0.0 or not e.dof_known)]
         for i in range(max(1, n_options)):
-            delta = {}
+            # §4.7 coverage: every option states what it does with an unmapped
+            # entity — an explicit "unchanged" is written as 0.0, never omitted,
+            # so an unknown cannot become invisible by simply going unmentioned.
+            delta: Dict[str, float] = {e.entity_id: 0.0
+                                       for e in state.entities.values()
+                                       if not e.dof_known}
             if candidates:
                 target = min(candidates, key=lambda e: e.current_dof)
                 delta[target.entity_id] = 0.2
@@ -65,6 +74,9 @@ class Generator:
             f"Generate {n_options} distinct, non-redundant action options. "
             "Each option must include: option_id, description, "
             "projected_dof_delta (per entity_id), and is_reversible. "
+            "Every option MUST carry an entry in projected_dof_delta for every "
+            "entity with dof_known=false (0.0 if the option leaves it unchanged), "
+            "so that an unmapped entity is never made invisible by omission. "
             "Objective (Axiom 1): maximize the total future DoF of the system AND "
             "its constituent entities; never sacrifice one entity's future for "
             "another's gain. Uncertainty (Axiom 5): prefer reversible actions and "

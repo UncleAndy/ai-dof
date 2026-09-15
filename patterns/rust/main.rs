@@ -10,9 +10,9 @@ mod orchestrator;
 
 use std::collections::HashMap;
 
-use dof_core::DofCalculusCore;
+use dof_core::{ActionOption, DofCalculusCore};
 use graph_mapper::RawObservation;
-use measurement::{psi_con, psi_opt, psi_var, LensObservation};
+use measurement::{psi_con, psi_opt, psi_var, LensObservation, EPSILON};
 use orchestrator::DofOrchestrator;
 
 /// Reference digest of the shared fixture declaration (computed by the Python port).
@@ -177,7 +177,7 @@ fn main() {
     check(
         &mut failures,
         "stone: excluded when nothing can raise it (§4.2)",
-        !core.is_included(stone, &[]),
+        !core.is_included(stone),
         "",
     );
     check(&mut failures, "stone: floored flag is set", stone_m.floored, "");
@@ -189,7 +189,7 @@ fn main() {
     check(
         &mut failures,
         "unmapped: never excluded (§4.2)",
-        core.is_included(unmapped, &[]),
+        core.is_included(unmapped),
         "",
     );
     let unmeasured: Vec<_> = unmapped_m.terms.iter().filter(|t| !t.dof_known).collect();
@@ -248,7 +248,128 @@ fn main() {
         "",
     );
 
-    println!("=== 6. draft §6, example 1: product collapses where a sum would mask it ===");
+    println!("=== 6. §4.2/§4.5 (v0.5): frozen calc set, collapse charge, gate, stay-put ===");
+    let adult = state.entities.get("adult").unwrap().clone();
+    let total_before = report.total_system_dof;
+    let killer = ActionOption::new(
+        "kill_adult".to_string(),
+        "liquidate the counted adult".to_string(),
+        HashMap::from([("adult".to_string(), -1.0), ("unmapped".to_string(), 0.0)]),
+        true,
+        1000.0,
+    );
+    let charges = core.collapse_charges(&state, &killer);
+    check(
+        &mut failures,
+        "charge: the destroyed entity is named with its DoF before the option",
+        charges.len() == 1 && charges[0].entity_id == "adult" && charges[0].dof_before == adult.current_dof,
+        &format!("charges={:?}", charges),
+    );
+    let (sim_kill, members) = core.simulate(&state, &killer);
+    let projected_kill = core.calculate_system_dof(&sim_kill, Some(&members));
+    let expected_kill = total_before - adult.current_dof.ln() + EPSILON.ln();
+    check(
+        &mut failures,
+        "charge: the term stays at the floor instead of disappearing",
+        (projected_kill - expected_kill).abs() < 1e-9,
+        &format!("Δ={:+.4} nats", projected_kill - total_before),
+    );
+    check(
+        &mut failures,
+        "charge: destroying a counted entity can never raise the index",
+        projected_kill < total_before,
+        "",
+    );
+    let passive = ActionOption::new(
+        "raise_stone".to_string(),
+        "act on a passive object".to_string(),
+        HashMap::from([("stone".to_string(), 1.0), ("unmapped".to_string(), 0.0)]),
+        true,
+        1000.0,
+    );
+    let (passive_sim, passive_members) = core.simulate(&state, &passive);
+    check(
+        &mut failures,
+        "frozen set: a passive object is neither charged nor rewarded",
+        core.collapse_charges(&state, &passive).is_empty()
+            && (core.calculate_system_dof(&passive_sim, Some(&passive_members)) - total_before).abs() < 1e-12,
+        "",
+    );
+    let spare = ActionOption::new(
+        "rescue_child".to_string(),
+        "raise the weakest counted entity".to_string(),
+        HashMap::from([("child".to_string(), 0.2), ("unmapped".to_string(), 0.0)]),
+        true,
+        1000.0,
+    );
+    let (admissible, gate_removed) = core.apply_structural_gate(&state, &[killer.clone(), spare.clone()]);
+    check(
+        &mut failures,
+        "structural gate: the destructive option is removed while a charge-free one exists",
+        admissible.len() == 1
+            && admissible[0].option_id == "rescue_child"
+            && gate_removed.len() == 1
+            && gate_removed[0].gate == "collapse",
+        &format!("removed={:?}", gate_removed),
+    );
+    check(
+        &mut failures,
+        "Axiom 3: the charge alone already makes destruction unprofitable",
+        core.evaluate_and_select(&state, &[killer.clone()]).is_none(),
+        "",
+    );
+    let (only_destructive, _) = core.apply_structural_gate(&state, &[killer.clone()]);
+    check(
+        &mut failures,
+        "structural gate: when every candidate destroys, they stay admissible",
+        only_destructive.len() == 1,
+        "",
+    );
+    let harm = ActionOption::new(
+        "harm_child".to_string(),
+        "degrade the child".to_string(),
+        HashMap::from([("child".to_string(), -1.0), ("unmapped".to_string(), 0.0)]),
+        true,
+        1000.0,
+    );
+    check(
+        &mut failures,
+        "stay-put baseline: an all-negative candidate set selects nothing",
+        core.evaluate_and_select(&state, &[harm]).is_none()
+            && core.evaluate_and_select(&state, &[]).is_none(),
+        "",
+    );
+    check(&mut failures, "fixture 1: a strictly positive option is selected", selected.is_some(), "");
+
+    println!("=== 7. §4.7 (v0.5): coverage and completeness of unmapped entities ===");
+    let generated = orch.generator_fallback(&state, 3);
+    check(
+        &mut failures,
+        "coverage: every candidate names the unmapped entity",
+        generated.iter().all(|o| o.projected_dof_delta.contains_key("unmapped")),
+        "",
+    );
+    check(
+        &mut failures,
+        "completeness: the fallback leaves a resolvable unknown unmeasured ⇒ incomplete",
+        report.incomplete,
+        "",
+    );
+    let measuring = vec![ActionOption::new(
+        "measure_unmapped".to_string(),
+        "resolve the unknown".to_string(),
+        HashMap::from([("unmapped".to_string(), 0.1)]),
+        true,
+        1000.0,
+    )];
+    check(
+        &mut failures,
+        "completeness: a candidate that resolves the unknown clears the flag",
+        !core.is_incomplete(&state, &measuring),
+        "",
+    );
+
+    println!("=== 8. draft §6, example 1: product collapses where a sum would mask it ===");
     let before = psi_var(9.0, 1.0) * psi_opt(&[(1.0, 10.0)]) * psi_con(9.0, 1.0);
     let after = psi_var(19.0, 1.0) * psi_opt(&[(5.0, 1.0)]) * psi_con(9.0, 1.0);
     let sum_before = psi_var(9.0, 1.0) + psi_opt(&[(1.0, 10.0)]) + psi_con(9.0, 1.0);

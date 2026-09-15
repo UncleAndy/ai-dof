@@ -1,36 +1,84 @@
 # Systemic DoF Assessment Toolkit
 
-This toolkit provides a set of analytical "lenses" to quantify and estimate Degrees of Freedom (DoF) in complex systems, ranging from software architectures and organizational structures to high-stakes tactical situations.
+**Status:** informative. The normative mathematics lives in `DOF-SPEC.md` §4.1, §4.6 and §4.7; this document does not restate it and never overrides it — where the two disagree, the spec wins. What follows is the **procedure side**: how to obtain the counters a conformant measurement consumes — `V`, `V_env`, the blocks `(c_g, C_g)`, `F`, `F_env`, the recovery horizon and the duration sources.
+
+This toolkit provides a set of analytical "lenses" to quantify and estimate Degrees of Freedom (DoF) in complex systems, ranging from software architectures and organizational structures to high-stakes tactical situations. The lens names below are the frozen lens set of `DOF-SPEC` §4.6 — **Variety**, **Options**, **Constraint**, in that canonical order — and each lens returns a **share in `[0,1]`**, not a count.
+
+## 0. Ground rules for using the lenses
+
+- **A lens returns a share, never a count.** Counts are the *inputs*. `ψ = V/(V+V_env)` with `V = 4` and `V_env = 4` is `0.5`, not `4`. Counting is your job; normalizing is not — the spec fixes the normalization so that two implementations measuring the same state produce the same number.
+- **Three shares, one number.** The three lens values multiply into one `current_dof` per entity (§4.1). The audit shows the three values separately, so a decision can be argued channel by channel instead of only by its total (§6.1).
+- **"I could not count this" is not zero.** An unobtainable counter becomes an unmeasured term with `dof_known = false`, priced by the ignorance penalty `u(t)` (§4.7). Writing `0` for a counter you failed to obtain is arithmetically identical to deleting the entity from the analysis — the outcome Axiom 5 exists to prevent.
+- **One ruler per state.** Counters are frozen once for the whole state `S` and declared in the `psi` artifact (§3.4); every option of a cycle is then evaluated against that same ruler. Record *what* you counted and *how*, because the digest of that record is the only evidence that two numbers may be compared at all.
+- **A zero lens is not a verdict.** A zero lens makes `current_dof = 0`; whether the entity is then excluded or kept is decided by §4.2, which asks about recoverability in principle — not by the lens.
 
 ## 1. The Variety Lens (Ashby's Law)
+
 **Core Focus:** System Stability and Response Capacity.
-- **Logic:** $\text{DoF}_{\text{system}} \ge \text{Variety}_{\text{environment}}$. For a system to remain stable and avoid being dominated by its environment, its internal variety (the number of distinguishable states or responses) must match or exceed the variety of potential external disturbances.
+
+- **Logic:** $\text{DoF}_{\text{system}} \ge \text{Variety}_{\text{environment}}$ — to avoid being dominated by its environment, a system's internal variety (the number of distinguishable states or responses) must match or exceed the variety of potential external disturbances.
+- **Read this as stability, not as the index.** The inequality is the classical Ashby criterion. The index does not use it as a threshold: it takes the **share** `ψ_var = V/(V+V_env)`, in which matching the environment (`V = V_env`) is `0.5` — halfway up the scale — and `1` is unreachable outside a vacuum. A share carries a gradient: matching the environment and doubling it are different amounts of freedom. A threshold is a cliff with nothing above or below it. The inequality tells you whether the system is outgunned; the share tells you by how much.
 - **Application:**
-    1. Identify and count the unique types of external disturbances (failures, attacks, requirement changes).
-    2. Audit the system's internal responses.
-    3. If $\text{Variety}_{\text{environment}} > \text{Variety}_{\text{system}}$, the system is structurally fragile.
-- **Metric:** $\text{DoF}$ is the count of unique, independent response vectors.
+    1. Identify and count the unique types of **external disturbances** over the declared horizon (failures, attacks, requirement changes). This count is `V_env`.
+    2. Audit the system's internal responses: the distinguishable response vectors it can actually emit — not the ones it was designed to have, not the ones an operator wishes existed. This count is `V`.
+    3. `V_env > V` means structurally fragile; the index shows the same thing as `ψ_var < 0.5`.
+- **Counters to record:** `V`, `V_env`, the definition of "response vector" you used, and the horizon over which the environment was counted. The horizon is part of the declaration: an environment counted over a week and the same environment counted over a year are different denominators, and numbers produced under them must not be compared (§3.4).
+- **The `V = 0` guard.** `V = 0` gives `ψ_var = 0`, and that is a legal, non-degenerate outcome, not a reason to improvise a denominator. A passive object — a stone, an unsupported script, a contract clause nobody can invoke — has no response vectors at all. §4.2 then decides its fate: excluded if its DoF is *known* zero **and** no option can raise it, kept otherwise. The formula never gets to make that call.
+
+### Affordances are not disturbances
+
+A key, a tool, a paid-for abstraction layer, an available API: these do not belong in `V_env`. `V_env` holds the **external perturbations** pressing on the entity; affordances live in the **numerator**, as means whose reachability adds response vectors. This is the Ashby-literal choice — only disturbances belong in the denominator — and it is the reading that keeps tools from being counted as enemies. An affordance also does not carry its own DoF as an entity: it multiplies the capabilities of the entities that can reach it.
 
 ## 2. The Options Lens (Real Options Analysis)
+
 **Core Focus:** Economic Value of Flexibility and Lock-in.
+
 - **Logic:** Every architectural or tactical decision is either a *purchase of an option* (investing to keep future paths open) or an *execution of an option* (locking in a specific path for immediate gain).
 - **Application:**
-    - **Buying an Option:** Implementing an abstraction layer, using a modular plugin system, or delaying a hard choice.
-        - *Cost:* Additional complexity or development time.
-        - *Benefit:* Drastic reduction in the cost of future state transitions.
-    - **Executing an Option:** Choosing a specific vendor, hard-coding a dependency, or committing to a single-path strategy.
-        - *Benefit:* Immediate efficiency and speed.
-        - *Cost:* Permanent collapse of alternative $\text{DoF}$ (Lock-in).
-- **Metric:** $\text{DoF}$ is the inverse of the "Transition Cost" between state A and state B. Lower cost $\rightarrow$ higher $\text{DoF}$.
+    - **Buying an Option:** implementing an abstraction layer, using a modular plugin system, or delaying a hard choice.
+        - *Cost:* additional complexity or development time.
+        - *Benefit:* drastic reduction in the cost of future state transitions — the transition cost falls, so this lens rises.
+    - **Executing an Option:** choosing a specific vendor, hard-coding a dependency, or committing to a single-path strategy.
+        - *Benefit:* immediate efficiency and speed.
+        - *Cost:* permanent collapse of alternative DoF (lock-in).
+- **What the lens is made of:** `ψ_opt = Π_g 4^(−c_g/C_g)` over the reachable transitions, where a **block** `g` groups transitions whose budgets are comparable, `c_g` is the measured cost of leaving that block and `C_g` is the declared budget for it. Blocks exist because budgets are not interchangeable: money and machine-hours do not add, so they are partitioned and multiplied rather than summed. `C_g` is a **ruler as much as a number** — frozen on `S` and declared; a cost is only meaningful relative to it.
+- **Anchor.** Half the budget (`c_g = C_g/2`) contributes `0.5`: half the budget, half the freedom this lens contributes. That is what makes a doubling of cost cost a constant factor of freedom, rather than an amount that depends on the units.
+- **No reachable transition ⇒ `ψ_opt = 0`,** not infinity and not "undefined". Lock-in to a single path is the collapse case, and the audit will show this lens as the binding one (§6.1).
+- **Expensive is not impossible.** Cost is what this lens normalizes; impossibility is a **reachability verdict** — a transition either exists in the world graph or it does not. A path you cannot afford is a large `c_g`; a path that does not exist must not be enumerated at all, because inventing an enormous `c_g` for it is exactly the substitution that makes a wall look like a price. The standard does not yet define reachability verdicts or the recovery horizon (§4.2 marks recoverability *reserved*), so until it does: write down the graph you actually assumed, and treat *no path found* as **unknown**, never as *unreachable*. An absence of a path among the candidates you happened to consider is not evidence about the world — "I found no route" and "there is no route" are different rows in the ledger.
 
 ## 3. The Constraint Lens (Constraint-Based DoF)
+
 **Core Focus:** Structural and Topological Freedom.
-- **Logic:** $\text{DoF} = (\text{Total Variables}) - (\text{Active Constraints})$.
+
+- **Logic:** Every active constraint "freezes" one degree of freedom, so freedom is what remains once the constraints are subtracted from the variables.
 - **Application:**
-    1. List all potential variables (e.g., technology stack, deployment model, data schema, communication protocol).
-    2. Identify all "Hard Constraints" (e.g., strict budget, legacy compatibility, immutable deadlines, physical laws).
-    3. Each constraint that removes a choice "freezes" one degree of freedom.
-- **Metric:** $\text{DoF}$ is the count of remaining unconstrained variables.
+    1. List all potential variables (technology stack, deployment model, data schema, communication protocol) — the distinguishable variables of this entity.
+    2. Identify the "Hard Constraints" that are genuinely frozen: strict budget, legacy compatibility, immutable deadlines, physical laws, and the dimensions fixed structurally by a past decision (what §4.6 counts as frozen critical dimensions).
+    3. Each constraint that removes a choice freezes one degree of freedom.
+- **What the lens is made of:** `ψ_con = F/(F+F_env)` — a **share, not a difference**. `variables − constraints` was the earlier formulation and it cannot be used: the difference is unbounded above (50 variables against 3 constraints would score `47`, outside the `[0,1]` the index is defined on) and unbounded below (more constraints than variables gives a negative value, and `ln` of a negative number has no value at all). The share avoids both, while keeping the intuition: constraints in the denominator are what press against the freedom in the numerator.
+- **Counters to record:** `F` (the distinguishable variables still unfrozen), `F_env` (the frozen demand imposed from outside), and the definition of the distinguishable-variable set you used.
+- **The guards.** Nothing to count at all (`F = 0 ∧ F_env = 0`) gives `ψ_con = 0`, uniformly with the other lenses. With `F > 0` and nothing pressing from outside (`F_env = 0`) the share is `1`: a real state — nothing about this entity is frozen from the outside — and the audit will show it as such.
+- **Topology, not magnitude.** This lens differs structurally from the other two: they measure amounts (of response, of budget), this one measures the *shape* of what is still open. Freezing many unimportant dimensions should not read as losing freedom, which is why the counter is "distinguishable variables" and not "decisions made".
+
+## 4. From three shares to one number
+
+The lenses do not add. `0.500000 + 0.870551 + 0.750000 = 2.120551` is not a DoF value — it is a number above the scale, and feeding it into `Σ ln(DoF)` would contribute a **positive** term, breaking the non-positivity the index relies on. The three shares **multiply** into `current_dof ∈ [0,1]` (§4.1), and only that single number enters `Σ ln(DoF)`.
+
+One entity, for orientation:
+
+| Lens | Counters | Value | Term `ln ψ` |
+|---|---|---|---|
+| Variety | `V = 4`, `V_env = 4` | `0.500000` | `−0.693147` |
+| Options | `c_g = 1`, `C_g = 10` | `0.870551` | `−0.138629` |
+| Constraint | `F = 3`, `F_env = 1` | `0.750000` | `−0.287682` |
+| **Product** | | **`0.326456`** | **`−1.119459`** |
+
+The terms sum to the log of the product, which is what makes the audit argument possible: a reader sees which channel holds the entity back (the **binding lens**, §6.1) and whether the entity was floored into collapse (§4.1's ε-floor, reported as `floored`).
+
+**What to record per entity.** For every entity in the state: the three lenses' counters, `dof_known` **per lens** (a partially measured entity is normal and legitimate), the recovery horizon if you asserted unrecoverability, and the names of the procedures that produced the numbers. Those names, together with the frozen coefficients, are what the `psi` declaration hashes (§3.4.3) — two measurements may be compared only when their digests match.
+
+**Durations are counters too.** Time to measure, to re-appraise the index, to implement an action once the outcome is known — all of them enter the measurement budget `T_meas` and therefore the ignorance penalty (§4.7). A measurement procedure that cannot finish before `τ` is not a measurement: the option that proposed it is removed from the candidate set and listed in `removed_options` (§5, §6.2). Under time pressure the correct move is not a faster guess; it is to leave the term unmeasured, priced by `u(t)`, and let the audit show it.
 
 ---
-**Integration Note:** These lenses provide the raw $\text{DoF}$ values required for the $\sum \ln(\text{DoF})$ calculation in the Decision Calculus.
+
+**See also:** `DOF-SPEC.md` §3.4 (the declaration), §4.1 (product and index), §4.2 (exclusion), §4.6 (lenses and normalization), §4.7 (terms, unknown lenses, ignorance penalty), §5 (viability and time), §6 (the audit report).

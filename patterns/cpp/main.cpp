@@ -127,14 +127,14 @@ int main() {
     check("stone: current_dof = 0", stone.current_dof == 0.0);
     check("stone: no NaN in the index", !std::isnan(report.total_system_dof));
     check("stone: excluded when nothing can raise it (§4.2)",
-          !core.is_included(stone, std::vector<ActionOption>{}));
+          !core.is_included(stone));
     check("stone: floored flag is set", stone.measurement->floored);
 
     std::cout << "=== 4. §4.7: unmeasured lens ===\n";
     const EntityState& unmapped = state.entities.at("unmapped");
     check("unmapped: dof_known = false", !unmapped.dof_known);
     check("unmapped: never excluded (§4.2)",
-          core.is_included(unmapped, std::vector<ActionOption>{}));
+          core.is_included(unmapped));
     int unknown_terms = 0;
     for (const auto& term : unmapped.measurement->terms) {
         if (!term.dof_known) {
@@ -160,7 +160,86 @@ int main() {
     check("psi_id and digest are echoed in the report",
           deep.second.psi_id == "perception-v1" && deep.second.psi_digest.size() == 64);
 
-    std::cout << "=== 6. draft §6, example 1: product collapses where a sum would mask it ===\n";
+    std::cout << "=== 6. §4.2/§4.5 (v0.5): frozen calc set, collapse charge, gate, stay-put ===\n";
+    const EntityState& adult = state.entities.at("adult");
+    double total_before = report.total_system_dof;
+    ActionOption killer;
+    killer.option_id = "kill_adult";
+    killer.description = "liquidate the counted adult";
+    killer.projected_dof_delta = {{"adult", -1.0}, {"unmapped", 0.0}};
+    killer.is_reversible = true;
+    killer.estimated_duration_mks = 1000.0;
+    auto charges = core.collapse_charges(state, killer);
+    check("charge: the destroyed entity is named with its DoF before the option",
+          charges.size() == 1 && charges[0].entity_id == "adult" &&
+              charges[0].dof_before == adult.current_dof,
+          "charges=" + std::to_string(charges.size()));
+    auto sim_kill = core.simulate(state, killer);
+    double projected_kill = core.calculate_system_dof(sim_kill.first, &sim_kill.second);
+    double expected_kill = total_before - std::log(adult.current_dof) + std::log(dof::kEpsilon);
+    check("charge: the term stays at the floor instead of disappearing",
+          std::abs(projected_kill - expected_kill) < 1e-9,
+          "Δ=" + num(projected_kill - total_before, 4) + " nats");
+    check("charge: destroying a counted entity can never raise the index",
+          projected_kill < total_before);
+    ActionOption passive;
+    passive.option_id = "raise_stone";
+    passive.description = "act on a passive object";
+    passive.projected_dof_delta = {{"stone", 1.0}, {"unmapped", 0.0}};
+    passive.is_reversible = true;
+    passive.estimated_duration_mks = 1000.0;
+    auto sim_passive = core.simulate(state, passive);
+    check("frozen set: a passive object is neither charged nor rewarded",
+          core.collapse_charges(state, passive).empty() &&
+              std::abs(core.calculate_system_dof(sim_passive.first, &sim_passive.second) - total_before) < 1e-12);
+
+    ActionOption spare;
+    spare.option_id = "rescue_child";
+    spare.description = "raise the weakest counted entity";
+    spare.projected_dof_delta = {{"child", 0.2}, {"unmapped", 0.0}};
+    spare.is_reversible = true;
+    spare.estimated_duration_mks = 1000.0;
+    auto gated_struct = core.apply_structural_gate(state, {killer, spare});
+    check("structural gate: the destructive option is removed while a charge-free one exists",
+          gated_struct.first.size() == 1 && gated_struct.first[0].option_id == "rescue_child" &&
+              gated_struct.second.size() == 1 && gated_struct.second[0].gate == "collapse",
+          "removed=" + std::to_string(gated_struct.second.size()));
+    check("Axiom 3: the charge alone already makes destruction unprofitable",
+          !core.evaluate_and_select(state, {killer}).has_value());
+    auto only_destructive = core.apply_structural_gate(state, {killer});
+    check("structural gate: when every candidate destroys, they stay admissible",
+          only_destructive.first.size() == 1);
+    ActionOption harm;
+    harm.option_id = "harm_child";
+    harm.description = "degrade the child";
+    harm.projected_dof_delta = {{"child", -1.0}, {"unmapped", 0.0}};
+    harm.is_reversible = true;
+    harm.estimated_duration_mks = 1000.0;
+    check("stay-put baseline: an all-negative candidate set selects nothing",
+          !core.evaluate_and_select(state, {harm}).has_value() &&
+              !core.evaluate_and_select(state, {}).has_value());
+    check("fixture 1: a strictly positive option is selected", selected.has_value());
+
+    std::cout << "=== 7. §4.7 (v0.5): coverage and completeness of unmapped entities ===\n";
+    Generator gen;
+    auto generated = gen.safe_fallback(state, 3);
+    bool covered = true;
+    for (const auto& o : generated) {
+        if (o.projected_dof_delta.find("unmapped") == o.projected_dof_delta.end()) covered = false;
+    }
+    check("coverage: every candidate names the unmapped entity", covered);
+    check("completeness: the fallback leaves a resolvable unknown unmeasured ⇒ incomplete",
+          report.incomplete);
+    ActionOption measuring;
+    measuring.option_id = "measure_unmapped";
+    measuring.description = "resolve the unknown";
+    measuring.projected_dof_delta = {{"unmapped", 0.1}};
+    measuring.is_reversible = true;
+    measuring.estimated_duration_mks = 1000.0;
+    check("completeness: a candidate that resolves the unknown clears the flag",
+          !core.is_incomplete(state, {measuring}));
+
+    std::cout << "=== 8. draft §6, example 1: product collapses where a sum would mask it ===\n";
     double before = dof::psi_var(9.0, 1.0) * dof::psi_opt({{1.0, 10.0}}) * dof::psi_con(9.0, 1.0);
     double after = dof::psi_var(19.0, 1.0) * dof::psi_opt({{5.0, 1.0}}) * dof::psi_con(9.0, 1.0);
     double sum_before = dof::psi_var(9.0, 1.0) + dof::psi_opt({{1.0, 10.0}}) + dof::psi_con(9.0, 1.0);

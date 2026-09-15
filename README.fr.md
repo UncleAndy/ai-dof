@@ -39,7 +39,7 @@ Lisez `SKILL.md` pour la philosophie. Lisez `DOF-SPEC.md` si vous construisez un
 2. **Mesure** — cartographier chaque entité et son DoF actuel via `references/dof-assessment-toolkit.md`.
 3. **Calcul** — calculer `Total System DoF Evaluation Index = Σ ln(DoF)` sur les entités non-entropiques.
 4. **Stabilisation** — soustraire l'Entropie de changement de contexte (ΔT) pour pénaliser les changements de processus superflus.
-5. **Action** — choisir l'option au Net Delta le plus élevé, mais si le temps avant effondrement (τ) est sous 5 s, basculer en **Fast Pass** (repli déterministe) pour éviter la paralysie par l'analyse.
+5. **Action** — choisir l'option au Net Delta le plus élevé, mais si le temps avant effondrement (τ) est sous 5 000 000 µs (5 s), basculer en **Fast Pass** (repli déterministe) pour éviter la paralysie par l'analyse. On n'agit que sur un Net Delta strictement positif ; sinon le système reste sur place.
 
 Une implémentation conforme DOIT pouvoir émettre un audit `report()` de chaque décision (contribution par entité, totaux système, évaluation par option). Un calcul silencieux n'est pas conforme.
 

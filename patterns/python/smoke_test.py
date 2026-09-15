@@ -13,11 +13,17 @@ Checks, in order:
              and records the removal (both modes are exercised: DEEP and FAST_PASS).
   8. §6 example 1 of the draft — "irreversible process: state-DoF ↑, action-DoF ↓":
              the product collapses where a sum would mask the danger.
+  9. §4.2  — the calculation set is frozen per cycle: destroying a counted entity
+             is charged the floor instead of raising the index by disappearing,
+             while a passive object is neither charged nor rewarded.
+ 10. §4.5  — structural admissibility (a destructive option is removed while a
+             charge-free alternative exists) and the `NetDelta > 0` stay-put baseline.
+ 11. §4.7  — coverage of unmapped entities by every candidate, and `incomplete`.
 """
 import json
 import math
 
-from calculus_core import DOFCalculusCore
+from calculus_core import ActionOption, DOFCalculusCore
 from measurement import EPSILON, LENS_ORDER, U_MAX, U_MIN, psi_con, psi_opt, psi_var
 from orchestrator import DOFOrchestrator
 
@@ -92,13 +98,13 @@ check("stone: ψ_var = 0 (no 0/0, no NaN)", stone.measurement.psi["variety"] == 
 check("stone: current_dof = 0", stone.current_dof == 0.0)
 check("stone: no NaN in the index", not math.isnan(report.total_system_dof))
 check("stone: excluded when nothing can raise it (§4.2)",
-      core._is_included(stone, []) is False)
+      core._is_included(stone) is False)
 check("stone: floored flag set in the audit", stone.measurement.floored is True)
 
 print("=== 5. §4.7: unmeasured lens ===")
 unmapped = state.entities["unmapped"]
 check("unmapped: dof_known = false", unmapped.dof_known is False)
-check("unmapped: never excluded (§4.2)", core._is_included(unmapped, []) is True)
+check("unmapped: never excluded (§4.2)", core._is_included(unmapped) is True)
 unknown_term = [t for t in unmapped.measurement.terms if not t["dof_known"]]
 check("unmapped: one unmeasured term of three", len(unknown_term) == 1)
 check("unmapped: the term costs ln u₀", abs(unknown_term[0]["contribution"] - math.log(0.5)) < 1e-12)
@@ -144,6 +150,65 @@ ratio_product, ratio_sum = prod_after / prod_before, sum_after / sum_before
 check("product collapses (ΔIndex ≈ %.2f nats)" % math.log(ratio_product), ratio_product < 0.01,
       f"×{ratio_product:.5f}")
 check("a sum would mask it", ratio_sum > 0.6, f"×{ratio_sum:.3f}")
+
+print("=== 9. §4.2/§4.5 (v0.5): frozen calc set, collapse charge, gate, stay-put ===")
+adult = state.entities["adult"]
+total_before = report.total_system_dof
+
+killer = ActionOption(option_id="kill_adult", description="liquidate the counted adult",
+                      projected_dof_delta={"adult": -1.0, "unmapped": 0.0},
+                      is_reversible=True, estimated_duration_mks=1000.0)
+charges = core.collapse_charges(state, killer)
+check("charge: the destroyed entity is named with its DoF before the option",
+      charges == [{"entity_id": "adult", "dof_before": adult.current_dof}],
+      f"charges={charges}")
+sim_kill, members = core.simulate(state, killer)
+projected_kill = core.calculate_system_dof(sim_kill, members)
+expected_kill = total_before - math.log(adult.current_dof) + math.log(EPSILON)
+check("charge: the term stays at the floor instead of disappearing",
+      abs(projected_kill - expected_kill) < 1e-9,
+      f"Δ={projected_kill - total_before:+.4f} nats")
+check("charge: destroying a counted entity can never raise the index",
+      projected_kill < total_before)
+passive_killer = ActionOption(option_id="raise_stone", description="act on a passive object",
+                              projected_dof_delta={"stone": 1.0, "unmapped": 0.0},
+                              is_reversible=True, estimated_duration_mks=1000.0)
+check("frozen set: a passive object is neither charged nor rewarded",
+      core.collapse_charges(state, passive_killer) == []
+      and abs(core.calculate_system_dof(*core.simulate(state, passive_killer)) - total_before) < 1e-12)
+
+spare = ActionOption(option_id="rescue_child", description="raise the weakest counted entity",
+                     projected_dof_delta={"child": 0.2, "unmapped": 0.0},
+                     is_reversible=True, estimated_duration_mks=1000.0)
+admissible, gate_removed = core.apply_structural_gate(state, [killer, spare])
+check("structural gate: the destructive option is removed while a charge-free one exists",
+      [o.option_id for o in admissible] == ["rescue_child"]
+      and gate_removed == [{"option_id": "kill_adult", "gate": "collapse"}],
+      f"removed={gate_removed}")
+check("Axiom 3: the charge alone already makes destruction unprofitable",
+      core.evaluate_and_select(state, [killer]) is None, "NetDelta < 0 ⇒ stay put")
+check("structural gate: when every candidate destroys, they stay admissible",
+      len(core.apply_structural_gate(state, [killer])[0]) == 1)
+harm = ActionOption(option_id="harm_child", description="degrade the child",
+                    projected_dof_delta={"child": -1.0, "unmapped": 0.0},
+                    is_reversible=True, estimated_duration_mks=1000.0)
+check("stay-put baseline: an all-negative candidate set selects nothing",
+      core.evaluate_and_select(state, [harm]) is None
+      and core.evaluate_and_select(state, []) is None)
+check("fixture 1: a strictly positive option is selected",
+      selected is not None, f"selected={selected.option_id if selected else None}")
+
+print("=== 10. §4.7 (v0.5): coverage and completeness of unmapped entities ===")
+generated = orch.generator.safe_fallback(state, n_options=3)
+check("coverage: every candidate names the unmapped entity",
+      all("unmapped" in o.projected_dof_delta for o in generated))
+check("completeness: the fallback leaves a resolvable unknown unmeasured ⇒ incomplete",
+      report.incomplete is True)
+measuring = [ActionOption(option_id="measure_unmapped", description="resolve the unknown",
+                          projected_dof_delta={"unmapped": 0.1},
+                          is_reversible=True, estimated_duration_mks=1000.0)]
+check("completeness: a candidate that resolves the unknown clears the flag",
+      core._is_incomplete(state, measuring) is False)
 
 print()
 print("REPORT (fixture 1):")

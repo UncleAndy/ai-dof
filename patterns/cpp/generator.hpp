@@ -14,14 +14,24 @@ public:
 
     std::vector<ActionOption> safe_fallback(const SystemStateMatrix& state, int n_options) const {
         std::vector<ActionOption> opts;
+        // The target must be a subject of the decision: an entity at a known zero is
+        // outside calc (§4.2), so raising it would not move the index.
         std::vector<const EntityState*> candidates;
         for (const auto& kv : state.entities) {
-            if (!kv.second.is_collapse_source) candidates.push_back(&kv.second);
+            const EntityState& e = kv.second;
+            if (!e.is_collapse_source && (e.current_dof > 0.0 || !e.dof_known)) {
+                candidates.push_back(&e);
+            }
         }
         int n = (n_options > 0) ? n_options : 1;
 
         for (int i = 0; i < n; ++i) {
+            // §4.7 coverage: every option states what it does with an unmapped entity —
+            // an explicit "unchanged" is written as 0.0, never omitted.
             std::unordered_map<std::string, double> delta;
+            for (const auto& kv : state.entities) {
+                if (!kv.second.dof_known) delta[kv.first] = 0.0;
+            }
             if (!candidates.empty()) {
                 const EntityState* target = candidates[0];
                 for (size_t j = 1; j < candidates.size(); ++j) {

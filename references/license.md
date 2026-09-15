@@ -17,8 +17,9 @@ The full legal code of the CC BY-SA 4.0 license can be found at: https://creativ
 ---
 
 ## Special Provision: Proof of Implementation (PoI)
-As a condition of using the DOF-Core skill, any entity (human, AI, or robotic system) implementing this framework must adhere to the **Transparency Requirement**.
 
-The implementation is considered "Compliant" only if the system can provide a verifiable trace of its Decision Calculus. This means providing the specific values of DoF for each entity involved and the resulting non-linear sum used to justify a state transition.
+The CC BY-SA 4.0 licence above governs **copyright** in this material: you may share and adapt it under the stated conditions, and nothing in this section narrows those rights. The PoI requirement is a **separate condition of use** — a covenant, not an added restriction on the licence.
 
-Systems that conceal these calculations while claiming to follow DOF-Core are in violation of the spirit of the "ShareAlike" clause, as they are privatizing the reasoning process of an open standard.
+As a condition of *representing a system as DOF-Core compliant*, that system must be able to produce a verifiable trace of its Decision Calculus: the specific values of DoF for each entity involved, and the resulting non-linear sum used to justify a state transition (in the current revision, the audit report of `DOF-SPEC` §6, including the declaration reference `psi`).
+
+A system that conceals these calculations while claiming DOF-Core conformance is misrepresenting its own compliance: the *claim* fails, not the deployment, and no licence over the text is breached either way. Where DOF-Core is offered as a service, the operator is free to keep internal workings private — it simply may not assert conformance without being able to show the ledger on request.

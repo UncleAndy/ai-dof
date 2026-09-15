@@ -14,19 +14,20 @@ The system is divided into three isolated contours with a unidirectional data fl
 2. **Synthesis Layer (The Generator):**
    - **Task:** Receives the graph. Generates a set of hypothetical strategies (3–5 distinct paths). It is forbidden from direct actuator control.
 3. **Validation Layer (Calculus Core):**
-   - **Task:** Accepts plans from the Generator. Runs a simulation for each. Filters them through the non-linear formula $\sum \ln(\text{DoF})$. Blocks any path with a $-\infty$ penalty.
+   - **Task:** Accepts plans from the Generator. Runs a simulation for each. Filters them through the non-linear formula $\sum \ln(\text{DoF})$. A path that drives a *counted* entity to a known zero carries a **collapse charge** and is **removed from the candidate set** while any charge-free alternative exists (structural admissibility, `DOF-SPEC` §4.2/§4.5); in the audit a collapse shows as the finite floor $\ln \varepsilon$, never as a number a gain elsewhere can buy back.
 
 ### Pattern 2: Reactive Circuit with Interruption (Time-Bounded Interrupter)
 Prevents "Analysis Paralysis" by linking compute cycles to the physical time remaining before collapse ($\tau$).
 
-- **If $\tau \ge 5$ seconds:** **Deep Diversification**. The LLM layer is activated to search for hidden alternatives.
-- **If $\tau < 5$ seconds:** **Fast Pass**. The Generator is bypassed. The system switches to hard-coded, deterministic fallback scenarios (Minimax Bounds) to preserve the system structure.
+- **If $\tau \ge 5000000.0$ µs (5 seconds):** **Deep Diversification**. The LLM layer is activated to search for hidden alternatives (3–5 distinct options).
+- **If $\tau < 5000000.0$ µs (5 seconds):** **Fast Pass**. The Generator is bypassed. The system switches to the single hard-coded, deterministic fallback option (Minimax Bounds) to preserve the system structure.
 
 ### Pattern 3: Calculus Evaluator Pipe
 A deterministic implementation (Python/Rust/C++) of the evaluation core.
 - **Logic:** Calculates the aggregate system DoF.
 - **Selection:** $\text{Net Delta} = \text{Total System DoF Evaluation Index}_{\text{projected}} - \text{Total System DoF Evaluation Index}_{\text{current}} - \Delta T$.
 - **Constraint:** Irreversible actions receive a structural penalty (e.g., $-0.5$).
+- **Baseline:** doing nothing is the reference — it costs no $\Delta T$ and has $\text{Net Delta} = 0$ by definition. An option is selected only if its $\text{Net Delta}$ is **strictly positive**; otherwise the system stays put and the audit records that choice.
 
 ### Reference Implementation (Code Files)
 The `patterns/` directory contains a runnable Python SDK implementing all layers:

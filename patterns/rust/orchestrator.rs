@@ -59,11 +59,17 @@ impl DofOrchestrator {
         self.mapper.poll_environment(raw)
     }
 
+    /// The deterministic candidate set for a state (§4.7 coverage is a Generator duty).
+    pub fn generator_fallback(&self, state: &SystemStateMatrix, n_options: usize) -> Vec<ActionOption> {
+        self.generator.safe_fallback(state, n_options)
+    }
+
     pub fn step(&mut self, raw: &HashMap<String, RawObservation>) -> Option<ActionOption> {
         let state = self.mapper.poll_environment(raw);
         let tau = state.global_time_to_collapse_mks;
         let options = self.generate(&state, tau);
         let (options, _removed) = Self::viability_gate(options, tau);
+        let (options, _removed_structural) = self.core.apply_structural_gate(&state, &options);
         self.core.evaluate_and_select(&state, &options)
     }
 
@@ -92,14 +98,17 @@ impl DofOrchestrator {
         };
         let options = self.generate(state, state.global_time_to_collapse_mks);
         let (options, removed) = Self::viability_gate(options, state.global_time_to_collapse_mks);
-        let selected = self.core.evaluate_and_select(&state, &options);
+        let (options, removed_structural) = self.core.apply_structural_gate(state, &options);
+        let mut all_removed = removed;
+        all_removed.extend(removed_structural);
+        let selected = self.core.evaluate_and_select(state, &options);
         let report = self.core.report(
-            &state,
+            state,
             &options,
             &selected,
             mode,
             self.mapper.last_declaration.as_ref(),
-            removed,
+            all_removed,
         );
         (selected, report)
     }

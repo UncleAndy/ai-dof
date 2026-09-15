@@ -39,7 +39,7 @@ Lesen Sie `SKILL.md` für die Philosophie. Lesen Sie `DOF-SPEC.md`, wenn Sie ein
 2. **Messung** — jede Entität und ihren aktuellen DoF über `references/dof-assessment-toolkit.md` abbilden.
 3. **Berechnung** — `Total System DoF Evaluation Index = Σ ln(DoF)` über nicht-entropische Entitäten berechnen.
 4. **Stabilisierung** — die Context-Switch-Entropie (ΔT) abziehen, um unnötigen Prozesswechsel zu bestrafen.
-5. **Aktion** — die Option mit dem höchsten Net Delta wählen; liegt die Zeit bis zum Kollaps (τ) unter 5 s, auf **Fast Pass** (deterministischer Fallback) umschalten, um Analyse-Paralyse zu vermeiden.
+5. **Aktion** — die Option mit dem höchsten Net Delta wählen, aber liegt die Zeit bis zum Kollaps (τ) unter 5.000.000 µs (5 s), auf **Fast Pass** (deterministischer Fallback) umschalten, um Analyse-Paralyse zu vermeiden. Gehandelt wird nur bei strikt positivem Net Delta; sonst bleibt das System stehen.
 
 Eine konforme Implementierung MUSS in der Lage sein, ein `report()`-Audit jeder Entscheidung auszugeben (Beitrag pro Entität, Systemsummen, Bewertung pro Option). Stille Berechnung ist nicht konform.
 

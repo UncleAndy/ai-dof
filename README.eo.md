@@ -39,7 +39,7 @@ Legu `SKILL.md` por la filozofio. Legu `DOF-SPEC.md` se vi konstruas konforman r
 2. **Mezurado** — mapigi ĉiun enton kaj ĝian nunan DoF per `references/dof-assessment-toolkit.md`.
 3. **Kalkulo** — kalkuli `Total System DoF Evaluation Index = Σ ln(DoF)` super ne-entropiaj entoj.
 4. **Stabiligo** — subtrahi la Entropion de Kuntekst-Ŝanĝo (ΔT) por puni nedeziratajn proces-ŝanĝojn.
-5. **Ago** — elekti la opcion kun la plej alta Net Delta; se la tempo ĝis kolapso (τ) estas sub 5 s, ŝalti al **Fast Pass** (determinisma rezervo) por eviti Analizan Paralizon.
+5. **Ago** — elekti la opcion kun la plej alta Net Delta; se la tempo ĝis kolapso (τ) estas sub 5 000 000 µs (5 s), ŝalti al **Fast Pass** (determinisma rezervo) por eviti Analizan Paralizon. Oni agas nur je strikte pozitiva Net Delta; alikaze la sistemo restas surloke.
 
 Konforma realigo DEVAS povi eligi `report()`-aŭditon de ĉiu decido (kontribuo po ento, sistemaj totaloj, taksado po opcio). Silenta kalkulo ne konformas.
 

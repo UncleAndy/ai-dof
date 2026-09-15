@@ -2,17 +2,19 @@
 
 Mirrors the normative DOF-SPEC: pure Nash evaluation index (sum of ln(DoF)),
 the `calc` calculation set, Collapse-Source isolation, Delta-T-aware selection,
-and the Proof-of-Implementation audit report (DOF-SPEC §6).
+the collapse charge (§4.2) with structural admissibility (§4.5), and the
+Proof-of-Implementation audit report (DOF-SPEC §6).
 
 Structural expression of the skill's axioms: Axiom 1 (maximize the total future
 DoF of the system AND its constituent entities); Axiom 3 (never trade one
-entity's collapse for another's gain); Axiom 5 (prefer reversible actions; never
-assume unknown possibilities have zero DoF — a node with dof_known=False is
-never excluded as a hopeless zero).
+entity's collapse for another's gain — enforced structurally by the collapse
+charge and the admissibility filter, because the ε-floor is finite); Axiom 5
+(prefer reversible actions; never assume unknown possibilities have zero DoF —
+a node with dof_known=False is never excluded as a hopeless zero).
 """
 
 import math
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Set, Tuple
 from pydantic import BaseModel, Field
 
 from measurement import EntityMeasurement, MeasurementDeclaration
@@ -60,59 +62,64 @@ class DofReport(BaseModel):
     global_time_to_collapse_mks: float
     mode: str
     options: List[Dict[str, object]]
-    # §6.2: the ruler that produced the numbers, and the removals that happened
-    # before evaluation. A removal is a decision and must be visible.
+    # §6.2: the ruler that produced the numbers, the removals that happened
+    # before evaluation, and whether a resolvable unknown was left unmeasured.
+    # A removal is a decision and must be visible.
     psi_id: Optional[str] = None
     psi_digest: Optional[str] = None
     declaration: Optional[str] = None
     removed_options: List[Dict[str, str]] = []
+    incomplete: bool = False
 
 
 class DOFCalculusCore:
     def __init__(self, epsilon: float = 1e-6):
-        self.epsilon = epsilon  # Protection against ln(0)
+        self.epsilon = epsilon  # Protection against ln(0) — a numerics device (§4.1)
 
-    def _is_included(self, entity: EntityState, options) -> bool:
+    def _is_included(self, entity: EntityState) -> bool:
         """Whether an entity belongs to the calculation set `calc` (DOF-SPEC §4.2).
 
-        Excluded if it is a collapse source, OR if its DoF is a **known** zero and
-        no available option can raise it (a node with no recovery path). A node at
-        DoF = 0 that *can* be revived stays in the set. A node with an unknown DoF
-        (dof_known == False) is never excluded (Axiom 5).
+        Excluded if it is a collapse source, or if its DoF is a **known** zero
+        (no recovery path is asserted for it). A node with an unknown DoF
+        (`dof_known == False`) is never excluded (Axiom 5).
+
+        The witness of unrecoverability MUST NOT be the Generator's candidate
+        set (§4.2): what a poor option list fails to propose says nothing about
+        the world, so `calc` is decided from the entity's own state only.
         """
         if entity.is_collapse_source:
             return False
         if entity.current_dof > 0.0:
             return True
-        # current_dof <= 0: unknown DoF is never treated as hopeless-zero (Axiom 5)
-        if not entity.dof_known:
-            return True
-        # known zero: keep only if some option can revive it
-        if options:
-            for opt in options:
-                if opt.projected_dof_delta.get(entity.entity_id, 0.0) > 0.0:
-                    return True
-        return False
+        return not entity.dof_known
 
-    def calculate_system_dof(self, state: SystemStateMatrix, options=None) -> float:
-        """Evaluation index: pure Nash product (sum of ln(DoF)) over the calc set.
+    def _coerce_dof(self, value: float) -> float:
+        return max(0.0, min(1.0, value))
 
-        Values are negative; only their ordering matters. See DOF-SPEC §4.1.
+    def calc_members(self, state: SystemStateMatrix) -> Set[str]:
+        """§4.2: the calculation set `calc(S)`, frozen for the whole cycle.
+
+        Computed once, on `S`, and reused for every simulated state: the same
+        entities are summed in `S` and in `S'`, so a term cannot appear or
+        disappear between the two sides of `NetDelta`.
         """
-        total_score = 0.0
-        for entity in state.entities.values():
-            if not self._is_included(entity, options):
-                continue
-            dof_value = max(entity.current_dof, self.epsilon)
-            total_score += math.log(dof_value)
-        return total_score
+        return {e.entity_id for e in state.entities.values() if self._is_included(e)}
 
-    def _simulate(self, current_state: SystemStateMatrix, option: ActionOption) -> SystemStateMatrix:
-        """Apply an option's projected deltas to produce a simulated state."""
+    def simulate(self, current_state: SystemStateMatrix, option: ActionOption
+                 ) -> Tuple[SystemStateMatrix, Set[str]]:
+        """Apply an option's projected deltas to produce a simulated state.
+
+        Returns the simulated state plus the **frozen** member set of `calc(S)`:
+        everything counted in `S` stays counted in `S'` (§4.2), so destroying a
+        counted entity cannot raise the index by removing a negative term, while
+        an entity outside `calc(S)` stays outside it — acting on something that
+        is not a subject of the decision is neither rewarded nor punished.
+        """
+        members = self.calc_members(current_state)
         simulated_entities: Dict[str, EntityState] = {}
         for e_id, e_state in current_state.entities.items():
-            new_dof = e_state.current_dof + option.projected_dof_delta.get(e_id, 0.0)
-            new_dof = max(0.0, min(1.0, new_dof))  # Clamp within [0.0, 1.0]
+            new_dof = self._coerce_dof(
+                e_state.current_dof + option.projected_dof_delta.get(e_id, 0.0))
             simulated_entities[e_id] = EntityState(
                 entity_id=e_id,
                 is_autonomous=e_state.is_autonomous,
@@ -122,35 +129,116 @@ class DOFCalculusCore:
                 dof_known=e_state.dof_known,
                 time_to_collapse_mks=e_state.time_to_collapse_mks,
             )
-        return SystemStateMatrix(
+        simulated = SystemStateMatrix(
             global_time_to_collapse_mks=current_state.global_time_to_collapse_mks,
             context_switch_cost=current_state.context_switch_cost,
             entities=simulated_entities,
+            psi=current_state.psi,
         )
+        return simulated, members
+
+    def collapse_charges(self, current_state: SystemStateMatrix,
+                         option: ActionOption) -> List[Dict[str, object]]:
+        """§4.2: counted entities that this option drives to a known zero.
+
+        The charge depends on neither the Generator's candidate set nor the
+        victim's post-collapse prospects — only on what was counted in `S` and
+        what the option did to it.
+        """
+        charges: List[Dict[str, object]] = []
+        for e_id in sorted(self.calc_members(current_state)):
+            e_state = current_state.entities[e_id]
+            if not e_state.dof_known:
+                continue  # unknown DoF is never a collapse (§4.2)
+            new_dof = self._coerce_dof(
+                e_state.current_dof + option.projected_dof_delta.get(e_id, 0.0))
+            if new_dof == 0.0:
+                charges.append({"entity_id": e_id, "dof_before": e_state.current_dof})
+        return charges
+
+    def apply_structural_gate(self, current_state: SystemStateMatrix,
+                              options: List[ActionOption]
+                              ) -> Tuple[List[ActionOption], List[Dict[str, str]]]:
+        """§4.5: an option that destroys a counted entity is inadmissible while
+        a charge-free candidate exists. Every removal is recorded (§6.2)."""
+        if not options:
+            return [], []
+        charged = [(o, self.collapse_charges(current_state, o)) for o in options]
+        if any(not charges for _, charges in charged):
+            admissible = [o for o, charges in charged if not charges]
+            removed = [{"option_id": o.option_id, "gate": "collapse"}
+                       for o, charges in charged if charges]
+            return admissible, removed
+        # No alternative exists: Axiom 3 still forbids preferring destruction,
+        # but with every candidate destructive the ladder decides (rung 1).
+        return [o for o, _ in charged], []
+
+    def calculate_system_dof(self, state: SystemStateMatrix,
+                             members: Optional[Set[str]] = None) -> float:
+        """Evaluation index: pure Nash product (sum of ln(DoF)) over the calc set.
+
+        Values are negative; only their ordering matters (DOF-SPEC §4.1). The
+        `members` set is the frozen `calc(S)` of §4.2: when a simulated state is
+        scored, the same entities are summed, so a counted entity driven to a
+        known zero contributes the floor `ln ε` instead of silently vanishing.
+        """
+        if members is None:
+            members = self.calc_members(state)
+        total_score = 0.0
+        for e_id in members:
+            entity = state.entities.get(e_id)
+            if entity is None:
+                continue
+            total_score += math.log(max(entity.current_dof, self.epsilon))
+        return total_score
 
     def _net_delta(self, current_state: SystemStateMatrix, option: ActionOption,
                    projected_dof: float, current_dof: float) -> float:
         net = projected_dof - current_dof - current_state.context_switch_cost
         if not option.is_reversible:
-            net -= 0.5  # Rigidity coefficient for irreversible actions (Axiom 5)
+            net -= 0.5  # Rigidity coefficient for irreversible actions (§4.4)
         return net
 
     def evaluate_and_select(self, current_state: SystemStateMatrix,
                             options: List[ActionOption]) -> Optional[ActionOption]:
-        """Selection pattern with context-switch penalty (ΔT)."""
+        """Selection: strictly positive NetDelta over the `stay put` baseline
+        (NetDelta = 0 by definition), rung 1 of the ladder on ties (§4.5)."""
         if not options:
             return None
-        current_system_dof = self.calculate_system_dof(current_state, options)
-        best_option = None
-        max_net_delta = -float('inf')
+        current_system_dof = self.calculate_system_dof(current_state)
+        best: Optional[ActionOption] = None
+        best_key: Optional[Tuple[float, int, str]] = None
         for option in options:
-            simulated_state = self._simulate(current_state, option)
-            projected_dof = self.calculate_system_dof(simulated_state, options)
+            simulated, members = self.simulate(current_state, option)
+            projected_dof = self.calculate_system_dof(simulated, members)
             net_delta = self._net_delta(current_state, option, projected_dof, current_system_dof)
-            if net_delta > max_net_delta:
-                max_net_delta = net_delta
-                best_option = option
-        return best_option
+            if net_delta <= 0.0:
+                continue  # §4.5: staying put wins; acting would degrade the index
+            key = (-net_delta, len(self.collapse_charges(current_state, option)),
+                   option.option_id)
+            if best_key is None or key < best_key:
+                best_key, best = key, option
+        return best
+
+    def _is_incomplete(self, state: SystemStateMatrix,
+                       options: List[ActionOption]) -> bool:
+        """§4.7: an unmapped entity that no candidate even tries to resolve,
+        while a measurement window (`t* > 0`) is still open, makes the decision
+        incomplete — the unknown was invisible, not measured."""
+        unknowns = [e.entity_id for e in state.entities.values() if not e.dof_known]
+        if not unknowns:
+            return False
+        durations = [o.estimated_duration_mks for o in options if o.estimated_duration_mks > 0.0]
+        cheapest_measurement = min(durations) if durations else None
+        for e_id in unknowns:
+            touched = any(o.projected_dof_delta.get(e_id, 0.0) != 0.0 for o in options)
+            if touched:
+                continue
+            if cheapest_measurement is None:
+                continue  # no procedure available at all: nothing to be incomplete about
+            if state.global_time_to_collapse_mks - cheapest_measurement > 0.0:
+                return True
+        return False
 
     def report(self, current_state: SystemStateMatrix, options: List[ActionOption],
                selected: Optional[ActionOption], mode: str,
@@ -159,7 +247,7 @@ class DOFCalculusCore:
         """Transparent audit (DOF-SPEC §6). Required by the license (PoI)."""
         entity_rows: List[Dict[str, object]] = []
         for e_id, ent in current_state.entities.items():
-            included = self._is_included(ent, options)
+            included = self._is_included(ent)
             contribution = math.log(max(ent.current_dof, self.epsilon)) if included else 0.0
             row: Dict[str, object] = {
                 "entity_id": e_id,
@@ -175,11 +263,11 @@ class DOFCalculusCore:
             row["binding_lens"] = m.binding_lens if m else None
             row["floored"] = m.floored if m else False
             entity_rows.append(row)
-        total = self.calculate_system_dof(current_state, options)
+        total = self.calculate_system_dof(current_state)
         option_rows: List[Dict[str, object]] = []
         for option in options:
-            simulated_state = self._simulate(current_state, option)
-            projected_dof = self.calculate_system_dof(simulated_state, options)
+            simulated, members = self.simulate(current_state, option)
+            projected_dof = self.calculate_system_dof(simulated, members)
             net_delta = self._net_delta(current_state, option, projected_dof, total)
             is_selected = (selected is not None and option.option_id == selected.option_id)
             option_rows.append({
@@ -189,6 +277,8 @@ class DOFCalculusCore:
                 "net_delta": net_delta,
                 "selected": is_selected,
                 "estimated_duration_mks": option.estimated_duration_mks,
+                # §6.3: every collapse this option causes, as an auditable line
+                "collapse_charges": self.collapse_charges(current_state, option),
             })
         return DofReport(
             entities=entity_rows,
@@ -201,4 +291,5 @@ class DOFCalculusCore:
             psi_digest=(declaration.digest() if declaration else (current_state.psi.digest if current_state.psi else None)),
             declaration=(declaration.canonical_text() if declaration else None),
             removed_options=removed_options or [],
+            incomplete=self._is_incomplete(current_state, options),
         )

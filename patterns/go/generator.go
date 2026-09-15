@@ -15,9 +15,11 @@ func (g *Generator) Synthesize(state *SystemStateMatrix, nOptions int) []*Action
 
 func (g *Generator) SafeFallback(state *SystemStateMatrix, nOptions int) []*ActionOption {
 	var opts []*ActionOption
+	// The target must be a subject of the decision: an entity at a known zero is
+	// outside calc (§4.2), so raising it would not move the index.
 	var candidates []*EntityState
 	for _, e := range state.Entities {
-		if !e.IsCollapseSource {
+		if !e.IsCollapseSource && (e.CurrentDoF > 0.0 || !e.DoFKnown) {
 			candidates = append(candidates, e)
 		}
 	}
@@ -27,7 +29,14 @@ func (g *Generator) SafeFallback(state *SystemStateMatrix, nOptions int) []*Acti
 	}
 
 	for i := 0; i < n; i++ {
+		// §4.7 coverage: every option states what it does with an unmapped entity —
+		// an explicit "unchanged" is written as 0.0, never omitted.
 		delta := make(map[string]float64)
+		for eid, e := range state.Entities {
+			if !e.DoFKnown {
+				delta[eid] = 0.0
+			}
+		}
 		if len(candidates) > 0 {
 			target := candidates[0]
 			for _, c := range candidates[1:] {

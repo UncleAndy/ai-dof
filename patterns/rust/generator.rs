@@ -17,15 +17,24 @@ impl Generator {
 
     pub fn safe_fallback(&self, state: &SystemStateMatrix, n_options: usize) -> Vec<ActionOption> {
         let mut opts: Vec<ActionOption> = Vec::new();
+        // The target must be a subject of the decision: an entity at a known zero is
+        // outside calc (§4.2), so raising it would not move the index.
         let candidates: Vec<&EntityState> = state
             .entities
             .values()
-            .filter(|e| !e.is_collapse_source)
+            .filter(|e| !e.is_collapse_source && (e.current_dof > 0.0 || !e.dof_known))
             .collect();
         let n = if n_options > 0 { n_options } else { 1 };
 
         for i in 0..n {
-            let mut delta = HashMap::new();
+            // §4.7 coverage: every option states what it does with an unmapped entity —
+            // an explicit "unchanged" is written as 0.0, never omitted.
+            let mut delta: HashMap<String, f64> = state
+                .entities
+                .values()
+                .filter(|e| !e.dof_known)
+                .map(|e| (e.entity_id.clone(), 0.0))
+                .collect();
             if !candidates.is_empty() {
                 let target = candidates
                     .iter()

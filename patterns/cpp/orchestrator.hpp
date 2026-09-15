@@ -61,7 +61,8 @@ public:
         SystemStateMatrix state = mapper_.poll_environment(raw);
         double tau = state.global_time_to_collapse_mks;
         auto gated = viability_gate(generate(state, tau), tau);
-        return core_.evaluate_and_select(state, gated.first);
+        auto structural = core_.apply_structural_gate(state, gated.first);
+        return core_.evaluate_and_select(state, structural.first);
     }
 
     // Like step(), but also returns the Proof-of-Implementation audit.
@@ -72,9 +73,12 @@ public:
         double tau = state.global_time_to_collapse_mks;
         std::string mode = (tau < fast_pass_threshold) ? "FAST_PASS" : "DEEP_DIVERSIFICATION";
         auto gated = viability_gate(generate(state, tau), tau);
-        auto selected = core_.evaluate_and_select(state, gated.first);
-        DofReport rep = core_.report(state, gated.first, selected, mode,
-                                     mapper_.last_declaration, gated.second);
+        auto structural = core_.apply_structural_gate(state, gated.first);
+        auto selected = core_.evaluate_and_select(state, structural.first);
+        std::vector<RemovedOption> all_removed = gated.second;
+        all_removed.insert(all_removed.end(), structural.second.begin(), structural.second.end());
+        DofReport rep = core_.report(state, structural.first, selected, mode,
+                                     mapper_.last_declaration, all_removed);
         return {selected, rep};
     }
 };

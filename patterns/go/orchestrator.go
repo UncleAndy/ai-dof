@@ -45,6 +45,7 @@ func (o *DOFOrchestrator) Step(raw map[string]*RawObservation) *ActionOption {
 	state := o.mapper.PollEnvironment(raw)
 	tau := state.GlobalTimeToCollapseMks
 	options, _ := applyViabilityGate(o.generate(state, tau), tau)
+	options, _ = o.core.ApplyStructuralGate(state, options)
 	return o.core.EvaluateAndSelect(state, options)
 }
 
@@ -57,7 +58,8 @@ func (o *DOFOrchestrator) StepWithReport(raw map[string]*RawObservation) (*Actio
 		mode = "FAST_PASS"
 	}
 	options, removed := applyViabilityGate(o.generate(state, tau), tau)
+	options, removedStructural := o.core.ApplyStructuralGate(state, options)
 	selected := o.core.EvaluateAndSelect(state, options)
-	report := o.core.Report(state, options, selected, mode, o.mapper.LastDeclaration, removed)
+	report := o.core.Report(state, options, selected, mode, o.mapper.LastDeclaration, append(removed, removedStructural...))
 	return selected, report
 }

@@ -51,6 +51,7 @@ class DOFOrchestrator:
         state: SystemStateMatrix = self.mapper.poll_environment(raw_observations)
         tau = state.global_time_to_collapse_mks
         options, _removed = self._apply_viability_gate(self._generate(state, tau), tau)
+        options, _removed_structural = self.core.apply_structural_gate(state, options)
         return self.core.evaluate_and_select(state, options)
 
     def step_with_report(self, raw_observations: dict) -> Tuple[Optional[ActionOption], DofReport]:
@@ -60,8 +61,9 @@ class DOFOrchestrator:
         mode = "FAST_PASS" if tau < self.FAST_PASS_THRESHOLD else "DEEP_DIVERSIFICATION"
 
         options, removed = self._apply_viability_gate(self._generate(state, tau), tau)
+        options, removed_structural = self.core.apply_structural_gate(state, options)
         selected = self.core.evaluate_and_select(state, options)
         report = self.core.report(state, options, selected, mode,
                                   declaration=self.mapper.last_declaration,
-                                  removed_options=removed)
+                                  removed_options=removed + removed_structural)
         return selected, report

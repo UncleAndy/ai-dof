@@ -41,7 +41,7 @@ Read `SKILL.md` for the philosophy. Read `DOF-SPEC.md` if you are building a con
 2. **Measurement** — map every entity and its current DoF via `references/dof-assessment-toolkit.md`.
 3. **Calculation** — compute the `Total System DoF Evaluation Index = Σ ln(DoF)` over the calculation set `calc`: non-collapse-source entities whose DoF is positive, revivable, or unknown (unknown DoF is never treated as zero).
 4. **Stabilization** — subtract the Context-Switch Entropy (ΔT) to penalize needless process switching.
-5. **Action** — pick the option with the highest Net Delta, but if time-to-collapse (τ) is under 5 s, switch to **Fast Pass** (deterministic fallback) to avoid analysis paralysis.
+5. **Action** — pick the option with the highest Net Delta, but if time-to-collapse (τ) is under 5,000,000 µs (5 s), switch to **Fast Pass** (deterministic fallback) to avoid analysis paralysis. The system acts only on a strictly positive Net Delta; otherwise it stays put.
 
 A conforming implementation MUST be able to emit a `report()` audit of every decision (per-entity contribution, overall totals, per-option evaluation). Silent calculation is non-conforming.
 

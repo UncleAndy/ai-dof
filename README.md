@@ -28,6 +28,7 @@ DOF/
   patterns/
     PATTERNS.{md,ru,fr,de,es,eo}  ← engineering blueprint (multilingual)
     python/  rust/  go/  cpp/     ← minimal runnable illustrations (four ports of the same logic)
+    tools/verify_ports.sh         ← runs all four ports against one frozen digest (§7 conformance evidence)
   drafts/                       ← non-normative working notes (informative, NOT part of the standard)
 ```
 

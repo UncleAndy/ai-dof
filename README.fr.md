@@ -26,6 +26,7 @@ DOF/
   patterns/
     PATTERNS.{md,ru,fr,de,es,eo}  ← plan directeur d'ingénierie (multilingue)
     python/  rust/  go/  cpp/     ← illustrations minimales exécutables (quatre ports de la même logique)
+    tools/verify_ports.sh         ← exécute les quatre ports contre une empreinte figée (preuve du §7)
   drafts/                       ← notes de travail non normatives (informative, PAS le standard)
 ```
 

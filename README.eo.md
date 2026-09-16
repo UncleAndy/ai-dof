@@ -26,6 +26,7 @@ DOF/
   patterns/
     PATTERNS.{md,ru,fr,de,es,eo}  ← inĝeniera modelo (multlingva)
     python/  rust/  go/  cpp/     ← minimumaj ekzekuteblaj ilustraĵoj (kvar portoj de la sama logiko)
+    tools/verify_ports.sh         ← ruligas ĉiujn kvar portojn kontraŭ unu fiksita haketo (pruvo por §7)
   drafts/                       ← nenormaj labornotoj (informa, NE parto de la normo)
 ```
 

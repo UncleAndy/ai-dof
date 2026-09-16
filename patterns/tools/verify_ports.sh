@@ -1,12 +1,15 @@
 #!/usr/bin/env bash
 # Verify all four DOF-Core reference ports against one frozen digest.
 #
-# Usage:  bash tools/verify_ports.sh [REPO_DIR]     # defaults to this repo root
+# Usage:  bash patterns/tools/verify_ports.sh [REPO_DIR]   # defaults to this repo root
 #
 # This is the repo copy of the script that ships with the Hermes skill
 # `normative-standard-port` (see its Verification checklist). The only
 # difference is the default REPO_DIR: here it is the repository this script
-# lives in, so it can be run from anywhere.
+# lives in (two levels up from patterns/tools), so it can be run from anywhere.
+# It sits under patterns/ because it is port machinery: it hardcodes the port
+# directories, each harness filename and the toolchain of every language, so it
+# moves with the ports, not with the standard.
 #
 # Runs each port on the shared fixture, reports the number of `  OK` / `  FAIL`
 # lines per port and the declaration digest each one prints, and exits non-zero
@@ -27,7 +30,7 @@
 set -u
 
 SELF_DIR="$(cd "$(dirname "$0")" && pwd)"
-REPO="${1:-$(cd "$SELF_DIR/.." && pwd)}"
+REPO="${1:-$(cd "$SELF_DIR/../.." && pwd)}"
 OUT_DIR="$(mktemp -d)"
 status=0
 

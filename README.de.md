@@ -26,6 +26,7 @@ DOF/
   patterns/
     PATTERNS.{md,ru,fr,de,es,eo}  ← Ingenieur-Blaupause (mehrsprachig)
     python/  rust/  go/  cpp/     ← minimale ausführbare Illustrationen (vier Ports derselben Logik)
+    tools/verify_ports.sh         ← führt alle vier Ports gegen einen eingefrorenen Digest aus (Nachweis zu §7)
   drafts/                       ← nicht-normative Arbeitsnotizen (informativ, NICHT Teil der Norm)
 ```
 

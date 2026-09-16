@@ -10,6 +10,17 @@
 #include <vector>
 
 #include "orchestrator.hpp"
+#include "harness_v07.hpp"
+
+// Two harnesses live in this port and both stay runnable, because a release must
+// carry its own evidence and the previous release's:
+//
+//   ./dof_cpp v07     # the release's conformance suite (harness_v07.hpp), default
+//   ./dof_cpp v06     # the v0.6 harness (this file), historical evidence
+//   ./dof_cpp dump    # the canonical text and both frozen digests
+//
+// `v07` is the default so that any tool that builds and runs the port without
+// arguments exercises the current release.
 
 namespace {
 
@@ -113,7 +124,14 @@ std::unordered_map<std::string, RawObservation> with_deadline(
 
 }  // namespace
 
-int main() {
+// The v0.6 harness (historical evidence). It is kept runnable on purpose and now
+// shows three DOCUMENTED divergences that v0.7 makes deliberate (see
+// harness_v07.hpp section 13): the ruler digest moved, a known zero is no longer
+// excluded without an observation, and acting on a passive object is no longer
+// free without one. It is the historical record, not the release's conformance
+// suite — that is `run_harness_v07`.
+int run_harness_v06() {
+    g_failures.clear();
     DOFOrchestrator orch(0.05);
     SystemStateMatrix state = orch.measure(fixture());
     DOFCalculusCore core;
@@ -370,8 +388,10 @@ int main() {
               report.resources_before.at("energy") == 10.0);
     check("report: the deterministic fallback buys nothing, so the stock is unchanged",
           report.resources_after == report.resources_before);
-    DofReport rep_funded = core.report(state, {funded}, funded, "FAST_PASS",
-                                       std::nullopt, {}, &groups, &rates);
+    ReportInput in_funded;
+    in_funded.groups = &groups;
+    in_funded.rates = &rates;
+    DofReport rep_funded = core.report(state, {funded}, funded, "FAST_PASS", in_funded);
     check("report: buying a deficit debits the resource that actually paid",
           rep_funded.resources_after.at("credit") == 5.0 &&
               rep_funded.resources_after.at("energy") == 0.0);
@@ -379,8 +399,10 @@ int main() {
           rep_funded.options.size() == 1 &&
               rep_funded.options[0].conversion_applied.size() == 1 &&
               rep_funded.options[0].resource_consumption.at("child").at("energy") == -12.0);
-    DofReport rep_undeclared = core.report(state, {undeclared}, std::nullopt, "FAST_PASS",
-                                           std::nullopt, {}, &groups, &rates);
+    ReportInput in_undeclared;
+    in_undeclared.groups = &groups;
+    in_undeclared.rates = &rates;
+    DofReport rep_undeclared = core.report(state, {undeclared}, std::nullopt, "FAST_PASS", in_undeclared);
     check("report: an uncovered deficit is written down per option",
           rep_undeclared.options[0].resources_uncovered.at("fuel") == 1.0);
 
@@ -405,4 +427,13 @@ int main() {
         std::cout << "\nFAILED\n";
     }
     return g_failures.empty() ? 0 : 1;
+}
+
+int main(int argc, char** argv) {
+    const std::string which = (argc > 1) ? argv[1] : "v07";
+    if (which == "v07") return run_harness_v07();
+    if (which == "v06") return run_harness_v06();
+    if (which == "dump") return dump_reference();
+    std::cout << "unknown harness \"" << which << "\": expected v07 (default), v06 or dump\n";
+    return 2;
 }

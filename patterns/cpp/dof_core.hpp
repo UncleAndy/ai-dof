@@ -19,6 +19,7 @@
 #include <limits>
 #include <algorithm>
 #include "measurement.hpp"
+#include "world_graph.hpp"
 
 struct EntityState {
     std::string entity_id;
@@ -55,9 +56,61 @@ struct ActionOption {
     // production. `energy` MUST be present (as 0.0) for every entity named in
     // projected_dof_delta.
     std::unordered_map<std::string, std::unordered_map<std::string, double>> projected_resource_delta;
+    // §3.3/§4.4 (v0.7): the transitions this option CLOSES — the acts and means
+    // that cease to exist once it executes. `is_reversible` is DERIVED from this
+    // list (true exactly when it is empty) and is kept only as a reported field:
+    // a label that could be set to dodge the price is not a rule.
+    std::vector<dof::ClosedRef> closed;
+    std::string act_id;  // the graph act implementing this option
+};
+
+// The observation a cycle is decided over (§3.5, §4.9).
+//
+// Deliberately NOT a state field: the world graph is a Perception artifact
+// supplied to the cycle, exactly as the derived groups and the observed rates
+// are (§4.8). Without it every verdict is `undetermined`, which means no entity
+// at a known zero is excluded and no collapse-source label is honoured — the
+// fail-safe direction: nothing is proven, so nothing is removed.
+struct ObservationContext {
+    dof::WorldGraph world;
+    std::vector<std::string> means_class;
+    std::map<std::string, double> t_rec;
+    std::optional<double> counting_horizon_mks;
+    std::string observation_digest;
+
+    std::optional<double> horizon(const std::string& entity_id) const {
+        auto it = t_rec.find(entity_id);
+        if (it == t_rec.end()) return std::nullopt;
+        return it->second;
+    }
+    std::string verdict(const std::string& entity_id) const {
+        return world.verdict(entity_id, means_class, horizon(entity_id)).verdict;
+    }
+    int v_before(const std::string& entity_id) const {
+        return world.v_count(entity_id, means_class, counting_horizon_mks);
+    }
+    int v_after_closure(const std::string& entity_id,
+                        const std::vector<dof::ClosedRef>& closed) const {
+        if (closed.empty()) return v_before(entity_id);
+        return world.with_closed(closed).v_count(entity_id, means_class, counting_horizon_mks);
+    }
 };
 
 // Audit report rows and container (DOF-SPEC §6)
+// §6.1 (v0.7): the recoverability verdict, its witness, and the completeness
+// claim behind it. A `proven_unreachable` verdict without a witness is not a
+// verdict, so the report carries both — and names the observation, because "no
+// path" is only meaningful together with "and the observation was complete for
+// this entity".
+struct RecoverabilityRow {
+    std::string verdict;
+    std::vector<std::string> witness;
+    std::optional<double> horizon_mks;
+    std::string observation = "unobserved";
+    int admissible_seen = 0;
+    std::string reason;
+};
+
 struct EntityReportRow {
     std::string entity_id;
     bool is_collapse_source = false;
@@ -73,6 +126,8 @@ struct EntityReportRow {
     // reader can recompute (c_g, C_g) from the raw requirements.
     std::vector<std::pair<double, double>> blocks;
     std::optional<dof::DerivationInfo> derivation;
+    // §6.1 (v0.7): the recoverability verdict and its witness.
+    RecoverabilityRow recoverability;
 };
 
 // One entity a candidate drove from a counted state to a known zero (§4.2, §6.3):
@@ -107,6 +162,11 @@ struct OptionReportRow {
     std::unordered_map<std::string, std::unordered_map<std::string, double>> resource_consumption;
     std::vector<Conversion> conversion_applied;
     std::map<std::string, double> resources_uncovered;
+    // §4.8/§6.3 (v0.7): how much of the mandate the spend would have used, and
+    // what the closure decomposes into.
+    double mandate_exceeded = 0.0;
+    std::vector<dof::ClosedRef> closed;
+    std::map<std::string, double> closure_share;
 };
 
 // The result of §4.8's funding decision: what the option needs, what actually
@@ -119,6 +179,9 @@ struct FundingPlan {
     std::map<std::string, double> spend;
     std::vector<Conversion> conversions;
     std::map<std::string, double> uncovered;
+    // §4.8 (v0.7): the part of the spend above the mandate ceiling, in the group
+    // numeraire. It can only remove an option a larger balance would have paid for.
+    double mandate_exceeded = 0.0;
     double total_duration_mks = 0.0;
 };
 
@@ -147,6 +210,25 @@ struct DofReport {
     // only if the spend is written where the next cycle can see it (§4.8).
     std::map<std::string, double> resources_before;
     std::map<std::string, double> resources_after;
+    // §6.2 (v0.7): the identity of the observation a reported subgraph was taken
+    // from, and where the amounts a decision rests on came from — a measured
+    // balance or an asserted authority.
+    std::optional<std::string> observation_digest;
+    std::map<std::string, dof::MandateValue> means_provenance;
+};
+
+// What a report needs beyond the state, the candidates and the selection. It keeps
+// the report call site readable now that the report is where the release's reasons
+// are written down (§6).
+struct ReportInput {
+    std::optional<dof::MeasurementDeclaration> declaration;
+    std::vector<RemovedOption> removed;
+    const std::vector<std::vector<std::string>>* groups = nullptr;
+    const std::map<std::string, dof::Rate>* rates = nullptr;
+    const std::map<std::string, double>* weights = nullptr;
+    std::optional<double> cap;
+    const ObservationContext* ctx = nullptr;
+    std::map<std::string, dof::MandateValue> means_provenance;
 };
 
 class DOFCalculusCore {
@@ -155,25 +237,62 @@ public:
     DOFCalculusCore(double epsilon = 1e-6) : epsilon_(epsilon) {}
 
     // Whether an entity belongs to the calculation set `calc` (DOF-SPEC §4.2).
-    // Excluded if it is a collapse source, or if its DoF is a **known** zero (no
-    // recovery path is asserted for it). A node with unknown DoF (dof_known == false)
-    // is never excluded (Axiom 5).
+    // Excluded if it is a **witnessed** collapse source, or if its DoF is a known
+    // zero whose recoverability verdict is `proven_unreachable` (§4.2/§4.9). A
+    // node with unknown DoF is never excluded (Axiom 5), and neither is a node
+    // whose verdict is `reachable` or `undetermined` — incompleteness of an
+    // observation is never read as proof.
     //
-    // The witness of unrecoverability MUST NOT be the Generator's candidate set
-    // (§4.2): what a poor option list fails to propose says nothing about the world.
-    bool is_included(const EntityState& e) const {
-        if (e.is_collapse_source) return false;
+    // The witness of exclusion MUST NOT be the Generator's candidate set (§4.2),
+    // and a verdict is computed from the observation, never asserted.
+    bool is_included(const EntityState& e, const ObservationContext* ctx = nullptr,
+                     const SystemStateMatrix* state = nullptr) const {
+        if (e.is_collapse_source && label_witnessed(e, ctx, state)) return false;
+        return is_included_without_label(e, ctx);
+    }
+
+    // `calc` membership with the collapse-source label NOT honoured (§4.2). Used
+    // in two places, and it must be the same rule in both: deciding who is
+    // counted, and deciding whether a label has a witness. The witness question is
+    // "would this entity be counted if its own label were ignored" — asking it
+    // with the label already applied would be circular, and would make every
+    // label unfalsifiable.
+    bool is_included_without_label(const EntityState& e, const ObservationContext* ctx = nullptr) const {
         if (e.current_dof > 0.0) return true;
-        return !e.dof_known;
+        if (!e.dof_known) return true;
+        if (ctx == nullptr) return true;  // fail-safe: no observation, no proof
+        return ctx->verdict(e.entity_id) != "proven_unreachable";
+    }
+
+    // A label is honoured only with a machine-verifiable act (§4.2): an act
+    // performed by this entity that drives an entity which would otherwise be
+    // counted to a known zero.
+    bool label_witnessed(const EntityState& e, const ObservationContext* ctx,
+                         const SystemStateMatrix* state) const {
+        if (ctx == nullptr || state == nullptr) return false;
+        std::set<std::string> counted;
+        std::map<std::string, double> dof_before;
+        for (const auto& kv : state->entities) {
+            if (is_included_without_label(kv.second, ctx)) counted.insert(kv.first);
+            dof_before[kv.first] = kv.second.current_dof;
+        }
+        if (counted.count(e.entity_id) == 0) return false;
+        std::set<std::string> acts;
+        for (const auto& id : ctx->world.collapse_acts(counted, dof_before)) acts.insert(id);
+        for (const auto& a : ctx->world.acts) {
+            if (a.source == e.entity_id && acts.count(a.id) > 0) return true;
+        }
+        return false;
     }
 
     // calc(S), frozen for the whole cycle (§4.2): computed once, on S, and the same
     // entities are summed in S and in S', so a term cannot appear or disappear
     // between the two sides of NetDelta.
-    std::set<std::string> calc_members(const SystemStateMatrix& state) const {
+    std::set<std::string> calc_members(const SystemStateMatrix& state,
+                                       const ObservationContext* ctx = nullptr) const {
         std::set<std::string> members;
         for (const auto& kv : state.entities) {
-            if (is_included(kv.second)) members.insert(kv.first);
+            if (is_included(kv.second, ctx, &state)) members.insert(kv.first);
         }
         return members;
     }
@@ -182,10 +301,11 @@ public:
     // Values are negative; only their ordering matters. See DOF-SPEC §4.1.
     // Pass nullptr for `members` to use calc(state) itself.
     double calculate_system_dof(const SystemStateMatrix& state,
-                                const std::set<std::string>* members = nullptr) const {
+                                const std::set<std::string>* members = nullptr,
+                                const ObservationContext* ctx = nullptr) const {
         std::set<std::string> owned;
         if (members == nullptr) {
-            owned = calc_members(state);
+            owned = calc_members(state, ctx);
             members = &owned;
         }
         double total = 0.0;
@@ -197,23 +317,119 @@ public:
         return total;
     }
 
-    // Simulate an option's projected deltas into a new state (clamped to [0,1]) and
-    // return it with the **frozen** member set of calc(S) (§4.2): everything counted
-    // in S stays counted in S' — destroying a counted entity cannot raise the index by
-    // removing a negative term — while an entity outside calc(S) stays outside it, so
-    // acting on something that is not a subject of the decision is neither rewarded
-    // nor punished.
+    static double coerce_dof(double v) { return std::max(0.0, std::min(1.0, v)); }
+
+    // §4.3/§4.4: DoF recomputed from the counters after the option's closure. Only
+    // the Variety share moves, so the whole product moves by its ratio. A nullopt
+    // means the entity is not affected or its Variety lens was unmeasured.
+    std::optional<double> dof_after_closure(const EntityState& e, const ActionOption& option,
+                                            const ObservationContext* ctx) const {
+        if (!e.measurement || !e.measurement->variety_counters) return std::nullopt;
+        auto var_it = e.measurement->psi_by_lens.find("variety");
+        if (var_it == e.measurement->psi_by_lens.end() || !var_it->second) return std::nullopt;
+        const double v_env = e.measurement->variety_counters->count("V_env")
+                                 ? e.measurement->variety_counters->at("V_env")
+                                 : 0.0;
+        const double var_before = *var_it->second;
+        const int v_before = ctx->v_before(e.entity_id);
+        const int v_after = ctx->v_after_closure(e.entity_id, option.closed);
+        if (v_after == v_before) return std::nullopt;  // this entity is not affected
+        return coerce_dof(e.current_dof / var_before * dof::psi_var(static_cast<double>(v_after), v_env));
+    }
+
+    // The DoF this option would leave the entity with, closure included (§4.3).
+    // ONE definition, used by both `simulate` and `collapse_charges`: if the charge
+    // were computed from the raw delta while the index was computed from the
+    // closure-aware value, an option that destroys an entity BY CLOSING ITS
+    // TRANSITIONS would be scored as a collapse and charged as nothing — the
+    // structural gate of §4.5 would then pass exactly the option it exists to stop.
+    double projected_dof(const EntityState& e, const ActionOption& option,
+                         const ObservationContext* ctx) const {
+        double add = 0.0;
+        auto it = option.projected_dof_delta.find(e.entity_id);
+        if (it != option.projected_dof_delta.end()) add = it->second;
+        double nd = coerce_dof(e.current_dof + add);
+        if (ctx != nullptr && !option.closed.empty()) {
+            std::optional<double> recomputed = dof_after_closure(e, option, ctx);
+            if (recomputed) nd = *recomputed;
+        }
+        return nd;
+    }
+
+    // §4.4 guards: closing one's own execution path, or a false label with nothing
+    // closed. Returns an empty string when the option is conformant.
+    std::string closure_error(const ActionOption& option) const {
+        if (!option.closed.empty() && !option.act_id.empty()) {
+            for (const auto& ref : option.closed) {
+                if (ref.kind == "act" && ref.id == option.act_id) {
+                    return option.option_id + ": closes its own execution path (§4.4 guard 1)";
+                }
+            }
+        }
+        if (option.closed.empty() && !option.is_reversible) {
+            return option.option_id + ": is_reversible=false with an empty closure list (§4.4 guard 2)";
+        }
+        return "";
+    }
+
+    // §4.4: the reported flag is DERIVED — true exactly when nothing is closed.
+    static bool is_reversible(const ActionOption& option) { return option.closed.empty(); }
+
+    // §6.3: the per-entity decomposition of a closure's price. A DECOMPOSITION of
+    // the loss already inside `NetDelta` (§4.3/§4.4), never an extra charge.
+    std::map<std::string, double> closure_share(const SystemStateMatrix& state,
+                                                const ActionOption& option,
+                                                const ObservationContext* ctx) const {
+        std::map<std::string, double> out;
+        if (ctx == nullptr || option.closed.empty()) return out;
+        for (const auto& kv : state.entities) {
+            const EntityState& e = kv.second;
+            if (!e.measurement || !e.measurement->variety_counters) continue;
+            auto var_it = e.measurement->psi_by_lens.find("variety");
+            if (var_it == e.measurement->psi_by_lens.end() || !var_it->second) continue;
+            const double v_env = e.measurement->variety_counters->count("V_env")
+                                     ? e.measurement->variety_counters->at("V_env")
+                                     : 0.0;
+            const int v_after = ctx->v_after_closure(e.entity_id, option.closed);
+            const int v_before = ctx->v_before(e.entity_id);
+            if (v_after == v_before) continue;
+            const double after = std::max(dof::psi_var(static_cast<double>(v_after), v_env), epsilon_);
+            const double before = std::max(dof::psi_var(static_cast<double>(v_before), v_env), epsilon_);
+            out[e.entity_id] = dof::q6(std::log(after) - std::log(before));
+        }
+        return out;
+    }
+
+    // §6.1: the verdict, its witness and the completeness claim behind it.
+    RecoverabilityRow recoverability_row(const std::string& entity_id,
+                                         const ObservationContext* ctx) const {
+        RecoverabilityRow row;
+        if (ctx == nullptr) {
+            row.verdict = "undetermined";
+            row.observation = "unobserved";
+            row.reason = "no observation was supplied for this cycle";
+            return row;
+        }
+        dof::Verdict v = ctx->world.verdict(entity_id, ctx->means_class, ctx->horizon(entity_id));
+        row.verdict = v.verdict;
+        row.witness = v.witness;
+        row.horizon_mks = ctx->horizon(entity_id);
+        auto it = ctx->world.entities.find(entity_id);
+        row.observation = (it == ctx->world.entities.end()) ? "unobserved" : it->second.observation;
+        row.admissible_seen = v.admissible_seen;
+        row.reason = v.reason;
+        return row;
+    }
+
+    // Simulate an option's projected deltas into a new state and return it with the
+    // **frozen** member set of calc(S) (§4.2).
     std::pair<SystemStateMatrix, std::set<std::string>> simulate(
-        const SystemStateMatrix& current, const ActionOption& option) const {
-        std::set<std::string> members = calc_members(current);
+        const SystemStateMatrix& current, const ActionOption& option,
+        const ObservationContext* ctx = nullptr) const {
+        std::set<std::string> members = calc_members(current, ctx);
         SystemStateMatrix sim = current;
         for (auto& kv : sim.entities) {
-            const std::string& eid = kv.first;
-            EntityState& ent = kv.second;
-            double add = 0.0;
-            auto it = option.projected_dof_delta.find(eid);
-            if (it != option.projected_dof_delta.end()) add = it->second;
-            ent.current_dof = std::max(0.0, std::min(1.0, ent.current_dof + add));
+            kv.second.current_dof = projected_dof(kv.second, option, ctx);
         }
         return {sim, members};
     }
@@ -221,18 +437,22 @@ public:
     // §4.2: the counted entities a candidate drives to a known zero. The charge
     // depends on neither the Generator's candidate set nor the victim's prospects.
     std::vector<CollapseCharge> collapse_charges(const SystemStateMatrix& current,
-                                                 const ActionOption& option) const {
+                                                 const ActionOption& option,
+                                                 const ObservationContext* ctx = nullptr) const {
         std::vector<CollapseCharge> charges;
-        for (const auto& eid : calc_members(current)) {
+        for (const auto& eid : calc_members(current, ctx)) {
             auto it = current.entities.find(eid);
             if (it == current.entities.end()) continue;
             const EntityState& e = it->second;
-            if (!e.dof_known) continue; // unknown DoF is never a collapse (§4.2)
-            double add = 0.0;
-            auto dit = option.projected_dof_delta.find(eid);
-            if (dit != option.projected_dof_delta.end()) add = dit->second;
-            double nd = std::max(0.0, std::min(1.0, e.current_dof + add));
-            if (nd == 0.0) charges.push_back(CollapseCharge{eid, e.current_dof});
+            if (!e.dof_known) continue;  // unknown DoF is never a collapse (§4.2)
+            // The projected value is the closure-aware one (§4.3): an option can
+            // destroy a counted entity by closing its transitions while declaring
+            // no delta at all, and that is exactly the case §4.5 must catch.
+            const double nd = projected_dof(e, option, ctx);
+            // §4.2: a charge requires a *transition* into the zero, not a stay at
+            // it — charging an entity that was already at zero would make every
+            // option destructive in any state containing a recoverable zero.
+            if (nd == 0.0 && e.current_dof > 0.0) charges.push_back(CollapseCharge{eid, e.current_dof});
         }
         return charges;
     }
@@ -240,11 +460,12 @@ public:
     // §4.5: removes options that destroy a counted entity while a charge-free
     // candidate exists (Axiom 3). Every removal is recorded as gate = "collapse".
     std::pair<std::vector<ActionOption>, std::vector<RemovedOption>> apply_structural_gate(
-        const SystemStateMatrix& current, const std::vector<ActionOption>& options) const {
+        const SystemStateMatrix& current, const std::vector<ActionOption>& options,
+        const ObservationContext* ctx = nullptr) const {
         if (options.empty()) return {{}, {}};
         bool charge_free_exists = false;
         for (const auto& opt : options) {
-            if (collapse_charges(current, opt).empty()) {
+            if (collapse_charges(current, opt, ctx).empty()) {
                 charge_free_exists = true;
                 break;
             }
@@ -256,7 +477,7 @@ public:
         std::vector<ActionOption> admissible;
         std::vector<RemovedOption> removed;
         for (const auto& opt : options) {
-            if (collapse_charges(current, opt).empty()) {
+            if (collapse_charges(current, opt, ctx).empty()) {
                 admissible.push_back(opt);
             } else {
                 removed.push_back(RemovedOption{opt.option_id, "collapse"});
@@ -314,10 +535,19 @@ public:
     // insolvency.
     FundingPlan plan_funding(const SystemStateMatrix& state, const ActionOption& option,
                              const std::vector<std::vector<std::string>>* groups = nullptr,
-                             const std::map<std::string, dof::Rate>* rates = nullptr) const {
+                             const std::map<std::string, dof::Rate>* rates = nullptr,
+                             const std::map<std::string, double>* weights = nullptr,
+                             const std::optional<double>& cap = std::nullopt) const {
         FundingPlan plan;
         plan.need = requirement(option);
         plan.total_duration_mks = option.estimated_duration_mks;
+        // The numeraire weights: used to choose an offer canonically and to express
+        // the mandate ceiling in one unit.
+        auto weight_of = [weights](const std::string& r) {
+            if (weights == nullptr) return 1.0;
+            auto it = weights->find(r);
+            return it == weights->end() ? 1.0 : it->second;
+        };
 
         for (const auto& need_entry : plan.need) {
             const std::string& resource = need_entry.first;
@@ -328,34 +558,67 @@ public:
             remaining -= direct;
 
             if (rates != nullptr) {
+                // §4.8 (v0.7): the offer is chosen CANONICALLY — the cheapest in
+                // the group numeraire first, then the shorter exchange, then the
+                // key. Choosing by declaration order (or by resource name) would
+                // let a rename change what the report says happened, and two ports
+                // would describe the same world differently.
+                struct Offer {
+                    double cost;
+                    double duration;
+                    std::string key;
+                    std::string source;
+                    double amount_source;
+                    double rate;
+                };
+                std::vector<Offer> offers;
                 for (const auto& rate_entry : *rates) {
-                    if (remaining <= 0.0) break;
                     const std::string& key = rate_entry.first;
                     std::size_t arrow = key.find("->");
                     if (arrow == std::string::npos) continue;
                     const std::string source = key.substr(0, arrow);
                     const std::string target = key.substr(arrow + 2);
                     if (target != resource) continue;
-                    double rate = rate_entry.second.rate;
-                    double duration = rate_entry.second.duration_mks;
+                    const double rate = rate_entry.second.rate;
+                    const double duration = rate_entry.second.duration_mks;
                     if (rate <= 0.0 || !same_group(source, resource, groups)) continue;
-                    double amount_source = remaining / rate;
+                    const double amount_source = remaining / rate;
                     if (amount_source > std::max(0.0, means_of(state, source) - plan.spend[source])) {
                         continue;  // the price is not payable
                     }
                     if (plan.total_duration_mks + duration > state.global_time_to_collapse_mks) {
                         continue;  // the exchange does not fit in τ
                     }
-                    plan.spend[source] += amount_source;
-                    plan.total_duration_mks += duration;
+                    offers.push_back(Offer{weight_of(source) * amount_source, duration, key,
+                                           source, amount_source, rate});
+                }
+                if (remaining > 0.0 && !offers.empty()) {
+                    std::sort(offers.begin(), offers.end(), [](const Offer& a, const Offer& b) {
+                        if (a.cost != b.cost) return a.cost < b.cost;
+                        if (a.duration != b.duration) return a.duration < b.duration;
+                        return a.key < b.key;
+                    });
+                    const Offer& best = offers.front();
+                    plan.spend[best.source] += best.amount_source;
+                    plan.total_duration_mks += best.duration;
                     plan.conversions.push_back(
-                        Conversion{source, resource, amount_source, remaining, rate, duration});
+                        Conversion{best.source, resource, best.amount_source, remaining,
+                                   best.rate, best.duration});
                     remaining = 0.0;
                 }
             }
             if (remaining > 0.0) plan.uncovered[resource] = remaining;
         }
-        plan.covered = plan.uncovered.empty();
+
+        // §4.8 (v0.7): the mandate caps what may be spent, in the group numeraire.
+        // It can only remove an option a larger balance would have paid for, and it
+        // can never make payable what the measured means cannot cover.
+        if (cap) {
+            double spent = 0.0;
+            for (const auto& kv : plan.spend) spent += weight_of(kv.first) * kv.second;
+            if (spent > *cap) plan.mandate_exceeded = spent - *cap;
+        }
+        plan.covered = plan.uncovered.empty() && plan.mandate_exceeded <= 0.0;
         return plan;
     }
 
@@ -365,12 +628,14 @@ public:
     std::pair<std::vector<ActionOption>, std::vector<RemovedOption>> apply_resource_gate(
         const SystemStateMatrix& state, const std::vector<ActionOption>& options,
         const std::vector<std::vector<std::string>>* groups = nullptr,
-        const std::map<std::string, dof::Rate>* rates = nullptr) const {
+        const std::map<std::string, dof::Rate>* rates = nullptr,
+        const std::map<std::string, double>* weights = nullptr,
+        const std::optional<double>& cap = std::nullopt) const {
         if (options.empty()) return {{}, {}};
         std::vector<ActionOption> admissible;
         std::vector<RemovedOption> removed;
         for (const auto& option : options) {
-            if (plan_funding(state, option, groups, rates).covered) {
+            if (plan_funding(state, option, groups, rates, weights, cap).covered) {
                 admissible.push_back(option);
             } else {
                 removed.push_back(RemovedOption{option.option_id, "insolvency"});
@@ -381,27 +646,31 @@ public:
 
     double net_delta(const SystemStateMatrix& current, const ActionOption& option,
                      double projected, double current_dof) const {
-        double net = projected - current_dof - current.context_switch_cost;
-        if (!option.is_reversible) net -= 0.5; // rigidity coefficient (Axiom 5)
-        return net;
+        // §4.4 (v0.7): no flat penalty. An irreversible option's price is already
+        // inside `projected`, because the closure lowered the affected entities'
+        // Variety counter in S' (§4.3); subtracting anything here would charge the
+        // same loss twice.
+        (void)option;
+        return projected - current_dof - current.context_switch_cost;
     }
 
     std::optional<ActionOption> evaluate_and_select(
         const SystemStateMatrix& current_state,
-        const std::vector<ActionOption>& options) const
+        const std::vector<ActionOption>& options,
+        const ObservationContext* ctx = nullptr) const
     {
         if (options.empty()) return std::nullopt;
-        double current = calculate_system_dof(current_state, nullptr);
+        double current = calculate_system_dof(current_state, nullptr, ctx);
         std::optional<ActionOption> best;
         double best_net = 0.0;
         std::size_t best_charges = 0;
 
         for (const auto& option : options) {
-            auto sim_result = simulate(current_state, option);
-            double projected = calculate_system_dof(sim_result.first, &sim_result.second);
+            auto sim_result = simulate(current_state, option, ctx);
+            double projected = calculate_system_dof(sim_result.first, &sim_result.second, ctx);
             double net = net_delta(current_state, option, projected, current);
             if (net <= 0.0) continue; // §4.5: staying put wins; acting would degrade the index
-            std::size_t charges = collapse_charges(current_state, option).size();
+            std::size_t charges = collapse_charges(current_state, option, ctx).size();
             bool better = !best.has_value() || net > best_net ||
                           (net == best_net &&
                            (charges < best_charges ||
@@ -444,15 +713,13 @@ public:
                      const std::vector<ActionOption>& options,
                      const std::optional<ActionOption>& selected,
                      const std::string& mode,
-                     const std::optional<dof::MeasurementDeclaration>& declaration = std::nullopt,
-                     const std::vector<RemovedOption>& removed = {},
-                     const std::vector<std::vector<std::string>>* groups = nullptr,
-                     const std::map<std::string, dof::Rate>* rates = nullptr) const
+                     const ReportInput& in = ReportInput{}) const
     {
         DofReport rep;
+        const ObservationContext* ctx = in.ctx;
         for (const auto& kv : current_state.entities) {
             const EntityState& e = kv.second;
-            bool included = is_included(e);
+            bool included = is_included(e, ctx, &current_state);
             double contribution = included ? std::log(std::max(e.current_dof, epsilon_)) : 0.0;
             rep.entities.push_back(EntityReportRow{e.entity_id, e.is_collapse_source, included, e.current_dof, e.dof_known, contribution});
             EntityReportRow& row = rep.entities.back();
@@ -463,15 +730,18 @@ public:
                 row.blocks = e.measurement->blocks;
                 row.derivation = e.measurement->derivation;
             }
+            // §6.1 (v0.7): the verdict, its witness and the completeness behind it.
+            row.recoverability = recoverability_row(e.entity_id, ctx);
         }
-        double total = calculate_system_dof(current_state, nullptr);
+        double total = calculate_system_dof(current_state, nullptr, ctx);
 
         // §6.2 (v0.6): the means before the cycle and after the selected option's
         // spend ledger — what actually left the stock, not what was declared.
         for (const auto& kv : current_state.resources) rep.resources_before[kv.first] = kv.second;
         rep.resources_after = rep.resources_before;
         if (selected) {
-            FundingPlan plan = plan_funding(current_state, *selected, groups, rates);
+            FundingPlan plan = plan_funding(current_state, *selected, in.groups, in.rates,
+                                            in.weights, in.cap);
             for (const auto& kv : plan.spend) {
                 auto it = rep.resources_after.find(kv.first);
                 double before = (it == rep.resources_after.end()) ? 0.0 : it->second;
@@ -480,29 +750,39 @@ public:
         }
 
         for (const auto& option : options) {
-            auto sim_result = simulate(current_state, option);
-            double projected = calculate_system_dof(sim_result.first, &sim_result.second);
+            auto sim_result = simulate(current_state, option, ctx);
+            double projected = calculate_system_dof(sim_result.first, &sim_result.second, ctx);
             double net = net_delta(current_state, option, projected, total);
             bool is_selected = selected.has_value() && selected->option_id == option.option_id;
-            rep.options.push_back(OptionReportRow{option.option_id, option.is_reversible, projected, net, is_selected, option.estimated_duration_mks});
+            rep.options.push_back(OptionReportRow{option.option_id, is_reversible(option), projected, net, is_selected, option.estimated_duration_mks});
             // §6.3: every collapse this option causes, as an auditable line
-            rep.options.back().collapse_charges = collapse_charges(current_state, option);
+            rep.options.back().collapse_charges = collapse_charges(current_state, option, ctx);
             // §6.3 (v0.6): what it draws, and how "affordable" was established.
-            FundingPlan plan = plan_funding(current_state, option, groups, rates);
+            FundingPlan plan = plan_funding(current_state, option, in.groups, in.rates,
+                                            in.weights, in.cap);
             rep.options.back().resource_consumption = option.projected_resource_delta;
             rep.options.back().conversion_applied = plan.conversions;
             rep.options.back().resources_uncovered = plan.uncovered;
+            // §6.3 (v0.7): the mandate that would have been exceeded, what the
+            // option closes, and how the closure's loss decomposes per entity.
+            rep.options.back().mandate_exceeded = plan.mandate_exceeded;
+            rep.options.back().closed = option.closed;
+            rep.options.back().closure_share = closure_share(current_state, option, ctx);
         }
         rep.total_system_dof = total;
         rep.context_switch_cost = current_state.context_switch_cost;
         rep.global_time_to_collapse_mks = current_state.global_time_to_collapse_mks;
         rep.mode = mode;
-        rep.removed_options = removed;
+        rep.removed_options = in.removed;
         rep.incomplete = is_incomplete(current_state, options);
-        if (declaration) {
-            rep.psi_id = declaration->psi_id;
-            rep.psi_digest = declaration->digest();
-            rep.declaration = declaration->canonical_text();
+        rep.means_provenance = in.means_provenance;
+        if (ctx != nullptr && !ctx->observation_digest.empty()) {
+            rep.observation_digest = ctx->observation_digest;
+        }
+        if (in.declaration) {
+            rep.psi_id = in.declaration->psi_id;
+            rep.psi_digest = in.declaration->digest();
+            rep.declaration = in.declaration->canonical_text();
         } else if (current_state.psi) {
             rep.psi_id = current_state.psi->id;
             rep.psi_digest = current_state.psi->digest;

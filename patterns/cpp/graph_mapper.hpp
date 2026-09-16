@@ -24,6 +24,37 @@
 // different units is a different ruler.
 inline const std::string kResourceLayerKey = "resource_layer";
 
+// The reserved key that carries the §3.5 observation of the world. Like the
+// resource layer it is an *observation*, not an entity: the same state plus a
+// different observation is a different decision, and the report says which one.
+inline const std::string kWorldKey = "world";
+
+// §4.6/§4.9: declared derived numbers MUST equal what their procedures compute.
+// Returns the mismatches (empty = the ruler is honest). A declaration that claims
+// a counter its own observation does not support is exactly the "declared, not
+// derived" defect this revision removes.
+inline std::vector<std::string> verify_graph_derived(
+    const dof::MeasurementDeclaration& declaration, const dof::WorldGraph& graph,
+    const std::optional<double>& counting_horizon) {
+    std::vector<std::string> problems;
+    for (const auto& kv : declaration.verdicts) {
+        const std::string& entity_id = kv.first;
+        const dof::VerdictRecord& declared = kv.second;
+        const int v_here = graph.v_count(entity_id, declaration.means_class, counting_horizon);
+        if (declared.v != v_here) {
+            problems.push_back(entity_id + ": declared V=" + std::to_string(declared.v) +
+                               " but the counting procedure gives " + std::to_string(v_here));
+        }
+        const std::string verdict_here =
+            graph.verdict(entity_id, declaration.means_class, declared.t_rec_mks).verdict;
+        if (declared.verdict != verdict_here) {
+            problems.push_back(entity_id + ": declared verdict " + declared.verdict +
+                               " but the verdict procedure returns " + verdict_here);
+        }
+    }
+    return problems;
+}
+
 struct ResourceLayer {
     std::map<std::string, double> means;                          // the agent's stock
     std::vector<std::vector<std::string>> groups;                 // derived exchange groups
@@ -42,6 +73,8 @@ struct RawObservation {
     dof::LensObservation lenses;
     // Set on the reserved `resource_layer` entry only.
     std::optional<ResourceLayer> resource_layer;
+    // Set on the reserved `world` entry only: the §3.5 observation of the world.
+    std::optional<dof::WorldObservation> world;
 };
 
 class GraphMapper {
@@ -53,6 +86,13 @@ public:
     // The declaration frozen on the state being built; the orchestrator hands
     // it to the audit report (§6.2).
     mutable std::optional<dof::MeasurementDeclaration> last_declaration;
+    // The observation the state was decided over (§3.5/§4.9), kept beside the
+    // state and never inside it: a world graph is a Perception artifact, exactly
+    // like the derived groups and the observed rates.
+    mutable std::optional<ObservationContext> last_observation;
+    // Mismatches between the declared derived numbers and what the named
+    // procedures recompute over the observation (§4.6/§4.9). Empty = honest.
+    mutable std::vector<std::string> last_graph_problems;
 
     explicit GraphMapper(double context_switch_cost = 0.05)
         : context_switch_cost_(context_switch_cost) {}
@@ -75,9 +115,12 @@ public:
         std::map<std::string, dof::LensObservation> observations;
         double min_ttc = std::numeric_limits<double>::infinity();
 
-        // Pass 1: raw lens inputs and the local deadlines.
+        // Pass 1: raw lens inputs and the local deadlines. BOTH reserved keys are
+        // skipped: the resource layer and the world observation describe the
+        // world/agent, not an entity, and a reserved entry left in this loop would
+        // drag τ down to its own default of zero.
         for (const auto& kv : raw) {
-            if (kv.first == kResourceLayerKey) continue;
+            if (kv.first == kResourceLayerKey || kv.first == kWorldKey) continue;
             observations[kv.first] = kv.second.lenses;
             if (!kv.second.is_collapse_source && kv.second.time_to_collapse_mks < min_ttc) {
                 min_ttc = kv.second.time_to_collapse_mks;
@@ -86,6 +129,82 @@ public:
 
         // Global τ is driven by the most urgent non-collapse-source entity (§3.2).
         const double global_ttc = std::isfinite(min_ttc) ? min_ttc : 1e15;
+
+        // §3.5 (v0.7): the observed world graph, when the cycle was given one.
+        std::optional<dof::WorldObservation> world;
+        auto world_it = raw.find(kWorldKey);
+        if (world_it != raw.end() && world_it->second.world) world = world_it->second.world;
+        const dof::WorldGraph empty_graph;
+        const dof::WorldGraph& graph = world ? world->graph : empty_graph;
+        const std::vector<std::string> no_class;
+        const std::map<std::string, double> no_trec;
+        const std::vector<std::string>& means_class = world ? world->means_class : no_class;
+        const std::map<std::string, double>& t_rec = world ? world->t_rec : no_trec;
+        std::optional<double> counting_horizon =
+            world ? world->counting_horizon_mks : std::nullopt;
+        // §4.9: a response vector must be executable inside the counting horizon, so
+        // the default is the cycle's own τ — never an implicit, invisible horizon.
+        if (world && !counting_horizon) counting_horizon = global_ttc;
+
+        // §4.6/§4.8 (v0.7): the numeraire weights, the observed rate table and the
+        // mandate cap are DERIVED over the observation, not authored. Without a
+        // declared numeraire there is no unit for a scalar cap, so neither applies
+        // — which keeps a ruler without a world graph reading exactly as in v0.6.
+        std::map<std::string, double> weights;
+        std::map<std::string, dof::Rate> derived_rates;
+        std::optional<double> mandate_cap;
+        std::map<std::string, dof::VerdictRecord> verdicts;
+        if (world && world->numeraire) {
+            std::set<std::string> member_set;
+            for (const auto& grp : groups) {
+                for (const auto& r : grp) member_set.insert(r);
+            }
+            std::vector<std::string> members(member_set.begin(), member_set.end());
+            weights = graph.weights_to(*world->numeraire, members);
+            // §3.5/§4.8: the axis rates are the *output* of the observation
+            // procedure, so with a graph in hand the table is derived rather than
+            // read from the layer. A declared table beside an observed graph would
+            // be a second ruler for the same quantity, free to drift.
+            for (const auto& a : members) {
+                for (const auto& b : members) {
+                    if (a == b) continue;
+                    dof::RateResult res = graph.rate(a, b, true);
+                    if (res.status == "observed" && res.rate) {
+                        derived_rates[a + "->" + b] = dof::Rate{*res.rate, res.duration_mks};
+                    }
+                }
+            }
+            if (layer) {
+                std::vector<double> limits;
+                for (const auto& kv : layer->mandate) {
+                    if (kv.first == "cap" && !kv.second.is_string) {
+                        limits.push_back(kv.second.number);
+                    } else if (kv.first == "external_limit_credit" && !kv.second.is_string) {
+                        // Declared in credits, applied in the numeraire: converted
+                        // through the *observed* weight, never a hard-coded 1.0.
+                        auto wit = weights.find("credit");
+                        if (wit != weights.end()) limits.push_back(kv.second.number * wit->second);
+                    }
+                }
+                if (!limits.empty()) {
+                    double smallest = limits.front();
+                    for (double v : limits) smallest = std::min(smallest, v);
+                    mandate_cap = smallest;
+                }
+            }
+            // §4.6/§4.9: the verdicts and counters are computed by the named
+            // procedures and then declared, so the declaration can be checked
+            // against the observation it came from.
+            for (const auto& kv : observations) {
+                const std::string& eid = kv.first;
+                std::optional<double> horizon;
+                auto trit = t_rec.find(eid);
+                if (trit != t_rec.end()) horizon = trit->second;
+                dof::Verdict v = graph.verdict(eid, means_class, horizon);
+                verdicts[eid] = dof::VerdictRecord{v.verdict, horizon,
+                                                   graph.v_count(eid, means_class, counting_horizon)};
+            }
+        }
 
         // Pass 2: the declaration is frozen on S, so τ is known before measuring.
         dof::MeasurementDeclaration declaration;
@@ -99,13 +218,23 @@ public:
             declaration.rates = layer->rates;
             declaration.mandate = layer->mandate;
         }
+        if (world) {
+            // The derived table replaces a declared one whenever a graph is in hand.
+            if (!derived_rates.empty()) declaration.rates = derived_rates;
+            declaration.numeraire = world->numeraire;
+            declaration.weights = weights;
+            declaration.mandate_cap = mandate_cap;
+            declaration.verdicts = verdicts;
+            declaration.means_class = means_class;
+            declaration.graph_procedure = world->procedure;
+        }
         const double u0 = declaration.u0();  // at t = 0 the schedule says u₀ (§4.7)
 
         std::unordered_map<std::string, EntityState> entities;
         for (const auto& kv : raw) {
-            if (kv.first == kResourceLayerKey) continue;
+            if (kv.first == kResourceLayerKey || kv.first == kWorldKey) continue;
             dof::EntityMeasurement m = dof::measure_entity(kv.first, kv.second.lenses, u0,
-                                                           &means, &groups);
+                                                           &means, &groups, &weights, mandate_cap);
             EntityState ent;
             ent.entity_id = kv.first;
             ent.is_autonomous = kv.second.is_autonomous;
@@ -125,6 +254,22 @@ public:
         state.psi = dof::PsiReference{declaration.psi_id, declaration.digest()};
         for (const auto& kv : means) state.resources[kv.first] = kv.second;
         last_declaration = declaration;
+
+        // §3.5/§4.9: the observation itself, pinned by its own digest (§6.2), and
+        // the self-check that the declared derived numbers are the ones the named
+        // procedures actually return over it.
+        last_observation.reset();
+        last_graph_problems.clear();
+        if (world) {
+            ObservationContext ctx;
+            ctx.world = graph;
+            ctx.means_class = means_class;
+            ctx.t_rec = t_rec;
+            ctx.counting_horizon_mks = counting_horizon;
+            ctx.observation_digest = graph.observation_digest(means_class, t_rec, counting_horizon);
+            last_observation = ctx;
+            last_graph_problems = verify_graph_derived(declaration, graph, counting_horizon);
+        }
         return state;
     }
 };

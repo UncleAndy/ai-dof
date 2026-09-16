@@ -107,27 +107,44 @@ inline std::vector<std::vector<std::string>> canonical_groups(
     return normalized;
 }
 
-// §4.6 (v0.6): the derived (c_g, C_g) pair of every resource block. Named
+// §4.6 (v0.7): the derived (c_g, C_g) pair of every resource block. Named
 // procedure: resources inside a group are mutually exchangeable, so they share
 // one block — c_g is what the transition draws from the group, C_g is what the
 // agent can commit to it. Zero is legal on both sides; psi_opt then applies the
 // c_g > 0 ∧ C_g = 0 gate. The derivation is total: every resource of the inputs
 // lands in exactly one group.
+//
+// `weights` are the observed prices of each resource in the group's numeraire.
+// Without them the sum adds credits to joules, and the value of the lens starts
+// to depend on the unit a resource happens to be declared in: the lens would
+// measure notation instead of the world. A resource with no path to the
+// numeraire is its own singleton group and carries weight 1.0 — with no exchange
+// available, its own unit IS its nominal.
+//
+// `cap` is the mandate: permission, never possibility. It can only lower C_g.
 inline std::vector<std::pair<double, double>> derive_blocks(
     const std::map<std::string, double>& requirements,
     const std::map<std::string, double>& means,
-    const std::vector<std::vector<std::string>>& groups)
+    const std::vector<std::vector<std::string>>& groups,
+    const std::map<std::string, double>* weights = nullptr,
+    const std::optional<double>& cap = std::nullopt)
 {
+    auto weight_of = [weights](const std::string& r) {
+        if (weights == nullptr) return 1.0;
+        auto it = weights->find(r);
+        return it == weights->end() ? 1.0 : it->second;
+    };
     std::vector<std::pair<double, double>> blocks;
     for (const auto& group : canonical_groups(groups, requirements, means)) {
         double c_g = 0.0;
         double C_g = 0.0;
         for (const auto& r : group) {
             auto rit = requirements.find(r);
-            if (rit != requirements.end()) c_g += std::max(0.0, rit->second);
+            if (rit != requirements.end()) c_g += weight_of(r) * std::max(0.0, rit->second);
             auto mit = means.find(r);
-            if (mit != means.end()) C_g += std::max(0.0, mit->second);
+            if (mit != means.end()) C_g += weight_of(r) * std::max(0.0, mit->second);
         }
+        if (cap) C_g = std::min(C_g, std::max(0.0, *cap));
         blocks.emplace_back(c_g, C_g);
     }
     return blocks;
@@ -142,10 +159,18 @@ struct LensObservation {
     std::optional<std::vector<std::pair<double, double>>> options;  // [(c_g, C_g)]
     std::optional<std::pair<double, double>> constraint;  // (F, F_env)
     std::optional<std::map<std::string, double>> requirements;  // {"energy": 4.0} (§4.6)
+    // §4.6 (v0.7): the numeraire weights and the mandate cap. Declared per
+    // observation as an alternative to passing them in; the caller's values win.
+    std::optional<std::map<std::string, double>> weights;
+    std::optional<double> cap;
 
     std::optional<double> psi(const std::string& lens,
                               const std::map<std::string, double>* means = nullptr,
-                              const std::vector<std::vector<std::string>>* groups = nullptr) const {
+                              const std::vector<std::vector<std::string>>* groups = nullptr,
+                              const std::map<std::string, double>* call_weights = nullptr,
+                              const std::optional<double>& call_cap = std::nullopt) const {
+        const std::map<std::string, double>* eff_weights = call_weights ? call_weights : (weights ? &*weights : nullptr);
+        const std::optional<double> eff_cap = call_cap ? call_cap : cap;
         if (lens == "variety") {
             if (!variety) return std::nullopt;
             return psi_var(variety->first, variety->second);
@@ -157,7 +182,8 @@ struct LensObservation {
                 const std::vector<std::vector<std::string>> no_groups;
                 return psi_opt(derive_blocks(*requirements,
                                              means ? *means : no_means,
-                                             groups ? *groups : no_groups));
+                                             groups ? *groups : no_groups,
+                                             eff_weights, eff_cap));
             }
             return std::nullopt;
         }
@@ -184,6 +210,11 @@ struct DerivationInfo {
     std::map<std::string, double> requirements;
     std::map<std::string, double> means;
     std::vector<std::vector<std::string>> groups;
+    // §4.6 (v0.7): the numeraire weights and the mandate cap are part of the
+    // derivation, so a reader can recompute (c_g, C_g) and see that the sum is
+    // not adding different physical units together.
+    std::map<std::string, double> weights;
+    std::optional<double> cap;
 };
 
 // Result of measuring one entity.
@@ -200,6 +231,9 @@ struct EntityMeasurement {
     // §4.6 (v0.6): the derived blocks actually used, and the derivation itself.
     std::vector<std::pair<double, double>> blocks;
     std::optional<DerivationInfo> derivation;
+    // §4.6 (v0.7): the declared counters behind the Variety share — kept because
+    // the price of a closure is recomputed from them (§4.4), not from the lens.
+    std::optional<std::map<std::string, double>> variety_counters;
 };
 
 // Apply §4.6–§4.7 to one entity.
@@ -207,14 +241,19 @@ inline EntityMeasurement measure_entity(const std::string& entity_id,
                                         const LensObservation& obs,
                                         double u,
                                         const std::map<std::string, double>* means = nullptr,
-                                        const std::vector<std::vector<std::string>>* groups = nullptr) {
+                                        const std::vector<std::vector<std::string>>* groups = nullptr,
+                                        const std::map<std::string, double>* weights = nullptr,
+                                        const std::optional<double>& cap = std::nullopt) {
     EntityMeasurement m;
     m.entity_id = entity_id;
     double product = 1.0;
     double binding_value = std::numeric_limits<double>::infinity();
+    const std::map<std::string, double>* eff_weights =
+        weights ? weights : (obs.weights ? &*obs.weights : nullptr);
+    const std::optional<double> eff_cap = cap ? cap : obs.cap;
 
     for (const auto& lens : lens_order()) {
-        std::optional<double> value = obs.psi(lens, means, groups);
+        std::optional<double> value = obs.psi(lens, means, groups, eff_weights, eff_cap);
         m.psi_by_lens[lens] = value;
         double contribution = 0.0;
         if (!value) {
@@ -238,13 +277,21 @@ inline EntityMeasurement measure_entity(const std::string& entity_id,
         const std::vector<std::vector<std::string>> no_groups;
         const std::map<std::string, double>& effective_means = means ? *means : no_means;
         const std::vector<std::vector<std::string>>& effective_groups = groups ? *groups : no_groups;
-        m.blocks = derive_blocks(*obs.requirements, effective_means, effective_groups);
+        m.blocks = derive_blocks(*obs.requirements, effective_means, effective_groups,
+                                 eff_weights, eff_cap);
         DerivationInfo info;
         info.procedure = kDeriveBlocksProcedure;
         info.requirements = *obs.requirements;
         info.means = effective_means;
         info.groups = canonical_groups(effective_groups, *obs.requirements, effective_means);
+        if (eff_weights != nullptr) info.weights = *eff_weights;
+        info.cap = eff_cap;
         m.derivation = info;
+    }
+
+    if (obs.variety) {
+        m.variety_counters = std::map<std::string, double>{{"V", obs.variety->first},
+                                                           {"V_env", obs.variety->second}};
     }
 
     m.current_dof = clamp01(product);
@@ -362,6 +409,15 @@ struct MandateValue {
     static MandateValue str(const std::string& s) { MandateValue m; m.is_string = true; m.text = s; return m; }
 };
 
+// One entity's declared verdict together with the counters and the horizon it
+// was computed with, so the declaration can be checked against the observation
+// it came from (`verify_graph_derived`).
+struct VerdictRecord {
+    std::string verdict;
+    std::optional<double> t_rec_mks;
+    int v = 0;
+};
+
 // The frozen ruler (§3.4). `std::map` keeps entity keys sorted, which the
 // canonical form requires.
 struct MeasurementDeclaration {
@@ -374,6 +430,17 @@ struct MeasurementDeclaration {
     std::vector<std::vector<std::string>> groups;           // derived exchange groups
     std::map<std::string, Rate> rates;                      // "from->to" -> {rate, duration_mks}
     std::map<std::string, MandateValue> mandate;            // declared mandate + limits
+    // §3.4.1 hashed content (v0.7): the graph-derived values of §4.9 and the
+    // numeraire the group amounts are expressed in. Only what determines numbers
+    // is here — the graph itself, the witness paths and the observation digest
+    // are report context (§6.2), and an option's closure list is a per-option
+    // input like `projected_dof_delta`, not ruler content.
+    std::optional<std::string> numeraire;
+    std::map<std::string, double> weights;
+    std::optional<double> mandate_cap;
+    std::map<std::string, VerdictRecord> verdicts;
+    std::vector<std::string> means_class;
+    std::string graph_procedure;
 
     double u0() const { return u0_from_prior(u0_prior_q); }
 
@@ -455,6 +522,54 @@ struct MeasurementDeclaration {
         return os.str();
     }
 
+    std::string weights_json() const {
+        std::ostringstream os;
+        os << "{";
+        bool first = true;
+        for (const auto& kv : weights) {
+            if (!first) os << ",";
+            first = false;
+            os << quote(kv.first) << ":" << quote(f6(kv.second));
+        }
+        os << "}";
+        return os.str();
+    }
+
+    std::string verdicts_json() const {
+        std::ostringstream os;
+        os << "{";
+        bool first = true;
+        for (const auto& kv : verdicts) {
+            if (!first) os << ",";
+            first = false;
+            os << quote(kv.first) << ":{\"t_rec_mks\":";
+            if (kv.second.t_rec_mks) {
+                os << quote(f6(*kv.second.t_rec_mks));
+            } else {
+                os << "null";
+            }
+            // `v` is an INTEGER: a count, not a measurement.
+            os << ",\"v\":" << kv.second.v << ",\"verdict\":" << quote(kv.second.verdict) << "}";
+        }
+        os << "}";
+        return os.str();
+    }
+
+    std::string means_class_json() const {
+        std::vector<std::string> sorted = means_class;
+        std::sort(sorted.begin(), sorted.end());
+        std::ostringstream os;
+        os << "[";
+        bool first = true;
+        for (const auto& c : sorted) {
+            if (!first) os << ",";
+            first = false;
+            os << quote(c);
+        }
+        os << "]";
+        return os.str();
+    }
+
     // Canonical form (§3.4.3): UTF-8 JSON, keys sorted, no insignificant
     // whitespace, non-integer numbers as fixed six-decimal strings.
     std::string canonical_text() const {
@@ -465,7 +580,16 @@ struct MeasurementDeclaration {
             if (!first) os << ",";
             first = false;
             const LensObservation& obs = kv.second;
-            os << quote(kv.first) << ":{\"constraint\":";
+            // §4.6 (v0.7): the per-entity numeraire weights and mandate cap. Null
+            // when the entity does not declare them — a missing key and a null
+            // key hash differently, and every port must write the same shape.
+            os << quote(kv.first) << ":{\"cap\":";
+            if (obs.cap) {
+                os << quote(f6(*obs.cap));
+            } else {
+                os << "null";
+            }
+            os << ",\"constraint\":";
             if (obs.constraint) {
                 os << "{\"F\":" << quote(f6(obs.constraint->first))
                    << ",\"F_env\":" << quote(f6(obs.constraint->second)) << "}";
@@ -505,13 +629,40 @@ struct MeasurementDeclaration {
             } else {
                 os << "null";
             }
+            os << ",\"weights\":";
+            if (obs.weights) {
+                os << "{";
+                bool wfirst = true;
+                for (const auto& wv : *obs.weights) {
+                    if (!wfirst) os << ",";
+                    wfirst = false;
+                    os << quote(wv.first) << ":" << quote(f6(wv.second));
+                }
+                os << "}";
+            } else {
+                os << "null";
+            }
             os << "}";
         }
         os << "},\"freeze\":{\"tau_mks\":" << quote(f6(tau_mks)) << "}"
+           << ",\"graph_procedure\":" << quote(graph_procedure)
            << ",\"groups\":" << groups_json()
            << ",\"lens_order\":[\"variety\",\"options\",\"constraint\"]"
            << ",\"mandate\":" << mandate_json()
-           << ",\"procedures\":{\"constraint\":" << quote(psi_id + ":constraint")
+           << ",\"mandate_cap\":";
+        if (mandate_cap) {
+            os << quote(f6(*mandate_cap));
+        } else {
+            os << "null";
+        }
+        os << ",\"means_class\":" << means_class_json()
+           << ",\"numeraire\":";
+        if (numeraire) {
+            os << quote(*numeraire);
+        } else {
+            os << "null";
+        }
+        os << ",\"procedures\":{\"constraint\":" << quote(psi_id + ":constraint")
            << ",\"options\":" << quote(psi_id + ":options")
            << ",\"options_blocks\":" << quote(psi_id + ":" + kDeriveBlocksProcedure)
            << ",\"variety\":" << quote(psi_id + ":variety") << "}"
@@ -524,7 +675,9 @@ struct MeasurementDeclaration {
         } else {
             os << "null";
         }
-        os << "}";
+        os << ",\"verdicts\":" << verdicts_json()
+           << ",\"weights\":" << weights_json()
+           << "}";
         return os.str();
     }
 

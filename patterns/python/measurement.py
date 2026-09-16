@@ -351,6 +351,7 @@ class MeasurementDeclaration(BaseModel):
     # like `projected_dof_delta`, not ruler content.
     numeraire: Optional[str] = None                       # §4.6: the declared unit of account
     weights: Dict[str, float] = {}                        # resource -> observed rate to the numeraire
+    mandate_cap: Optional[float] = None                   # §4.8: the mandate ceiling, in the numeraire
     verdicts: Dict[str, Dict[str, object]] = {}           # entity -> {verdict, t_rec_mks, v}
     means_class: List[str] = []                           # §4.9: identifiers of M(S), canonical order
     graph_procedure: str = ""                             # §4.9: identity and version of the verdict procedure
@@ -392,6 +393,7 @@ def build_declaration(psi_id: str, lens_observations: Dict[str, LensObservation]
                       mandate: Optional[Dict[str, object]] = None,
                       numeraire: Optional[str] = None,
                       weights: Optional[Dict[str, float]] = None,
+                      mandate_cap: Optional[float] = None,
                       verdicts: Optional[Dict[str, Dict[str, object]]] = None,
                       means_class: Optional[Sequence[str]] = None,
                       graph_procedure: str = "") -> MeasurementDeclaration:
@@ -416,6 +418,7 @@ def build_declaration(psi_id: str, lens_observations: Dict[str, LensObservation]
         mandate=dict(mandate or {}),
         numeraire=numeraire,
         weights={str(k): float(v) for k, v in sorted((weights or {}).items())},
+        mandate_cap=(None if mandate_cap is None else float(mandate_cap)),
         verdicts={str(e): dict(v) for e, v in sorted((verdicts or {}).items())},
         means_class=sorted(str(c) for c in (means_class or [])),
         graph_procedure=str(graph_procedure),

@@ -153,6 +153,18 @@ class DOFCalculusCore:
         """
         if entity.is_collapse_source and self._label_witnessed(entity, ctx, state):
             return False                      # aggressors leave the topology
+        return self._is_included_without_label(entity, ctx)
+
+    def _is_included_without_label(self, entity: EntityState,
+                                   ctx: Optional[ObservationContext]) -> bool:
+        """`calc` membership with the collapse-source label *not* honoured (§4.2).
+
+        Used in two places, and it must be the same rule in both: deciding who is
+        counted, and deciding whether a label has a witness. The witness question
+        is "would this entity be counted if its own label were ignored" — asking
+        it with the label already applied would be circular, and would make every
+        label unfalsifiable.
+        """
         if entity.current_dof > 0.0:
             return True
         if not entity.dof_known:
@@ -174,8 +186,12 @@ class DOFCalculusCore:
         """
         if ctx is None or state is None:
             return False
+        # The pool is "who would be counted if this label (and every label) were
+        # ignored". Applying the label first would make the question circular:
+        # a labelled entity would fall out of its own witness set, and no label
+        # could ever be confirmed — or refuted.
         counted = {e.entity_id for e in state.entities.values()
-                   if not e.is_collapse_source and (e.current_dof > 0.0 or not e.dof_known)}
+                   if self._is_included_without_label(e, ctx)}
         if entity.entity_id not in counted:
             return False
         dof_before = {e.entity_id: e.current_dof for e in state.entities.values()}
@@ -193,6 +209,25 @@ class DOFCalculusCore:
         """
         return {e.entity_id for e in state.entities.values()
                 if self._is_included(e, ctx, state)}
+
+    def _projected_dof(self, e_state: EntityState, option: ActionOption,
+                       ctx: Optional[ObservationContext]) -> float:
+        """The DoF this option would leave the entity with, closure included (§4.3).
+
+        One definition, used by both `simulate` and `collapse_charges`. If the
+        charge were computed from the raw delta while the index was computed from
+        the closure-aware value, an option that destroys an entity *by closing its
+        transitions* would be scored as a collapse and charged as nothing — the
+        structural gate of §4.5 would then pass exactly the option it exists to
+        stop. Two call sites, one rule.
+        """
+        new_dof = self._coerce_dof(
+            e_state.current_dof + option.projected_dof_delta.get(e_state.entity_id, 0.0))
+        if ctx is not None and option.closed:
+            recomputed = self._dof_after_closure(e_state, option, ctx)
+            if recomputed is not None:
+                new_dof = recomputed
+        return new_dof
 
     def simulate(self, current_state: SystemStateMatrix, option: ActionOption,
                  ctx: Optional[ObservationContext] = None
@@ -219,12 +254,7 @@ class DOFCalculusCore:
         members = self.calc_members(current_state, ctx)
         simulated_entities: Dict[str, EntityState] = {}
         for e_id, e_state in current_state.entities.items():
-            new_dof = self._coerce_dof(
-                e_state.current_dof + option.projected_dof_delta.get(e_id, 0.0))
-            if ctx is not None and option.closed:
-                recomputed = self._dof_after_closure(e_state, option, ctx)
-                if recomputed is not None:
-                    new_dof = recomputed
+            new_dof = self._projected_dof(e_state, option, ctx)
             simulated_entities[e_id] = EntityState(
                 entity_id=e_id,
                 is_autonomous=e_state.is_autonomous,
@@ -343,8 +373,10 @@ class DOFCalculusCore:
             e_state = current_state.entities[e_id]
             if not e_state.dof_known:
                 continue  # unknown DoF is never a collapse (§4.2)
-            new_dof = self._coerce_dof(
-                e_state.current_dof + option.projected_dof_delta.get(e_id, 0.0))
+            # The projected value is the closure-aware one (§4.3): an option can
+            # destroy a counted entity by closing its transitions while declaring
+            # no delta at all, and that is exactly the case §4.5 must catch.
+            new_dof = self._projected_dof(e_state, option, ctx)
             # §4.2: a charge requires a *transition* into the zero, not a stay at
             # it. An entity already at a known zero was not destroyed by this
             # option — charging it would make every option destructive in any
@@ -355,13 +387,22 @@ class DOFCalculusCore:
         return charges
 
     def apply_structural_gate(self, current_state: SystemStateMatrix,
-                              options: List[ActionOption]
+                              options: List[ActionOption],
+                              ctx: Optional[ObservationContext] = None
                               ) -> Tuple[List[ActionOption], List[Dict[str, str]]]:
         """§4.5: an option that destroys a counted entity is inadmissible while
-        a charge-free candidate exists. Every removal is recorded (§6.2)."""
+        a charge-free candidate exists. Every removal is recorded (§6.2).
+
+        The charge is taken against `calc(S)`, and `calc` depends on the
+        observation (§4.2/§4.9): an entity kept in the set by a `reachable` or
+        `undetermined` verdict is a legitimate charge, an entity excluded as
+        `proven_unreachable` is not. So the observation must reach the gate —
+        without it `calc` is the fail-safe superset and the gate would compare
+        against a different set than the one the index was scored on.
+        """
         if not options:
             return [], []
-        charged = [(o, self.collapse_charges(current_state, o)) for o in options]
+        charged = [(o, self.collapse_charges(current_state, o, ctx)) for o in options]
         if any(not charges for _, charges in charged):
             admissible = [o for o, charges in charged if not charges]
             removed = [{"option_id": o.option_id, "gate": "collapse"}
@@ -419,6 +460,9 @@ class DOFCalculusCore:
         need = self.requirement(option)
         means = state.resources
         tau = state.global_time_to_collapse_mks
+        # The numeraire weights: used to choose an offer canonically and to
+        # express the mandate ceiling in one unit.
+        w = {str(k): float(v) for k, v in (weights or {}).items()}
         spend: Dict[str, float] = {}
         conversions: List[Dict[str, object]] = []
         uncovered: Dict[str, float] = {}
@@ -431,9 +475,13 @@ class DOFCalculusCore:
             spend[resource] = spend.get(resource, 0.0) + direct
             remaining -= direct
 
+            # §4.8 (v0.7): the offer is chosen **canonically** — the cheapest in
+            # the group numeraire first, then the shorter exchange, then the key.
+            # Choosing by declaration order (or by resource name) would let a
+            # rename change what the report says happened, and two ports would
+            # describe the same world differently.
+            offers: List[Tuple[float, float, str, str, float, float]] = []
             for key in sorted(rates or {}):
-                if remaining <= 0.0:
-                    break
                 source, _, target = key.partition("->")
                 if target != resource:
                     continue
@@ -447,6 +495,10 @@ class DOFCalculusCore:
                     continue                        # the price is not payable
                 if total_duration + duration > tau:
                     continue                        # the exchange does not fit in τ
+                offers.append((w.get(source, 1.0) * amount_source, duration, key,
+                               source, amount_source, rate))
+            if remaining > 0.0 and offers:
+                _cost, duration, _key, source, amount_source, rate = min(offers)
                 spend[source] = spend.get(source, 0.0) + amount_source
                 total_duration += duration
                 conversions.append({
@@ -464,7 +516,6 @@ class DOFCalculusCore:
         # can never make payable what the measured means cannot cover.
         mandate_exceeded = 0.0
         if cap is not None:
-            w = {str(k): float(v) for k, v in (weights or {}).items()}
             spent_value = sum(w.get(r, 1.0) * amount for r, amount in spend.items())
             if spent_value > cap:
                 mandate_exceeded = spent_value - cap

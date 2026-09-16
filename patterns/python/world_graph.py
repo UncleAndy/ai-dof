@@ -15,6 +15,8 @@ Design notes that matter for cross-port equality (§3.4.3, §11.9):
 """
 from __future__ import annotations
 
+import hashlib
+import json
 import math
 from typing import Dict, List, Optional, Sequence, Set, Tuple
 
@@ -154,6 +156,43 @@ class WorldGraph(BaseModel):
     def is_arbitrage_free(self) -> bool:
         return not self.arbitrage_edges()
 
+    def observation_digest(self, means_class: Sequence[str],
+                           t_rec: Optional[Dict[str, float]] = None,
+                           counting_horizon_mks: Optional[float] = None) -> str:
+        """§6.2: a fingerprint of the **observation**, not of the ruler.
+
+        The report pins a subgraph it shows to this value, so a reader can tell
+        whether two reports were taken from the same observation. It covers what
+        was observed — nodes with their completeness, declared means, acts,
+        quotes, `M(S)`, `T_rec` and the counting horizon — and deliberately not
+        the candidate set: a decision that moved with the options offered would
+        not be reproducible (§4.2).
+        """
+        payload = {
+            "entities": {e.id: {"observation": e.observation,
+                                "current_dof": None if e.current_dof is None
+                                else round(float(e.current_dof), 9)}
+                         for e in sorted(self.entities.values(), key=lambda x: x.id)},
+            "means": sorted(self.means),
+            "acts": [{ "id": a.id, "source": a.source, "target": a.target,
+                       "category": a.category, "requires": sorted(a.requires),
+                       "effect": {k: round(float(v), 9) for k, v in sorted(a.effect.items())},
+                       "duration_mks": a.duration_mks}
+                     for a in sorted(self.acts, key=lambda x: x.id)],
+            "exchanges": [{"id": e.id,
+                           "gives": {k: round(float(v), 9) for k, v in sorted(e.gives.items())},
+                           "wants": {k: round(float(v), 9) for k, v in sorted(e.wants.items())},
+                           "duration_mks": e.duration_mks}
+                          for e in sorted(self.exchanges, key=lambda x: x.id)],
+            "means_class": sorted(str(c) for c in (means_class or [])),
+            "t_rec": {str(k): float(v) for k, v in sorted((t_rec or {}).items())},
+            "counting_horizon_mks": (None if counting_horizon_mks is None
+                                     else float(counting_horizon_mks)),
+        }
+        blob = json.dumps(payload, sort_keys=True, separators=(",", ":"),
+                          ensure_ascii=True)
+        return hashlib.sha256(blob.encode("utf-8")).hexdigest()
+
     # -------------------------------------------------------- rate as observation
     def _quotes(self) -> List[Tuple[str, str, float, float, str]]:
         return [(e.from_resource(), e.to_resource(), e.multiplier(),
@@ -230,6 +269,41 @@ class WorldGraph(BaseModel):
     def v_count(self, entity_id: str, categories: Sequence[str],
                 horizon_mks: Optional[float]) -> int:
         return len(self.reachable_acts(entity_id, categories, horizon_mks))
+
+    # ------------------------------------------------- numeraire weights (§4.6)
+    def weights_to(self, numeraire: str, resources: Sequence[str]) -> Dict[str, float]:
+        """§4.6 (v0.7): `w_r` — the price of one unit of `r`, in the numeraire.
+
+        The weight is what one unit of `r` **costs to acquire**: the numeraire
+        spent, i.e. the inverse of the canonical best product of observed quotes
+        along a path from the numeraire to `r` (§3.5). When no path *from* the
+        numeraire exists — the resource cannot be bought at all — the weight
+        falls back to what one unit *fetches* (`rate(r, numeraire)`), which is
+        the only price the observation supports.
+
+        The distinction matters: `credit->energy = 2.0` and `energy->credit =
+        0.25` are both in this world, and they disagree. A sum that mixed the
+        two directions without saying so would produce a balance nobody could
+        reproduce, so the rule above is stated once, in one place.
+
+        A resource with neither direction observed carries **no** weight and
+        MUST NOT silently fall back to `1.0`: `derive_blocks` then treats it as
+        its own singleton block, where its own unit *is* its nominal. A default
+        here would hide exactly the hole this procedure exists to expose.
+        """
+        out: Dict[str, float] = {}
+        for r in sorted({str(x) for x in resources}):
+            if r == numeraire:
+                out[r] = 1.0
+                continue
+            buy = self.rate(numeraire, r)          # units of r per one numeraire
+            if buy.status == "observed" and buy.rate:
+                out[r] = q6(1.0 / float(buy.rate))
+                continue
+            sell = self.rate(r, numeraire)         # numeraire per one unit of r
+            if sell.status == "observed" and sell.rate:
+                out[r] = q6(float(sell.rate))
+        return out
 
     # ------------------------------------------------------------- verdicts (§4.9)
     def verdict(self, entity_id: str, categories: Optional[Sequence[str]],
@@ -429,6 +503,38 @@ if __name__ == "__main__":
           g3.guard_closure([ClosedRef(kind="act", id="r1")], own_act_id="r1") != [])
     check("an empty closure list with is_reversible=false is rejected",
           g3.guard_closure([], own_act_id="r1") != [])
+
+    print("=== numeraire weights (§4.6) ===")
+    w = g.weights_to("credit", ["credit", "energy", "machine_hour", "parts"])
+    check("the numeraire weighs exactly 1.0", w.get("credit") == 1.0, str(w))
+    check("w_energy is the PRICE of one joule (1/2.0), not the quote's own rate",
+          q6(w["energy"]) == 0.5, str(w))
+    check("w_machine_hour is 1.0: one hour costs one credit",
+          q6(w["machine_hour"]) == 1.0, str(w))
+    check("a resource with no path FROM the numeraire falls back to what it FETCHES",
+          q6(w["parts"]) == 1.0, str(w))
+    check("a resource with neither direction observed carries NO weight "
+          "(no silent default of 1.0)", "fuel" not in g.weights_to("credit", ["credit", "fuel"]))
+    check("a weight is a function of the observation: dropping a quote drops the weight",
+          "energy" not in WorldGraph(exchanges=[quote("q6", "machine_hour", 1.0, "credit", 0.5)]
+                                     ).weights_to("credit", ["credit", "energy"]))
+
+    print("=== the observation fingerprint (§6.2) ===")
+    d1 = g.observation_digest(M, {"revivable": 4_000_000.0})
+    check("the observation digest is stable and 64 hex chars",
+          d1 == g.observation_digest(M, {"revivable": 4_000_000.0}) and len(d1) == 64)
+    check("re-ordering the observation does not move it",
+          d1 == WorldGraph(exchanges=list(reversed(exchanges))).observation_digest(
+              M, {"revivable": 4_000_000.0}))
+    check("a mutated quote moves it",
+          d1 != WorldGraph(exchanges=[quote("q1", "credit", 1.0, "energy", 2.5)]
+                           ).observation_digest(M, {"revivable": 4_000_000.0}))
+    check("a different M(S) or a different horizon moves it",
+          d1 != g.observation_digest([], {"revivable": 4_000_000.0})
+          and d1 != g.observation_digest(M, {}))
+    check("the observation digest is NOT the ruler's digest: prose-free and graph-only",
+          d1 == WorldGraph(exchanges=list(exchanges), means=[], acts=[]).observation_digest(
+              M, {"revivable": 4_000_000.0}))
 
     print(f"\nchecks: {ok + bad}, failures: {bad}")
     sys.exit(1 if bad else 0)

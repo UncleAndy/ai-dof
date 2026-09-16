@@ -1,12 +1,15 @@
-from typing import Dict, Optional
+from typing import Dict, List, Optional
 
-from calculus_core import EntityState, PsiReference, SystemStateMatrix
+from calculus_core import (EntityState, ObservationContext, PsiReference,
+                           SystemStateMatrix)
 from measurement import (
     LensObservation,
     MeasurementDeclaration,
     build_declaration,
     measure_entity,
+    verify_graph_derived,
 )
+from world_graph import WorldGraph
 
 
 class GraphMapper:
@@ -48,7 +51,7 @@ class GraphMapper:
     """
 
     # Keys of `raw_observations` that describe the world/agent, not an entity.
-    RESERVED_KEYS = ("resource_layer",)
+    RESERVED_KEYS = ("resource_layer", "world")
 
     def __init__(self, context_switch_cost: float = 0.05,
                  psi_id: str = "perception-v1",
@@ -59,6 +62,15 @@ class GraphMapper:
         # The declaration frozen on the state being built; the orchestrator
         # hands it to the audit report (§6.2).
         self.last_declaration: Optional[MeasurementDeclaration] = None
+        # The observation the state was decided over (§3.5/§4.9). Kept beside
+        # the state, never inside it: a world graph is a Perception artifact,
+        # exactly like the derived groups and the observed rates.
+        self.last_observation: Optional[ObservationContext] = None
+        # Mismatches between the declared derived numbers and what the named
+        # procedures recompute over the observation (§4.6/§4.9). Empty means the
+        # ruler is honest; a non-empty list means the declaration claimed a
+        # counter its own observation does not support.
+        self.last_graph_problems: List[str] = []
 
     def poll_environment(self, raw_observations: Dict[str, dict]) -> SystemStateMatrix:
         """Build a SystemStateMatrix from raw observations."""
@@ -68,6 +80,32 @@ class GraphMapper:
         rates = layer.get("rates") or {}
         units = layer.get("resources") or []
         mandate = layer.get("mandate") or {}
+
+        # §3.5 (v0.7): the observed world graph, when the cycle was given one.
+        # It is an *observation*, so it arrives with the measurement and not
+        # inside the state: the same state plus a different observation is a
+        # different decision, and the report has to say which one was used.
+        world_obs = raw_observations.get("world") or {}
+        graph: Optional[WorldGraph] = None
+        if world_obs:
+            nodes: Dict[str, dict] = {}
+            for eid, spec in (world_obs.get("entities") or {}).items():
+                node = dict(spec)
+                node.setdefault("id", str(eid))
+                nodes[str(eid)] = node
+            graph = WorldGraph(
+                entities=nodes,
+                means=[str(m) for m in (world_obs.get("means") or [])],
+                acts=list(world_obs.get("acts") or []),
+                exchanges=list(world_obs.get("exchanges") or []),
+            )
+        # §4.9: the admissible-means class and the recovery horizon are part of
+        # the observation, so a verdict can never be asserted — only computed.
+        means_class = [str(c) for c in (world_obs.get("means_class") or [])]
+        t_rec = {str(k): float(v) for k, v in (world_obs.get("t_rec") or {}).items()}
+        numeraire = world_obs.get("numeraire")
+        graph_procedure = str(world_obs.get("procedure")
+                              or f"{self.psi_id}:world_verdicts")
 
         observations: Dict[str, LensObservation] = {}
         min_ttc = float("inf")
@@ -85,10 +123,69 @@ class GraphMapper:
         # (§3.2). A safe large value is used when none exists.
         global_ttc = min_ttc if min_ttc != float("inf") else 1e15
 
+        # §4.9 (v0.7): the counting horizon of the Variety procedure. A response
+        # vector must be executable inside it, so the default is the cycle's own
+        # τ — the observation may declare a different one, but never an implicit
+        # one: an unpacked horizon would change `V` without appearing anywhere.
+        counting_horizon = (float(world_obs.get("counting_horizon_mks", global_ttc))
+                            if world_obs else None)
+
+        # §4.6 (v0.7): the numeraire weights and the mandate cap are DERIVED over
+        # the observation, not authored. Without a declared numeraire there is no
+        # unit for a scalar cap, so neither applies — which is what keeps a
+        # ruler without a world graph reading exactly as it did in v0.6.
+        weights: Dict[str, float] = {}
+        cap: Optional[float] = None
+        if graph is not None and numeraire:
+            members = sorted({str(r) for grp in (groups or []) for r in grp})
+            weights = graph.weights_to(str(numeraire), members)
+            # §3.5/§4.8: the axis rates are the *output* of the observation
+            # procedure, so with a graph in hand the table is derived rather than
+            # read from the layer. A declared table next to an observed graph
+            # would be a second ruler for the same quantity, free to drift.
+            derived: Dict[str, Dict[str, float]] = {}
+            for a in members:
+                for b in members:
+                    if a == b:
+                        continue
+                    res = graph.rate(a, b)
+                    if res.status == "observed" and res.rate:
+                        derived[f"{a}->{b}"] = {"rate": float(res.rate),
+                                                "duration_mks": float(res.duration_mks)}
+            if derived:
+                rates = derived
+            limits: List[float] = []
+            for key, value in sorted((mandate or {}).items()):
+                if key == "cap":
+                    limits.append(float(value))
+                elif key == "external_limit_credit":
+                    # Declared in credits, applied in the numeraire: converted
+                    # through the *observed* weight, never a hard-coded 1.0.
+                    w_credit = weights.get("credit")
+                    if w_credit is not None:
+                        limits.append(float(value) * float(w_credit))
+            cap = min(limits) if limits else None
+
+        # §4.6/§4.9: the verdicts and the counters are computed by the named
+        # procedures and then *declared*, so the declaration can be checked
+        # against the observation it came from (`verify_graph_derived`).
+        verdicts: Dict[str, Dict[str, object]] = {}
+        if graph is not None:
+            for eid in sorted(observations):
+                v = graph.verdict(eid, means_class, t_rec.get(eid))
+                verdicts[eid] = {"verdict": v.verdict,
+                                 "t_rec_mks": t_rec.get(eid),
+                                 "v": graph.v_count(eid, means_class, counting_horizon)}
+
         # Pass 2: the declaration is frozen on S, so τ is known before measuring.
         declaration = build_declaration(self.psi_id, observations, global_ttc, self.u0_prior_q,
                                         resources=units, groups=groups, rates=rates,
-                                        mandate=mandate)
+                                        mandate=mandate,
+                                        numeraire=(str(numeraire) if numeraire else None),
+                                        weights=weights, mandate_cap=cap,
+                                        verdicts=verdicts,
+                                        means_class=means_class,
+                                        graph_procedure=graph_procedure)
         self.last_declaration = declaration
         u0 = declaration.u0()   # at t = 0 the schedule of §4.7 gives u₀
 
@@ -97,7 +194,8 @@ class GraphMapper:
             if eid in self.RESERVED_KEYS:
                 continue
             measurement = measure_entity(eid, observations[eid], u0,
-                                         means=means, groups=groups)
+                                         means=means, groups=groups,
+                                         weights=weights, cap=cap)
             entities[eid] = EntityState(
                 entity_id=eid,
                 is_autonomous=obs.get("is_autonomous", True),
@@ -108,6 +206,20 @@ class GraphMapper:
                 time_to_collapse_mks=float(obs.get("time_to_collapse_mks", float("inf"))),
                 measurement=measurement,
             )
+
+        # §3.5/§4.9: the observation itself, pinned by its own digest (§6.2), and
+        # the self-check that the declared derived numbers are the ones the named
+        # procedures actually return over it.
+        self.last_observation = None
+        self.last_graph_problems = []
+        if graph is not None:
+            self.last_observation = ObservationContext(
+                world=graph, means_class=means_class, t_rec=t_rec,
+                counting_horizon_mks=counting_horizon,
+                observation_digest=graph.observation_digest(means_class, t_rec,
+                                                            counting_horizon))
+            self.last_graph_problems = verify_graph_derived(declaration, graph,
+                                                            counting_horizon)
 
         return SystemStateMatrix(
             global_time_to_collapse_mks=global_ttc,

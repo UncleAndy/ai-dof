@@ -61,35 +61,61 @@ class DOFOrchestrator:
 
     def _gates(self, state: SystemStateMatrix, options: List[ActionOption]
                ) -> Tuple[List[ActionOption], List[Dict[str, str]]]:
-        """§5 → §4.5 → §4.8, in that order, with every removal recorded."""
+        """§5 → §4.5 → §4.8, in that order, with every removal recorded.
+
+        The observation comes from the mapper and is handed to the structural
+        gate: the charge of §4.2 is taken against `calc(S)`, and `calc` is decided
+        by the verdicts of §4.9 — so the gate and the index must be scored against
+        the same set, or the gate would filter a different world than the one the
+        decision was made in.
+        """
+        ctx = self.mapper.last_observation
+        declaration = self.mapper.last_declaration
         tau = state.global_time_to_collapse_mks
         viable, removed_viability = self._apply_viability_gate(options, tau)
-        admissible, removed_structural = self.core.apply_structural_gate(state, viable)
-        declaration = self.mapper.last_declaration
+        admissible, removed_structural = self.core.apply_structural_gate(state, viable, ctx)
         affordable, removed_resource = self.core.apply_resource_gate(
             state, admissible,
             groups=declaration.groups if declaration else None,
-            rates=declaration.rates if declaration else None)
+            rates=declaration.rates if declaration else None,
+            weights=declaration.weights if declaration else None,
+            cap=declaration.mandate_cap if declaration else None)
         return affordable, removed_viability + removed_structural + removed_resource
 
     def step(self, raw_observations: dict) -> Optional[ActionOption]:
         """Run one decision cycle and return the verified safe vector."""
         state: SystemStateMatrix = self.mapper.poll_environment(raw_observations)
+        ctx = self.mapper.last_observation
         options, _removed = self._gates(state, self._generate(state, state.global_time_to_collapse_mks))
-        return self.core.evaluate_and_select(state, options)
+        return self.core.evaluate_and_select(state, options, ctx)
 
     def step_with_report(self, raw_observations: dict) -> Tuple[Optional[ActionOption], DofReport]:
         """Like step(), but also returns the Proof-of-Implementation audit."""
         state: SystemStateMatrix = self.mapper.poll_environment(raw_observations)
+        ctx = self.mapper.last_observation
         tau = state.global_time_to_collapse_mks
         mode = "FAST_PASS" if tau < self.FAST_PASS_THRESHOLD else "DEEP_DIVERSIFICATION"
 
         options, removed = self._gates(state, self._generate(state, tau))
-        selected = self.core.evaluate_and_select(state, options)
+        selected = self.core.evaluate_and_select(state, options, ctx)
         declaration = self.mapper.last_declaration
+        # §6.2 (v0.7): where the amounts a decision rests on came from — a
+        # measured balance or an asserted authority — so a reader can check the
+        # ceiling against a measurement instead of against a claim.
+        means_provenance: Dict[str, object] = {
+            "source": "measured balance (§4.8)",
+            "measured": dict(state.resources),
+            "numeraire": declaration.numeraire if declaration else None,
+            "weights": dict(declaration.weights) if declaration else {},
+            "mandate_cap": declaration.mandate_cap if declaration else None,
+        }
         report = self.core.report(state, options, selected, mode,
                                   declaration=declaration,
                                   removed_options=removed,
                                   groups=declaration.groups if declaration else None,
-                                  rates=declaration.rates if declaration else None)
+                                  rates=declaration.rates if declaration else None,
+                                  ctx=ctx,
+                                  weights=declaration.weights if declaration else None,
+                                  cap=declaration.mandate_cap if declaration else None,
+                                  means_provenance=means_provenance)
         return selected, report

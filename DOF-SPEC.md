@@ -93,7 +93,7 @@ An entity with `current_dof == 0.0` **and** `dof_known == true` is at collapse (
 - the per-entity lens counters: `V` and `V_env`, the Options **inputs** — the raw per-resource requirements together with the derived `(c_g, C_g)` pairs that the procedure of §4.6 produces from them — and `F` and `F_env`;
 - the frozen scales: `τ` and the declared `u₀` prior level;
 - the resource identities with their **unit name and scale** (plus the currency for money), the **derived groups**, the **observed rates** together with the **numeraire** each group is expressed in, and the **declared mandate** with any external limits (§4.8);
-- the **graph-derived values** of §4.9: the Variety counter `V` per entity, the reachability **verdict** per entity, the identifiers of the admissible-means class `M(S)`, the recovery horizon `T_rec(X)` per entity, and the **closed-transition lists** of the options (§4.4).
+- the **graph-derived values** of §4.9: the Variety counter `V` per entity, the reachability **verdict** per entity, the identifiers of the admissible-means class `M(S)`, the recovery horizon `T_rec(X)` per entity, and the **numeraire** together with the derived weights in which group amounts are expressed (§4.6). An option's closure list is a per-option input like `projected_dof_delta`: it is reported per option (§6.3) and MUST NOT enter the digest — a digest that moved with the candidate set would stop being a ruler.
 
 *Report context* (SHOULD accompany the report; MUST NOT change the digest):
 
@@ -229,11 +229,13 @@ An irreversible action does not pay a toll; it **removes options**. An option de
 ActionOption.closed := [ { kind: "act" | "mean", id } ]
 ```
 
-For every entity whose responses depend on a closed transition, the closure lowers the Variety counter `V` in `S'` (§4.6), and the option's price is the **resulting change of that entity's Variety share**:
+For every entity whose responses depend on a closed transition, the closure lowers the Variety counter `V`, and the projection of §4.3 recomputes that entity's `ψ_var` from the changed counter. The price is therefore **not a separate entry subtracted from `NetDelta`**: it is already inside the DoF difference, where the loss of freedom is actually measured. It decomposes per affected entity as
 
 ```text
-price(o) = sum over affected e of [ ln psi_var(e, S') - ln psi_var(e, S) ]
+closure_share(e, o) = ln psi_var(e, S') - ln psi_var(e, S)     (reported per entity, §6.3)
 ```
+
+and subtracting it again as a penalty would charge the same loss twice — once where freedom is measured, once as a toll.
 
 - **No constant is used.** `x_rig` is not defined: it was a placeholder for exactly this mechanism, and a fixed number of nats is dimensionally wrong — the same value weighs differently for one entity and for a hundred, and does not depend on how much was closed. The price MUST be recomputable from the counters; an implementation that cannot show that recomputation is non-conformant.
 - **A closure is a price, not a gate.** It never removes the option that performs it: the option stays admissible and may win on its merits (§4.5), which is what lets a costly-but-decisive action rescue a node. Only the collapse charge of §4.2 removes anything, and only while a charge-free candidate exists.

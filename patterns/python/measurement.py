@@ -118,26 +118,39 @@ def canonical_groups(groups: Optional[Sequence[Sequence[str]]],
 
 
 def derive_blocks(requirements: Dict[str, float], means: Dict[str, float],
-                  groups: Optional[Sequence[Sequence[str]]] = None
+                  groups: Optional[Sequence[Sequence[str]]] = None,
+                  weights: Optional[Dict[str, float]] = None,
+                  cap: Optional[float] = None
                   ) -> List[Tuple[float, float]]:
-    """§4.6 (v0.6): the derived `(c_g, C_g)` pair of every resource block.
+    """§4.6 (v0.7): the derived `(c_g, C_g)` pair of every resource block.
 
     Named procedure. For each derived group `g`:
 
-        c_g = Σ_{r ∈ g} requirement_r        (what the transition draws)
-        C_g = Σ_{r ∈ g} means_r              (what the agent can commit)
+        c_g = Σ_{r ∈ g} w_r · requirement_r
+        C_g = min( Σ_{r ∈ g} w_r · means_r , cap )
 
-    Resources inside a group are mutually exchangeable, so they share one block:
-    a deficit in one member is coverable from another member's means (§4.8),
-    which is exactly why the requirement and the budget are summed over the same
-    set. Zero is a legal value on both sides; `psi_opt` then applies the
+    `w_r` is the observed rate of resource `r` to the group's **numeraire**
+    (§3.5/§4.8). Without it the sum adds credits to joules, and the value of the
+    lens starts to depend on the unit a resource happens to be declared in: the
+    lens would measure notation instead of the world. A resource with no path to
+    the numeraire is its own singleton group and carries weight `1.0` — with no
+    exchange available, its own unit *is* its nominal.
+
+    `cap` is the **mandate**: permission, never possibility. It can only lower
+    `C_g`, so a narrow mandate removes an option a large balance would have paid
+    for, and no mandate can make payable what the measured means cannot cover.
+
+    Zero stays a legal value on both sides; `psi_opt` then applies the
     `c_g > 0 ∧ C_g = 0` gate. The derivation is total by construction — every
     resource of the inputs lands in exactly one group (`canonical_groups`).
     """
+    w = {str(k): float(v) for k, v in (weights or {}).items()}
     blocks: List[Tuple[float, float]] = []
     for group in canonical_groups(groups, requirements, means):
-        c_g = sum(max(0.0, float(requirements.get(r, 0.0))) for r in group)
-        C_g = sum(max(0.0, float(means.get(r, 0.0))) for r in group)
+        c_g = sum(w.get(r, 1.0) * max(0.0, float(requirements.get(r, 0.0))) for r in group)
+        C_g = sum(w.get(r, 1.0) * max(0.0, float(means.get(r, 0.0))) for r in group)
+        if cap is not None:
+            C_g = min(C_g, max(0.0, float(cap)))
         blocks.append((c_g, C_g))
     return blocks
 
@@ -160,9 +173,15 @@ class LensObservation(BaseModel):
     options: Optional[List[Tuple[float, float]]] = None   # [(c_g, C_g), ...]
     constraint: Optional[Dict[str, float]] = None     # {"F": float, "F_env": float}
     requirements: Optional[Dict[str, float]] = None   # {"energy": 4.0, ...} (§4.6)
+    # §4.6 (v0.7): the observed rates to the numeraire, and the mandate cap that
+    # limits what may be spent. Both belong to the ruler's resource layer.
+    weights: Optional[Dict[str, float]] = None
+    cap: Optional[float] = None
 
     def psi(self, lens: str, means: Optional[Dict[str, float]] = None,
-            groups: Optional[Sequence[Sequence[str]]] = None) -> Optional[float]:
+            groups: Optional[Sequence[Sequence[str]]] = None,
+            weights: Optional[Dict[str, float]] = None,
+            cap: Optional[float] = None) -> Optional[float]:
         if lens == "variety":
             if self.variety is None:
                 return None
@@ -171,7 +190,8 @@ class LensObservation(BaseModel):
             if self.options is not None:
                 return psi_opt(self.options)
             if self.requirements is not None:
-                return psi_opt(derive_blocks(self.requirements, means or {}, groups))
+                return psi_opt(derive_blocks(self.requirements, means or {}, groups,
+                                             weights, cap))
             return None
         if lens == "constraint":
             if self.constraint is None:
@@ -226,13 +246,20 @@ class EntityMeasurement(BaseModel):
     binding_lens: Optional[str]              # lowest measured lens; ties → LENS_ORDER
     blocks: List[Tuple[float, float]] = []   # §4.6: the derived (c_g, C_g) actually used
     derivation: Optional[Dict[str, object]] = None  # the named procedure and its inputs
+    variety_counters: Optional[Dict[str, float]] = None  # §4.6 (v0.7): the declared counters
 
 
 def measure_entity(entity_id: str, obs: LensObservation, u_value: float,
                    means: Optional[Dict[str, float]] = None,
-                   groups: Optional[Sequence[Sequence[str]]] = None
+                   groups: Optional[Sequence[Sequence[str]]] = None,
+                   weights: Optional[Dict[str, float]] = None,
+                   cap: Optional[float] = None
                    ) -> EntityMeasurement:
     """Apply §4.6–§4.7 to one entity."""
+    if weights is None:
+        weights = obs.weights
+    if cap is None:
+        cap = obs.cap
     psi: Dict[str, Optional[float]] = {}
     terms: List[Dict[str, object]] = []
     product = 1.0
@@ -240,7 +267,7 @@ def measure_entity(entity_id: str, obs: LensObservation, u_value: float,
     terms_sum = 0.0
 
     for lens in LENS_ORDER:
-        value = obs.psi(lens, means, groups)
+        value = obs.psi(lens, means, groups, weights, cap)
         psi[lens] = value
         if value is None:
             known_all = False
@@ -266,12 +293,17 @@ def measure_entity(entity_id: str, obs: LensObservation, u_value: float,
     blocks: List[Tuple[float, float]] = []
     derivation: Optional[Dict[str, object]] = None
     if obs.requirements is not None:
-        blocks = derive_blocks(obs.requirements, means or {}, groups)
+        blocks = derive_blocks(obs.requirements, means or {}, groups, weights, cap)
         derivation = {
             "procedure": DERIVE_BLOCKS_PROCEDURE,
             "requirements": dict(obs.requirements),
             "means": dict(means or {}),
             "groups": canonical_groups(groups, obs.requirements, means),
+            # §4.6 (v0.7): the numeraire weights and the mandate cap are part of
+            # the derivation, so a reader can recompute `(c_g, C_g)` and see that
+            # the sum is not adding different physical units together.
+            "weights": {str(k): float(v) for k, v in (weights or {}).items()},
+            "cap": cap,
         }
 
     return EntityMeasurement(
@@ -286,6 +318,7 @@ def measure_entity(entity_id: str, obs: LensObservation, u_value: float,
         binding_lens=binding,
         blocks=blocks,
         derivation=derivation,
+        variety_counters=dict(obs.variety) if obs.variety else None,
     )
 
 
@@ -311,6 +344,16 @@ class MeasurementDeclaration(BaseModel):
     groups: List[List[str]] = []                          # derived exchange groups
     rates: Dict[str, Dict[str, float]] = {}               # "from->to" -> {rate, duration_mks}
     mandate: Dict[str, object] = {}                       # declared mandate + limits
+    # §3.4.1 hashed content (v0.7) — the graph-derived values of §4.9 and the
+    # numeraire the group amounts are expressed in. Only what determines numbers
+    # is here: the graph itself, the witness paths and the observation digest are
+    # report context (§6.2), and an option's closure list is a per-option input
+    # like `projected_dof_delta`, not ruler content.
+    numeraire: Optional[str] = None                       # §4.6: the declared unit of account
+    weights: Dict[str, float] = {}                        # resource -> observed rate to the numeraire
+    verdicts: Dict[str, Dict[str, object]] = {}           # entity -> {verdict, t_rec_mks, v}
+    means_class: List[str] = []                           # §4.9: identifiers of M(S), canonical order
+    graph_procedure: str = ""                             # §4.9: identity and version of the verdict procedure
 
     def u0(self) -> float:
         return u0_from_prior(self.u0_prior_q)
@@ -346,7 +389,12 @@ def build_declaration(psi_id: str, lens_observations: Dict[str, LensObservation]
                       resources: Optional[Sequence[Dict[str, object]]] = None,
                       groups: Optional[Sequence[Sequence[str]]] = None,
                       rates: Optional[Dict[str, Dict[str, float]]] = None,
-                      mandate: Optional[Dict[str, object]] = None) -> MeasurementDeclaration:
+                      mandate: Optional[Dict[str, object]] = None,
+                      numeraire: Optional[str] = None,
+                      weights: Optional[Dict[str, float]] = None,
+                      verdicts: Optional[Dict[str, Dict[str, object]]] = None,
+                      means_class: Optional[Sequence[str]] = None,
+                      graph_procedure: str = "") -> MeasurementDeclaration:
     """Assemble the frozen declaration for one state (§3.4.1).
 
     The resource layer is normalized before hashing: units sorted by resource
@@ -366,4 +414,37 @@ def build_declaration(psi_id: str, lens_observations: Dict[str, LensObservation]
         groups=canonical_groups(groups),
         rates={str(k): dict(v) for k, v in (rates or {}).items()},
         mandate=dict(mandate or {}),
+        numeraire=numeraire,
+        weights={str(k): float(v) for k, v in sorted((weights or {}).items())},
+        verdicts={str(e): dict(v) for e, v in sorted((verdicts or {}).items())},
+        means_class=sorted(str(c) for c in (means_class or [])),
+        graph_procedure=str(graph_procedure),
     )
+
+
+def verify_graph_derived(declaration: MeasurementDeclaration, graph,
+                         counting_horizon_mks: Optional[float]) -> List[str]:
+    """§4.6/§4.9: derived numbers MUST equal what their procedure computes.
+
+    Recomputes, over the supplied graph, the Variety counter and the reachability
+    verdict of every entity against the declaration's `M(S)` and `T_rec`, and
+    returns a list of mismatches (empty = the ruler is honest). A declaration
+    that claims a counter its own observation does not support is exactly the
+    "declared, not derived" defect this revision removes.
+    """
+    problems: List[str] = []
+    cats = list(declaration.means_class)
+    for entity_id, declared in sorted(declaration.verdicts.items()):
+        v_declared = declared.get("v")
+        if v_declared is not None:
+            v_here = graph.v_count(entity_id, cats, counting_horizon_mks)
+            if int(v_declared) != int(v_here):
+                problems.append(
+                    f"{entity_id}: declared V={v_declared} but the counting procedure gives {v_here}")
+        t_rec = declared.get("t_rec_mks")
+        verdict_here = graph.verdict(entity_id, cats, t_rec).verdict
+        if str(declared.get("verdict")) != verdict_here:
+            problems.append(
+                f"{entity_id}: declared verdict {declared.get('verdict')!r} "
+                f"but the verdict procedure returns {verdict_here!r}")
+    return problems

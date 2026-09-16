@@ -18,7 +18,8 @@ import math
 from typing import List, Dict, Optional, Sequence, Set, Tuple
 from pydantic import BaseModel, Field
 
-from measurement import EntityMeasurement, MeasurementDeclaration
+from measurement import EntityMeasurement, MeasurementDeclaration, psi_var
+from world_graph import ClosedRef, WorldGraph
 
 
 class PsiReference(BaseModel):
@@ -63,6 +64,12 @@ class ActionOption(BaseModel):
     # production. `energy` MUST be present (written as 0.0) for every entity
     # named in `projected_dof_delta`.
     projected_resource_delta: Dict[str, Dict[str, float]] = {}
+    # §3.3/§4.4 (v0.7): the transitions this option CLOSES — the acts and means
+    # that cease to exist once it executes. `is_reversible` is *derived* from this
+    # list (true exactly when it is empty) and is kept only as a reported field:
+    # a label that could be set to dodge the price is not a rule.
+    closed: List[ClosedRef] = []
+    act_id: Optional[str] = None                     # the graph act implementing this option
 
 
 class DofReport(BaseModel):
@@ -86,42 +93,109 @@ class DofReport(BaseModel):
     # only if the spend is written where the next cycle can see it (§4.8).
     resources_before: Dict[str, float] = {}
     resources_after: Dict[str, float] = {}
+    # §6.2 (v0.7): where each amount of the agent's means came from — a measured
+    # balance or an asserted authority — and the identity of the observation a
+    # reported subgraph was taken from.
+    means_provenance: Dict[str, object] = {}
+    observation_digest: Optional[str] = None
+
+
+class ObservationContext(BaseModel):
+    """The observation a cycle is decided over (DOF-SPEC §3.5, §4.9).
+
+    Deliberately NOT a state field: the world graph is a Perception artifact
+    supplied to the cycle, exactly as the derived groups and the observed rates
+    are (§4.8). Without it every verdict is `undetermined`, which means no entity
+    at a known zero is excluded and no collapse-source label is honoured — the
+    fail-safe direction: nothing is proven, so nothing is removed.
+    """
+
+    world: WorldGraph
+    means_class: List[str] = []                       # M(S): admissible-means identifiers
+    t_rec: Dict[str, float] = {}                      # entity -> recovery horizon, µs
+    counting_horizon_mks: Optional[float] = None      # horizon of the V counting procedure
+    observation_digest: str = ""                      # §6.2: pins the reported subgraph
+
+    def horizon(self, entity_id: str) -> Optional[float]:
+        return self.t_rec.get(entity_id)
+
+    def verdict(self, entity_id: str) -> str:
+        return self.world.verdict(entity_id, self.means_class,
+                                  self.horizon(entity_id)).verdict
+
+    def v_before(self, entity_id: str) -> int:
+        return self.world.v_count(entity_id, self.means_class, self.counting_horizon_mks)
+
+    def v_after_closure(self, entity_id: str, closed: Sequence[ClosedRef]) -> int:
+        if not closed:
+            return self.v_before(entity_id)
+        return self.world.with_closed(closed).v_count(entity_id, self.means_class,
+                                                      self.counting_horizon_mks)
 
 
 class DOFCalculusCore:
     def __init__(self, epsilon: float = 1e-6):
         self.epsilon = epsilon  # Protection against ln(0) — a numerics device (§4.1)
 
-    def _is_included(self, entity: EntityState) -> bool:
+    def _is_included(self, entity: EntityState, ctx: Optional[ObservationContext] = None,
+                     state: Optional[SystemStateMatrix] = None) -> bool:
         """Whether an entity belongs to the calculation set `calc` (DOF-SPEC §4.2).
 
-        Excluded if it is a collapse source, or if its DoF is a **known** zero
-        (no recovery path is asserted for it). A node with an unknown DoF
-        (`dof_known == False`) is never excluded (Axiom 5).
+        Excluded if it is a **witnessed** collapse source, or if its DoF is a
+        known zero whose recoverability verdict is `proven_unreachable`. A node
+        with an unknown DoF is never excluded (Axiom 5), and neither is a node
+        whose verdict is `reachable` or `undetermined` — incompleteness of an
+        observation is never read as proof (§4.9).
 
-        The witness of unrecoverability MUST NOT be the Generator's candidate
-        set (§4.2): what a poor option list fails to propose says nothing about
-        the world, so `calc` is decided from the entity's own state only.
+        The witness of unreachability MUST NOT be the Generator's candidate set
+        (§4.2), and a verdict is computed from the observation, never asserted.
+        With no observation at all nothing is proven, so nothing is excluded.
         """
-        if entity.is_collapse_source:
-            return False
+        if entity.is_collapse_source and self._label_witnessed(entity, ctx, state):
+            return False                      # aggressors leave the topology
         if entity.current_dof > 0.0:
             return True
-        return not entity.dof_known
+        if not entity.dof_known:
+            return True
+        if ctx is None:
+            return True                       # fail-safe: no observation, no proof
+        return ctx.verdict(entity.entity_id) != "proven_unreachable"
 
     def _coerce_dof(self, value: float) -> float:
         return max(0.0, min(1.0, value))
 
-    def calc_members(self, state: SystemStateMatrix) -> Set[str]:
+    def _label_witnessed(self, entity: EntityState, ctx: Optional[ObservationContext],
+                         state: Optional[SystemStateMatrix]) -> bool:
+        """§4.2/§4.9: a label is honoured only with a machine-verifiable act.
+
+        The act must be performed by this entity and must drive an entity that
+        would otherwise be counted to a known zero. A flag without such an act is
+        not a verdict — otherwise the label itself would raise the index.
+        """
+        if ctx is None or state is None:
+            return False
+        counted = {e.entity_id for e in state.entities.values()
+                   if not e.is_collapse_source and (e.current_dof > 0.0 or not e.dof_known)}
+        if entity.entity_id not in counted:
+            return False
+        dof_before = {e.entity_id: e.current_dof for e in state.entities.values()}
+        acts = set(ctx.world.collapse_acts(counted, dof_before))
+        return any(a.source == entity.entity_id and a.id in acts
+                   for a in ctx.world.acts)
+
+    def calc_members(self, state: SystemStateMatrix,
+                     ctx: Optional[ObservationContext] = None) -> Set[str]:
         """§4.2: the calculation set `calc(S)`, frozen for the whole cycle.
 
         Computed once, on `S`, and reused for every simulated state: the same
         entities are summed in `S` and in `S'`, so a term cannot appear or
         disappear between the two sides of `NetDelta`.
         """
-        return {e.entity_id for e in state.entities.values() if self._is_included(e)}
+        return {e.entity_id for e in state.entities.values()
+                if self._is_included(e, ctx, state)}
 
-    def simulate(self, current_state: SystemStateMatrix, option: ActionOption
+    def simulate(self, current_state: SystemStateMatrix, option: ActionOption,
+                 ctx: Optional[ObservationContext] = None
                  ) -> Tuple[SystemStateMatrix, Set[str]]:
         """Apply an option's projected deltas to produce a simulated state.
 
@@ -134,12 +208,23 @@ class DOFCalculusCore:
         The agent's means travel with the state unchanged: `simulate` scores the
         DoF consequences of an option, and the resource side is decided by the
         gate of §4.8 (a DoF projection must not silently also pay for itself).
+
+        §4.4 (v0.7): when the option closes transitions and an observation is
+        supplied, the affected entities' Variety counter falls in `S'` and their
+        `DoF` is recomputed from the changed counter — so the price of a closure
+        sits *inside* the DoF difference, where freedom is measured, instead of
+        being a separate entry that would charge the same loss twice.
         """
-        members = self.calc_members(current_state)
+        self.validate_closure(option)
+        members = self.calc_members(current_state, ctx)
         simulated_entities: Dict[str, EntityState] = {}
         for e_id, e_state in current_state.entities.items():
             new_dof = self._coerce_dof(
                 e_state.current_dof + option.projected_dof_delta.get(e_id, 0.0))
+            if ctx is not None and option.closed:
+                recomputed = self._dof_after_closure(e_state, option, ctx)
+                if recomputed is not None:
+                    new_dof = recomputed
             simulated_entities[e_id] = EntityState(
                 entity_id=e_id,
                 is_autonomous=e_state.is_autonomous,
@@ -158,8 +243,95 @@ class DOFCalculusCore:
         )
         return simulated, members
 
+    def validate_closure(self, option: ActionOption) -> None:
+        """§4.4 guards. Both violations are non-conformant, so the cycle refuses.
+
+        (1) An option MUST NOT list its own execution path among the transitions
+        it closes — that would be a contradiction, not a price. (2) `closed` MUST
+        be non-empty whenever `is_reversible` reads false; `is_reversible` is
+        derived from the list, so an empty list with a false label is a lie that
+        would also be an escape from the price.
+        """
+        if option.closed and option.act_id and any(
+                c.kind == "act" and c.id == option.act_id for c in option.closed):
+            raise ValueError(
+                f"{option.option_id}: closes its own execution path (§4.4 guard 1)")
+        if not option.closed and option.is_reversible is False:
+            raise ValueError(
+                f"{option.option_id}: is_reversible=false with an empty closure list "
+                f"(§4.4 guard 2)")
+
+    def is_reversible(self, option: ActionOption) -> bool:
+        """§4.4: the reported flag is DERIVED — true exactly when nothing is closed."""
+        return not option.closed
+
+    def _dof_after_closure(self, entity: EntityState, option: ActionOption,
+                           ctx: ObservationContext) -> Optional[float]:
+        """`DoF` recomputed from the counters after the option's closure (§4.3, §4.4).
+
+        Only the Variety share moves, so the whole product moves by its ratio: the
+        other lenses (and any `u(t)` factors) are untouched by a closure. Returns
+        `None` when the entity is not affected or its Variety lens was unmeasured.
+        """
+        m = entity.measurement
+        var_before = m.psi.get("variety") if m else None
+        if m is None or var_before is None or not m.variety_counters:
+            return None
+        v_env = float(m.variety_counters.get("V_env", 0.0))
+        v_before = ctx.v_before(entity.entity_id)
+        v_after = ctx.v_after_closure(entity.entity_id, option.closed)
+        if v_after == v_before:
+            return None                      # this entity is not affected
+        return self._coerce_dof(m.current_dof / var_before * psi_var(v_after, v_env))
+
+    def closure_share(self, state: SystemStateMatrix, option: ActionOption,
+                      ctx: Optional[ObservationContext]) -> Dict[str, float]:
+        """§6.3: the per-entity decomposition of a closure's price.
+
+        This is a *decomposition* of the loss that is already inside `NetDelta`
+        (§4.3/§4.4), never an extra charge: it exists so a reader can see which
+        entity lost which share, and by how much.
+        """
+        out: Dict[str, float] = {}
+        if ctx is None or not option.closed:
+            return out
+        for e_id, ent in sorted(state.entities.items()):
+            m = ent.measurement
+            var_before = m.psi.get("variety") if m else None
+            if m is None or var_before is None or not m.variety_counters:
+                continue
+            v_env = float(m.variety_counters.get("V_env", 0.0))
+            v_after = ctx.v_after_closure(e_id, option.closed)
+            v_before = ctx.v_before(e_id)
+            if v_after == v_before:
+                continue
+            out[e_id] = round(
+                math.log(max(psi_var(v_after, v_env), self.epsilon))
+                - math.log(max(psi_var(v_before, v_env), self.epsilon)), 6)
+        return out
+
+    def recoverability_row(self, entity_id: str,
+                           ctx: Optional[ObservationContext]) -> Dict[str, object]:
+        """§6.1: the verdict, its witness, and the completeness claim behind it.
+
+        A `proven_unreachable` verdict without a witness is not a verdict, so the
+        report carries both — and names the observation, because "no path" is only
+        meaningful together with "and the observation was complete for this entity".
+        """
+        if ctx is None:
+            return {"verdict": "undetermined", "witness": [], "horizon_mks": None,
+                    "observation": "unobserved", "admissible_seen": 0,
+                    "reason": "no observation was supplied for this cycle"}
+        node = ctx.world.entities.get(entity_id)
+        v = ctx.world.verdict(entity_id, ctx.means_class, ctx.horizon(entity_id))
+        return {"verdict": v.verdict, "witness": list(v.witness),
+                "horizon_mks": ctx.horizon(entity_id),
+                "observation": (node.observation if node else "unobserved"),
+                "admissible_seen": v.admissible_seen, "reason": v.reason}
+
     def collapse_charges(self, current_state: SystemStateMatrix,
-                         option: ActionOption) -> List[Dict[str, object]]:
+                         option: ActionOption,
+                         ctx: Optional[ObservationContext] = None) -> List[Dict[str, object]]:
         """§4.2: counted entities that this option drives to a known zero.
 
         The charge depends on neither the Generator's candidate set nor the
@@ -167,13 +339,18 @@ class DOFCalculusCore:
         what the option did to it.
         """
         charges: List[Dict[str, object]] = []
-        for e_id in sorted(self.calc_members(current_state)):
+        for e_id in sorted(self.calc_members(current_state, ctx)):
             e_state = current_state.entities[e_id]
             if not e_state.dof_known:
                 continue  # unknown DoF is never a collapse (§4.2)
             new_dof = self._coerce_dof(
                 e_state.current_dof + option.projected_dof_delta.get(e_id, 0.0))
-            if new_dof == 0.0:
+            # §4.2: a charge requires a *transition* into the zero, not a stay at
+            # it. An entity already at a known zero was not destroyed by this
+            # option — charging it would make every option destructive in any
+            # state that contains a recoverable zero (an entity kept in `calc`
+            # by an `undetermined` verdict, for instance).
+            if new_dof == 0.0 and e_state.current_dof > 0.0:
                 charges.append({"entity_id": e_id, "dof_before": e_state.current_dof})
         return charges
 
@@ -221,7 +398,9 @@ class DOFCalculusCore:
 
     def plan_funding(self, state: SystemStateMatrix, option: ActionOption,
                      groups: Optional[Sequence[Sequence[str]]] = None,
-                     rates: Optional[Dict[str, Dict[str, float]]] = None
+                     rates: Optional[Dict[str, Dict[str, float]]] = None,
+                     weights: Optional[Dict[str, float]] = None,
+                     cap: Optional[float] = None
                      ) -> Dict[str, object]:
         """§4.8: decide *how* an option is paid for, and whether it can be.
 
@@ -280,18 +459,31 @@ class DOFCalculusCore:
             if remaining > 0.0:
                 uncovered[resource] = remaining
 
+        # §4.8 (v0.7): the mandate caps what may be spent, in the group numeraire.
+        # It can only remove an option a larger balance would have paid for, and it
+        # can never make payable what the measured means cannot cover.
+        mandate_exceeded = 0.0
+        if cap is not None:
+            w = {str(k): float(v) for k, v in (weights or {}).items()}
+            spent_value = sum(w.get(r, 1.0) * amount for r, amount in spend.items())
+            if spent_value > cap:
+                mandate_exceeded = spent_value - cap
+
         return {
-            "covered": not uncovered,
+            "covered": (not uncovered) and mandate_exceeded <= 0.0,
             "need": need,
             "spend": spend,
             "conversions": conversions,
             "uncovered": uncovered,
+            "mandate_exceeded": mandate_exceeded,
             "total_duration_mks": total_duration,
         }
 
     def apply_resource_gate(self, state: SystemStateMatrix, options: List[ActionOption],
                             groups: Optional[Sequence[Sequence[str]]] = None,
-                            rates: Optional[Dict[str, Dict[str, float]]] = None
+                            rates: Optional[Dict[str, Dict[str, float]]] = None,
+                            weights: Optional[Dict[str, float]] = None,
+                            cap: Optional[float] = None
                             ) -> Tuple[List[ActionOption], List[Dict[str, str]]]:
         """§4.8 step 3: an unpayable option is inadmissible, unconditionally.
 
@@ -306,14 +498,15 @@ class DOFCalculusCore:
         admissible: List[ActionOption] = []
         removed: List[Dict[str, str]] = []
         for option in options:
-            if self.plan_funding(state, option, groups, rates)["covered"]:
+            if self.plan_funding(state, option, groups, rates, weights, cap)["covered"]:
                 admissible.append(option)
             else:
                 removed.append({"option_id": option.option_id, "gate": "insolvency"})
         return admissible, removed
 
     def calculate_system_dof(self, state: SystemStateMatrix,
-                             members: Optional[Set[str]] = None) -> float:
+                             members: Optional[Set[str]] = None,
+                             ctx: Optional[ObservationContext] = None) -> float:
         """Evaluation index: pure Nash product (sum of ln(DoF)) over the calc set.
 
         Values are negative; only their ordering matters (DOF-SPEC §4.1). The
@@ -322,7 +515,7 @@ class DOFCalculusCore:
         known zero contributes the floor `ln ε` instead of silently vanishing.
         """
         if members is None:
-            members = self.calc_members(state)
+            members = self.calc_members(state, ctx)
         total_score = 0.0
         for e_id in members:
             entity = state.entities.get(e_id)
@@ -333,27 +526,29 @@ class DOFCalculusCore:
 
     def _net_delta(self, current_state: SystemStateMatrix, option: ActionOption,
                    projected_dof: float, current_dof: float) -> float:
-        net = projected_dof - current_dof - current_state.context_switch_cost
-        if not option.is_reversible:
-            net -= 0.5  # Rigidity coefficient for irreversible actions (§4.4)
-        return net
+        # §4.4 (v0.7): no flat penalty. An irreversible option's price is already
+        # inside `projected_dof`, because the closure lowered the affected
+        # entities' Variety counter in `S'` (§4.3); subtracting anything here
+        # would charge the same loss twice.
+        return projected_dof - current_dof - current_state.context_switch_cost
 
     def evaluate_and_select(self, current_state: SystemStateMatrix,
-                            options: List[ActionOption]) -> Optional[ActionOption]:
+                            options: List[ActionOption],
+                            ctx: Optional[ObservationContext] = None) -> Optional[ActionOption]:
         """Selection: strictly positive NetDelta over the `stay put` baseline
         (NetDelta = 0 by definition), rung 1 of the ladder on ties (§4.5)."""
         if not options:
             return None
-        current_system_dof = self.calculate_system_dof(current_state)
+        current_system_dof = self.calculate_system_dof(current_state, None, ctx)
         best: Optional[ActionOption] = None
         best_key: Optional[Tuple[float, int, str]] = None
         for option in options:
-            simulated, members = self.simulate(current_state, option)
-            projected_dof = self.calculate_system_dof(simulated, members)
+            simulated, members = self.simulate(current_state, option, ctx)
+            projected_dof = self.calculate_system_dof(simulated, members, ctx)
             net_delta = self._net_delta(current_state, option, projected_dof, current_system_dof)
             if net_delta <= 0.0:
                 continue  # §4.5: staying put wins; acting would degrade the index
-            key = (-net_delta, len(self.collapse_charges(current_state, option)),
+            key = (-net_delta, len(self.collapse_charges(current_state, option, ctx)),
                    option.option_id)
             if best_key is None or key < best_key:
                 best_key, best = key, option
@@ -384,11 +579,15 @@ class DOFCalculusCore:
                declaration: Optional[MeasurementDeclaration] = None,
                removed_options: Optional[List[Dict[str, str]]] = None,
                groups: Optional[Sequence[Sequence[str]]] = None,
-               rates: Optional[Dict[str, Dict[str, float]]] = None) -> DofReport:
+               rates: Optional[Dict[str, Dict[str, float]]] = None,
+               ctx: Optional[ObservationContext] = None,
+               weights: Optional[Dict[str, float]] = None,
+               cap: Optional[float] = None,
+               means_provenance: Optional[Dict[str, object]] = None) -> DofReport:
         """Transparent audit (DOF-SPEC §6). Required by the license (PoI)."""
         entity_rows: List[Dict[str, object]] = []
         for e_id, ent in current_state.entities.items():
-            included = self._is_included(ent)
+            included = self._is_included(ent, ctx, current_state)
             contribution = math.log(max(ent.current_dof, self.epsilon)) if included else 0.0
             row: Dict[str, object] = {
                 "entity_id": e_id,
@@ -406,37 +605,44 @@ class DOFCalculusCore:
             # §4.6 (v0.6): the derived blocks and the derivation behind them.
             row["blocks"] = m.blocks if m else []
             row["derivation"] = m.derivation if m else None
+            # §6.1 (v0.7): the recoverability verdict, its witness and the
+            # completeness of the observation behind it.
+            row["recoverability"] = self.recoverability_row(e_id, ctx)
             entity_rows.append(row)
-        total = self.calculate_system_dof(current_state)
+        total = self.calculate_system_dof(current_state, None, ctx)
 
         resources_before = dict(current_state.resources)
         resources_after = dict(current_state.resources)
         if selected is not None:
-            plan = self.plan_funding(current_state, selected, groups, rates)
+            plan = self.plan_funding(current_state, selected, groups, rates, weights, cap)
             for resource, amount in plan["spend"].items():
                 resources_after[resource] = max(0.0, resources_after.get(resource, 0.0) - amount)
 
         option_rows: List[Dict[str, object]] = []
         for option in options:
-            simulated, members = self.simulate(current_state, option)
-            projected_dof = self.calculate_system_dof(simulated, members)
+            simulated, members = self.simulate(current_state, option, ctx)
+            projected_dof = self.calculate_system_dof(simulated, members, ctx)
             net_delta = self._net_delta(current_state, option, projected_dof, total)
             is_selected = (selected is not None and option.option_id == selected.option_id)
-            plan = self.plan_funding(current_state, option, groups, rates)
+            plan = self.plan_funding(current_state, option, groups, rates, weights, cap)
             option_rows.append({
                 "option_id": option.option_id,
-                "is_reversible": option.is_reversible,
+                "is_reversible": self.is_reversible(option),
                 "projected_dof": projected_dof,
                 "net_delta": net_delta,
                 "selected": is_selected,
                 "estimated_duration_mks": option.estimated_duration_mks,
                 # §6.3: every collapse this option causes, as an auditable line
-                "collapse_charges": self.collapse_charges(current_state, option),
+                "collapse_charges": self.collapse_charges(current_state, option, ctx),
                 # §6.3 (v0.6): what the option draws, and how "affordable" was
                 # established — by cash in hand or by an observed trade.
                 "resource_consumption": option.projected_resource_delta,
                 "conversion_applied": plan["conversions"],
                 "resources_uncovered": plan["uncovered"],
+                "mandate_exceeded": plan["mandate_exceeded"],
+                # §6.3 (v0.7): what the option closes, and how the loss decomposes.
+                "closed": [c.model_dump() for c in option.closed],
+                "closure_share": self.closure_share(current_state, option, ctx),
             })
         return DofReport(
             entities=entity_rows,
@@ -452,4 +658,6 @@ class DOFCalculusCore:
             incomplete=self._is_incomplete(current_state, options),
             resources_before=resources_before,
             resources_after=resources_after,
+            means_provenance=dict(means_provenance or {}),
+            observation_digest=(ctx.observation_digest if ctx else None),
         )

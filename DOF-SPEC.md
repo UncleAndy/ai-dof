@@ -1,6 +1,6 @@
 # DOF-Core — Formal Specification (DOF-SPEC)
 
-**Status:** DRAFT v0.5
+**Status:** DRAFT v0.6
 **Part of:** The DOF open standard (see `SKILL.md`, `references/`, `patterns/PATTERNS.md`).
 **License:** CC BY-SA 4.0 — see `references/license.md`. Implementations MUST satisfy §6 (Proof of Implementation).
 
@@ -61,6 +61,7 @@ An entity with `current_dof == 0.0` **and** `dof_known == true` is at collapse (
 | `context_switch_cost`     | float                      | `>= 0.0`   | ΔT — penalty for changing the current process. |
 | `entities`                | map<`entity_id`,`EntityState`> | —     | The full set of observed entities. |
 | `psi`                     | object                        | —     | Frozen measurement declaration reference `{ id, digest }` (§3.4). |
+| `resources`               | map<`resource_id`, float>      | `>= 0.0` | Available means of the **acting agent** per resource, in the unit declared for that resource (§4.8). An empty map means the agent declares no means; then any option with non-zero consumption is inadmissible (§4.8). |
 
 `global_time_to_collapse_mks` is computed by the Perception layer as the **minimum** `time_to_collapse_mks` over all entities where `is_collapse_source == false`. If no such entity exists, it MAY default to a safe large value (e.g. `1e15` μs ≈ 31.7 years), but implementations SHOULD surface this as a degenerate state.
 
@@ -71,6 +72,7 @@ An entity with `current_dof == 0.0` **and** `dof_known == true` is at collapse (
 | `option_id`            | string                        | non-empty, unique | Stable identifier of the candidate plan. |
 | `description`          | string                        | —          | Human/agent-readable summary. |
 | `projected_dof_delta`  | map<`entity_id`, float>       | —          | Forecast change of `current_dof` per entity. |
+| `projected_resource_delta` | map<`entity_id`, map<`resource_id`, float>> | — | Forecast change of the agent's resource stock caused by this option, attributed to the entity whose transitions consume it. **Negative = consumption, positive = production.** For every entity named in `projected_dof_delta`, `energy` MUST be present (`0.0` declared explicitly, never omitted); time is carried by `estimated_duration_mks`. Resources are physical quantities in the units declared for them (§4.8). |
 | `is_reversible` | bool | — | `false` ⇒ irreversible ⇒ structural penalty (§4.4). |
 | `estimated_duration_mks` | float | `>= 0.0` | Estimated execution time in microseconds. |
 
@@ -89,7 +91,8 @@ An entity with `current_dof == 0.0` **and** `dof_known == true` is at collapse (
 - the identities and versions of the procedures that produced the counters;
 - `psi_id` — identifier **and version** of the declaration;
 - the per-entity lens counters: `V`/`V_env`, the Options blocks as `(c_g, C_g)` pairs, `F`/`F_env`;
-- the frozen scales: `τ` and the declared `u₀` prior level.
+- the frozen scales: `τ` and the declared `u₀` prior level;
+- the resource identities with their **unit name and scale** (plus the currency for money), the **derived groups**, the **observed rates**, and the **declared mandate** with any external limits (§4.8).
 
 *Report context* (SHOULD accompany the report; MUST NOT change the digest):
 
@@ -97,6 +100,7 @@ An entity with `current_dof == 0.0` **and** `dof_known == true` is at collapse (
 - the partition into blocks, the observed exchange rates, and the definition of the distinguishable-variable set (§4.6);
 - the prior's form, its parameters and the justification of the assumption (§4.7);
 - the duration sources `t_m`, `t_v`, `t_a⁺`, `t_a⁻`, `d(o)` and the name of the Perception procedure that produces them (§5);
+- the provenance of each observed rate — the exchange path it was taken from and the procedure that measured it (§4.8) — and what was actually converted to cover deficits.
 - the recovery horizon `T_rec(X)` and the class of admissible means `M(S)` — **reserved** (§4.2): not defined in this revision, and a declaration MUST NOT be required to carry them until they are.
 
 The split matters for §7: the digest is the evidence that two implementations measured with the same ruler, and it can only carry values that are actually computed. A declaration required to "contain" prose that enters no number would make the digest ambiguous without making the comparison any stronger.
@@ -213,6 +217,7 @@ DoF(e) = ψ_var · ψ_opt · ψ_con
 ```
 
 - **What the counters mean.** `V_env` counts **external perturbations** over the declared horizon (Ashby-literal: disturbances only). Affordances — a key, a tool, a paid-for abstraction layer, available infrastructure — are means reachable by the entity, so they add response vectors to `V`; they MUST NOT be counted in `V_env`. The counting horizon and the definition of a response vector are part of the declaration (§3.4), because two counts taken over different horizons are not comparable numbers.
+- **`(c_g, C_g)` are derived, not authored.** The block-level numbers the Options lens consumes are computed by a named procedure from raw inputs — the per-resource requirements of the entity's transitions, the agent's means, the derived groups and the observed rates (§4.8) — and the **derived numbers MUST equal what that procedure computes from those inputs**. Two implementations that arrive at the same `(c_g, C_g)` through different groups or rates would otherwise publish the same digest while reporting different behaviour.
 - **The lens set is frozen:** exactly these three, in this canonical order. Adding, removing or reordering a lens changes the number of factors and therefore the scale of every value in the index; it is a versioned change of the declaration (§3.4), not a local extension.
 - **Degenerate case (guard).** If a lens has neither a numerator nor an external clamp, its value is `0`: `V = 0` (including `V_env = 0`) ⇒ `ψ_var = 0`; no reachable transition ⇒ `ψ_opt = 0`; `F = 0 ∧ F_env = 0` ⇒ `ψ_con = 0`. The rule is **uniform across lenses**: it keeps the index total (`0/0` would yield `NaN`, and a single `NaN` poisons the whole sum), and it removes any freedom to pick a convention — otherwise two implementations would return `0`, `1` and `NaN` for the same input and §7 would be unsatisfiable. A zero lens is **not a verdict**: it makes `current_dof = 0`, and §4.2 then decides whether the entity is excluded or kept as recoverable in principle.
 - **Why a product and not a minimum.** With `ψ ∈ (0,1]` the product is never larger than the minimum, so the product is not the laxer rule — and it is the only one that stays additive in nats (`ln Πψ_l = Σ ln ψ_l`, §4.1) and defined when a factor is unknown (§4.7). Under a minimum, improving a non-binding lens does not move the index at all, which leaves no gradient toward the second-best channel.
@@ -241,6 +246,24 @@ contribution(e) = Σ_l term(e, l)
 
 ---
 
+### 4.8 Resource gate: insolvency
+
+An action costs limited resources, and the action declares what it draws from the acting agent (§3.3). Admissibility is therefore decided against the agent's means (§3.2), not against the entity's DoF:
+
+1. **Direct comparison.** If the agent's means cover the option's consumption component-wise, the option is payable and nothing is converted.
+2. **Verified conversion.** For each deficit, the missing amount MAY be obtained by an exchange inside a group of mutually exchangeable resources, at the **observed** rate — but conversion is an operation, not a substitution: the exchange path must exist, an offer must satisfy the requirement, the price must be payable from the agent's means, the payment channel must work, and the exchange itself **takes time**, which is charged to the same `τ` and passes the same gates (§5). If no such path exists, is not affordable, or does not fit in time, the deficit is simply **not covered**.
+3. **Insolvency.** After full verified conversion, if the requirement of any group still exceeds the agent's means in that group, the option is **inadmissible**: it is removed from the candidate set before selection and recorded as `{ option_id, gate: "insolvency" }` (§6.2). Not affordable is not the same as expensive, exactly as unreachable is not the same as distant — a shortage that survives full trading is a verdict, not a price.
+
+Rules that hold throughout:
+
+- **τ is not a resource.** Time-to-collapse is frozen on `S` (§4.6, R7) and is **never** obtainable by exchange; a postponement is granted only by an action that changes `τ` itself. Time appears twice and the two roles MUST NOT be conflated: `estimated_duration_mks` is the duration measured against `τ`, while working time / machine-hours is an ordinary resource in `projected_resource_delta`, purchasable at the observed rate.
+- **Every resource has a declared unit.** Name and scale (and, for money, the currency) are part of the hashed declaration content (§3.4.1); amounts are expressed in that unit. Two implementations that declare the same resource name with different scales are measurably different rulers and will produce different digests.
+- **Zero is declared, never omitted.** An absent resource key is indistinguishable from "nobody thought about it", so a resource the option does not consume is written as `0.0`.
+- **The agent's own means MUST be measured.** An unknown balance is an **invalid input**, not an evaluation mode — unlike an unmapped world-side counter, which is priced by `u(t)` (§4.7). The agent's own means are self-measurable (balance, charge, remaining time), so "unknown" means "measure it first"; otherwise the decision is incomplete (§6.2).
+- **Groups are derived, not declared by the option.** The option names resources only; the grouping of exchangeable resources is analysis-side, derived from observed exchange paths (§4.6) and recorded in the declaration.
+
+---
+
 ## 5. Reactive Circuit (Time-Bounded Interrupter)
 
 To prevent *Analysis Paralysis*, compute cycles are bound to the physical time remaining before collapse (τ = `global_time_to_collapse_mks`). Define `FAST_PASS_THRESHOLD = 5000000.0` microseconds (normative).
@@ -251,6 +274,10 @@ To prevent *Analysis Paralysis*, compute cycles are bound to the physical time r
 The selection mathematics (§4) is **identical** in both modes; only the option source differs.
 
 **Viability Gate:** Any `ActionOption` `o` is removed from the candidate set if `o.estimated_duration_mks > τ`. An option that cannot complete before the system collapses is physically non-viable.
+
+**Measurement options are stricter.** An option whose purpose is to *resolve an unmeasured lens* (a measurement option, §4.7, whose `estimated_duration_mks` MUST equal `T_meas`) additionally requires a **strict** inequality: `o.estimated_duration_mks < τ`, that is `t* = τ − T_meas > 0`. A measurement that completes exactly at the collapse moment is worthless — the state it would have informed no longer exists — so it is removed like any other non-viable option, whereas an ordinary action with `o.estimated_duration_mks == τ` stays viable. This is §4.7's `t* > 0` condition restated, so that the two gates agree at the boundary instead of contradicting each other.
+
+**Two different quantities.** The mode threshold bounds `τ`; the measurement window is `τ − T_meas`. They are not the same condition, and this specification **does not** claim `FAST PASS ⇔ t* ≤ 0`. A system can be in DEEP mode with no measurement window (`τ = 10 s`, `T_meas = 12 s`) and in FAST PASS with a window still open (`τ = 4 s`, `T_meas = 1 s`). The mode decides *who proposes* the candidates; the window decides *whether measuring is still possible*. Implementations MUST evaluate both conditions separately, and MUST NOT derive one from the other.
 
 **Informative (non-normative): value-of-information gate.** Even with time to spare, measuring an unmeasured lens is pointless if no plausible outcome can change the ranking of the candidate options. Implementations MAY skip such a measurement; this specification deliberately fixes no algorithm for it, so conformance MUST NOT be judged on whether the gate is implemented.
 
@@ -282,7 +309,8 @@ For each entity in `S`:
 - `global_time_to_collapse_mks` = `S.global_time_to_collapse_mks`
 - `mode` = `"FAST_PASS"` or `"DEEP_DIVERSIFICATION"`
 - `psi_id` = `S.psi.id`, `psi_digest` = `S.psi.digest`; the full declaration text of §3.4.1 MUST accompany the report, so that a reader can reproduce the ruler that produced the numbers.
-- `removed_options` — every candidate removed from the set **before** evaluation, as `{ option_id, gate }`. Two gates exist: `gate = "viability"` (§5) and `gate = "collapse"` (§4.5, structural admissibility). A removal is a decision and MUST be visible, exactly as an excluded entity is.
+- `removed_options` — every candidate removed from the set **before** evaluation, as `{ option_id, gate }`. Three gates exist: `gate = "viability"` (§5), `gate = "collapse"` (§4.5, structural admissibility) and `gate = "insolvency"` (§4.8, the resources it would draw are not available even after full verified conversion). A removal is a decision and MUST be visible, exactly as an excluded entity is.
+- `resources_before` / `resources_after` — the acting agent's means at the start of the cycle and after the selected option's consumption. Multi-step accumulation is only auditable if the spend is written down where the next cycle can see it (§4.8).
 - `incomplete` (bool, default `false`) — `true` iff a resolvable unknown (`t* > 0`, §4.7) was left unmeasured in **every** candidate, so the decision is declared incomplete instead of being presented as informed.
 
 ### 6.3 Per-option evaluation
@@ -295,6 +323,8 @@ For each candidate `o`:
 - `selected` (bool)
 - `estimated_duration_mks` — the declared duration, so that a reader can re-check the viability gate of §5.
 - `collapse_charges` — the entities this option drove from a counted state to a known zero, as `{ entity_id, dof_before }` (§4.2). Empty for a charge-free option. A non-empty list makes the option inadmissible while a charge-free candidate exists (§4.5), and it is what turns the collapse penalty from an implicit consequence into an auditable line of the ledger.
+- `resource_consumption` — what the option draws from the acting agent, as declared in §3.3, in the units declared for each resource, attributed per entity.
+- `conversion_applied` — the deficits this option covers by exchange, with the observed rate used for each (empty when the option is payable directly). A reader must be able to see whether "affordable" was established by trade or by cash in hand (§4.8).
 
 This report is the enforceable license condition: a deployment that cannot produce it is not a compliant DOF-Core implementation and must not be represented as one.
 
@@ -316,6 +346,9 @@ A software component is **DOF-Core conformant** iff it:
 10. Applies the **frozen calculation set** of §4.2 — `calc` is computed on `S` and the same entities are summed in every `S'`, so a counted entity driven to a known zero is charged the floor `ln ε` instead of disappearing — and the structural admissibility filter of §4.5, listing both viability and collapse removals in `removed_options`.
 11. Selects an option only if its `NetDelta > 0` (staying put is the baseline, `NetDelta = 0`); otherwise it returns `none` and reports that the system stayed.
 12. Covers every entity with `dof_known == false` in every candidate's `projected_dof_delta` (§4.7), and sets `incomplete = true` when a resolvable unknown was left unmeasured in every candidate.
+13. Declares, for every entity named in `projected_dof_delta`, what the option draws from the acting agent, in the units declared for each resource — `energy` explicitly, `0.0` rather than an omission — and carries `estimated_duration_mks` as the duration against `τ` (§3.3).
+14. Applies the resource gate of §4.8: direct comparison, verified conversion (paths, offers, payment, and the exchange's own time against `τ`), and removal with `gate = "insolvency"` when a shortage survives full conversion. `τ` is never converted.
+15. Derives the block-level `(c_g, C_g)` by the named procedure from the raw inputs and reports the agent's means before and after the selected option, so that a cycle's spending is visible to the next cycle.
 
 Cross-language ports (Python / Rust / Go / C++ under `patterns/`, or packaged SDKs) MUST produce **bit-for-bit equivalent** `total_system_dof`, `net_delta`, `selected`, and the per-lens term decomposition of §6.1 for the same inputs (within IEEE-754 tolerance for the logarithm). Equality of the total alone is **not** sufficient evidence: two opposite estimation errors can cancel and leave the total unchanged, so conformance is judged on the terms and on the declaration digest.
 
@@ -357,12 +390,14 @@ The Generator's role is to produce `ActionOption` candidates. This spec does not
 
 ## 10. Versioning
 
-- This document is `DOF-SPEC` `v0.5`.
-- `v0.5` — **structural safety made enforceable**: §4.2 gains the **frozen calculation set** (the member set is computed once on `S` and used for every `S'`, so an option that drives a counted entity to a known zero pays the floor `ln ε` instead of profiting from the term's disappearance — and acting on an uncounted entity is neither punished nor rewarded), §4.5 gains **structural admissibility** (charge-carrying options are removed while a charge-free candidate exists, `gate = "collapse"`), the **`NetDelta > 0` baseline** (staying put is `NetDelta = 0` by definition, otherwise selection returns `none`) and an operative first ladder rung (fewest collapse charges); §4.7 gains the coverage and completeness obligations for unmapped entities; §4.6 states what `V_env` counts; §3.4.1 splits the hashed declaration content from the report context; §6.2/§6.3 report the new removals, the `incomplete` flag and `collapse_charges`. Why this is a version and not a text repair: it changes **selection** for every state in which a candidate destroys or revives a counted entity, so all conforming ports must be re-verified.
+- This document is `DOF-SPEC` `v0.6`.
 - `v0.3` — time is expressed in **microseconds**: `EntityState.time_to_collapse_mks`, `SystemStateMatrix.global_time_to_collapse_mks`, new `ActionOption.estimated_duration_mks`. The reactive-circuit threshold keeps its physical value: `FAST_PASS_THRESHOLD = 5000000.0` μs ⇔ `5.0` s of v0.2. `ActionOption.is_reversible` restored to the field table (it was dropped by the v0.2→v0.3 edit). §5 gains the **universal viability gate**: an option with `estimated_duration_mks > τ` is removed from the candidate set instead of being penalised.
 - `v0.4` — **the measurement layer becomes normative**: §3.4 (`psi` declaration reference and its canonical serialization), §4.1 (`DoF(e)` defined as the lens product), §4.6 (the three lenses, their normalization and the uniform degenerate-case guard), §4.7 (term level, unmeasured lenses, the ignorance penalty `u(t)` and its constants `α = 0.25`, `ρ = 0.9`, `U_MIN = ε^(1−ρ) ≈ 0.251`, `U_MAX = 0.5`), §6.1 (`lens_terms`, `binding_lens`), §6.2 (`psi_id`, `psi_digest`, declaration text, `removed_options`), §7 (items 7–9 and term-level equivalence). All four reference ports under `patterns/` implement this revision — conformance evidence below.
 - **`v0.4` text repair:** three places (`§3.4.1`, `§4.2`, `§4.5`) carried a cross-reference to a `§8.9` that does not exist in this document. They are replaced by an explicit **reserved** marker in §4.2 that states what implementations MUST do meanwhile, so the document no longer depends on anything outside itself. The normative behaviour of the reference ports is unchanged: recoverability was undefined before the repair and is undefined after it, but the rule is now decidable. Defining it — recovery horizon, admissible means, reachability verdicts over the world graph — is a versioned change and remains open.
 - **Conformance evidence for `v0.4`:** all four reference ports under `patterns/` (Python, C++, Go, Rust) implement §3.4/§4.6/§4.7 on one shared fixture and produce identical per-entity values and the **identical declaration digest** `e6f58a7e9dc0ac5814f58b392c19d28a30be1be3baad1d83471382b5bdf5e7c5` (SHA-256) — covering the lens product of §4.1, the per-lens terms of §6.1, the degenerate-case guard of §4.6, the `ln u₀` cost of an unmeasured lens (§4.7), the §4.2 exclusion of a hopeless entity, the gate removal of §6.2 and both selection modes. Cross-language digest equality is what makes §7 verifiable in practice.
+- `v0.6` — **resource accounting**: the state carries the acting agent's means per resource (§3.2), and an option declares what it draws, attributed per entity (§3.3; **negative = consumption**, `energy` always present, zero written explicitly). §4.8 introduces the **resource gate**: direct comparison first; then *verified* conversion — the exchange path must exist, an offer must satisfy it, the price must be payable, and the exchange's own time is charged to the same `τ`; then **insolvency**: removal with `gate = "insolvency"` when a shortage survives full conversion, because "not affordable" is a verdict and not a price. §4.6 now states that the block-level `(c_g, C_g)` are **derived** by a named procedure from raw inputs (per-resource requirements, means, groups, rates) and MUST equal what that procedure computes; the hashed declaration gains the resource identities with **unit name and scale**, the derived groups, the observed rates and the declared mandate (§3.4.1); the report gains the means before and after the cycle, the per-option consumption and the conversions applied (§6.2/§6.3). `τ` is explicitly **not** a resource, and an unknown own balance is an **invalid input** rather than an evaluation mode. Deliberately **not** in this revision: the reversibility penalty stays the flat `−0.5` nats of §4.4 — irreversibility is not a resource, and its principled home is the transition set, which belongs with reachability. All four reference ports must be re-verified, and **the declaration digest changes**: the ruler now includes resource units and rates.
+- `v0.5` — **structural safety made enforceable**: §4.2 gains the **frozen calculation set** (the member set is computed once on `S` and used for every `S'`, so an option that drives a counted entity to a known zero pays the floor `ln ε` instead of profiting from the term's disappearance — and acting on an uncounted entity is neither punished nor rewarded), §4.5 gains **structural admissibility** (charge-carrying options are removed while a charge-free candidate exists, `gate = "collapse"`), the **`NetDelta > 0` baseline** (staying put is `NetDelta = 0` by definition, otherwise selection returns `none`) and an operative first ladder rung (fewest collapse charges); §4.7 gains the coverage and completeness obligations for unmapped entities; §4.6 states what `V_env` counts; §3.4.1 splits the hashed declaration content from the report context; §6.2/§6.3 report the new removals, the `incomplete` flag and `collapse_charges`. Why this is a version and not a text repair: it changes **selection** for every state in which a candidate destroys or revives a counted entity, so all conforming ports must be re-verified.
+- **`v0.5` boundary repair (no change for action options):** §5 and §4.7 disagreed at `T_meas = τ`: the viability gate removed an option only when `estimated_duration_mks > τ`, while §4.7 declared the measurement window non-existent from `t* ≤ 0`. §5 now separates the two cases — a measurement option requires `T_meas < τ` (strict), an ordinary action keeps `≤ τ` — and states explicitly that the mode threshold and the measurement window are different quantities, so `FAST PASS ⇔ t* ≤ 0` is not a theorem of this specification. The reference ports model no measurement options, so their behaviour is unchanged.
 - **Conformance evidence for `v0.5`:** the same four ports were re-verified with the structural rules added, on the same fixture. The collapse charge is identical across languages (`Δ = −12.9429` nats when a counted entity is driven to zero), the frozen calculation set makes acting on a passive object change the index by exactly `0`, the structural gate records `gate = "collapse"` and removes the destructive option while a charge-free candidate exists, an all-negative candidate set selects nothing (`stay put`), and the §4.7 coverage obligation and `incomplete` flag behave the same everywhere. Check counts: Python 42, Go 40, C++ 39, Rust 39 (the Rust port also verified at `opt-level=0` and `2`). The declaration digest is **unchanged**: `v0.5` changes selection and accounting, not the ruler.
 - Normative constants (ε = 1e-6, the `0.5` rigidity coefficient, `FAST_PASS_THRESHOLD = 5000000.0` μs, the ignorance constants `α = 0.25`, `ρ = 0.9`, `U_MIN = ε^(1−ρ) ≈ 0.251`, `U_MAX = 0.5`, and the frozen three-lens set with its canonical order) are part of the versioned contract. Changing any of them requires a new minor/major spec version and a re-verification of all conforming ports.
 - SHA-256 of this file SHOULD be published alongside releases to detect silent modification (consistent with the de-centralized publication plan).

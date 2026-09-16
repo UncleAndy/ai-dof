@@ -1266,3 +1266,121 @@ LensObservation:    requirements: { resource_id → required }   # вместо 
 | фикстура | **две** необратимые опции: одна должна **победить** (необратима, но спасает счётный узел), одна должна **проиграть** (необратима и ничего не даёт). Без них ветка §4.4 остаётся непроверенной |
 
 **Ремонт черновика, попутно.** Пункт 1 дефектов в конце §8.8 («§4.3 определяет `NetDelta_index`, а §4.4 вычитает из `NetDelta`») **устарел**: расхождение символов закрыто в `v0.3` (§11.1 п.14), и `NetDelta_index` в `DOF-SPEC.md` не встречается ни разу. Пометка снята, пункт 2 (§4.4) переадресован сюда.
+
+### 11.8 Схема `G`: проект (informative)
+
+Проект схемы, словаря вердиктов и разделения «в дайджест / в отчёт» — плюс заготовки нормативных формулировок. Раздел **ничего не отменяет** из §11.7: решения там зафиксированы, здесь они разворачиваются до формы, которую можно переносить в `DOF-SPEC.md` и в порты. Порядок работы: схема (этот раздел) → каноническая форма → фикстура → нормативный текст → порты.
+
+**1. Два вида узлов, два вида рёбер.** Меньше видов — меньше способов определить один объект дважды.
+
+```
+node := { id, kind: "entity" | "mean" }
+edge := { id, kind: "act" | "exchange", from, to,
+          requires:    [ mean_id ],                     # act: какие средства нужны
+          effect:      { entity_id → Δcurrent_dof },    # act: что меняется
+          resources:   { resource_id → amount },         # act и exchange: расход в физических единицах
+          duration_mks: float,                           # act и exchange: против τ
+          quote:       { gives: {resource_id → amount},  # exchange: рыночная котировка
+                         wants: {resource_id → amount} } }
+```
+
+| Вид | Что означает | Кто потребляет |
+|---|---|---|
+| узел `entity` | счётная сущность (§3.1), идентичность та же — `entity_id` | всё |
+| узел `mean` | **достижимое средство**: ключ, инструмент, оплаченный слой, инфраструктура (§4.6) | счёт `V`, закрытие |
+| ребро `act` | что сущность **может сделать**: акт с эффектом на DoF и расходом ресурсов | `V`, Options-цена, акт коллапса |
+| ребро `exchange` | рыночная котировка: одно средство меняется на другое за цену и время | курс оси (B-xi) |
+
+Почему именно два вида рёбер: `act` отвечает на «что я могу», `exchange` — на «почём обмен». Потребители **не пересчитываются друг в друга** (ловушка 3): цена никогда не заменяет вердикт.
+
+**2. Что выводится из графа.** Каждый потребитель задаёт свой вопрос, и ответ у каждого свой:
+
+| Долг | Запрос к графу | Выход |
+|---|---|---|
+| Необратимость | какие акты и средства исчезают после действия | список закрытий + новое `V` (цена) |
+| Курс (B-xi) | дешевейший обменный путь между осями | курс по оси + путь (в отчёт) |
+| Восстановимость | есть ли допустимый путь, поднимающий `DoF`, в пределах `T_rec` | вердикт |
+| Акт коллапса | есть ли ребро, понижающее `DoF` счётной сущности до известного нуля | свидетель ярлыка |
+| Счёт `V` | сколько ответных векторов достижимо в объявленном горизонте | `V` |
+
+**3. Словарь вердиктов.** Один словарь на все вопросы достижимости:
+
+```
+reachable | proven_unreachable | undetermined
+```
+
+- **`proven_unreachable`** — в **полном** наблюдении нет пути, все акты которого (а) требуют средств из класса `M(S)`, (б) укладываются в `T_rec(X)`, (в) поднимают `DoF(X) > 0`.
+- **`undetermined`** — наблюдение неполно, либо горизонт или класс средств не определены.
+- Исключить сущность из `calc` разрешает **только** `proven_unreachable`; `undetermined` оставляет её в индексе и оценивает `u(t)`, как §4.7 уже делает для неизмеренной линзы.
+
+**Полнота наблюдения объявляется явно** — иначе `proven_unreachable` и `undetermined` неразличимы:
+
+```
+node.entity.observation := "complete" | "partial"
+```
+
+**Два направления fail-safe, и оба про одно — «не выдумывать»:**
+
+| Что неизвестно | Исход | Что было бы выдумкой |
+|---|---|---|
+| Можно ли восстановить сущность | сущность **остаётся** в индексе, цена `u(t)` | выдуманный запрет |
+| Состоится ли обмен | обмен **не состоится**, дефицит не покрыт | выдуманное разрешение |
+
+Это не два правила, а одно: **неизвестность не даёт ни запрета, ни разрешения.** Видимость бесплатна, сужение и разрешение требуют доказательства.
+
+**4. Горизонты и заморозка.** `T_rec(X)` — величина уровня сущности, как уже названо в §3.4.2; выводится именованной процедурой из типа сущности. Не объявлен или не определён ⇒ `undetermined` ⇒ исключения нет. Горизонт счёта ответных векторов — тот же приём. Граф **заморожен на `S`** (R7), как прочие счётчики: объявленное закрытие — это проекция опции, а фактическая потеря видна в следующем наблюдении.
+
+**Стоимость наблюдения.** Получение графа — акт Perception с длительностью, то есть он идёт в `T_meas` (§4.7, §5) и бесплатным не является. Вычисление вердиктов по **уже поступившему** графу детерминированно и новых ворот не вводит.
+
+**5. Разделение «в дайджест / в отчёт».**
+
+| В hashed-содержимое (определяет числа) | В report context (объясняет) |
+|---|---|
+| счёт `V` по сущностям | сам граф |
+| вердикт восстановимости по сущностям | пути-свидетели, по которым вердикт получен |
+| идентификаторы классов `M(S)` (канонически сериализованные) | обоснование классов и их прозаическое описание |
+| `T_rec` по сущностям | тип сущности, из которого горизонт выведен |
+| списки закрытий по опциям | по какой причине закрытие сочтено затрагивающим именно эти средства |
+| курсы по осям (выведенные) | наблюдённые котировки и путь, из которого курс выведен |
+| выведенные `(c_g, C_g)` (`v0.6`) | входы процедуры `derive_blocks` |
+| идентичности и версии процедур | их описание |
+
+Основание — уже нормативное деление §3.4.1 и прецедент `v0.6` (`derive_blocks`: «derived numbers MUST equal what that procedure computes from those inputs»). Тот же порядок уже работает для горизонта `V_env`: он в отчёте, а счёт — в линейке. `M(S)` входит **структурой**, не прозой: идентификатор категории решает допустимость, значит определяет числа; пояснения — проза.
+
+**6. Заготовки нормативных формулировок.**
+
+**(1) §3.4, декларация.**
+> The declaration MUST name, for each derived value it carries, the procedure that produced it. A derived value MUST equal what that procedure computes from the observed world graph (§4.9). The graph itself is an observation artifact: it accompanies the report (§6) as the provenance of the derived values, and it MUST NOT be required to enter the digest.
+
+**(2) §4.2, восстановимость — вместо клаузы `reserved`.**
+> An entity that arrives at a **known** zero is excluded from `calc(S)` only if its recoverability verdict is `proven_unreachable` and a witness is reported (§6). If the verdict is `undetermined`, the entity MUST be kept in `calc(S)` and contributes per §4.1 and §4.7. The witness of unreachability MUST NOT be the Generator's option set, nor an assertion of the observer: it is the outcome of the verdict procedure of §4.9 over the observed graph.
+
+**(3) §4.4, необратимость — вместо плоского штрафа.**
+> An option declares the transitions it closes (`closed: [ { kind, id } ]`) — the acts and means that cease to exist once it executes. Its price for the closure is the resulting change of the affected entities' Variety share, computed per §4.6; **no constant is used**. An option MUST NOT list its own execution path among the transitions it closes. If `closed` is empty the option is reversible and `is_reversible` MUST read `true`; `is_reversible = false` with an empty `closed` is non-conformant. `is_reversible` is a reported field derived from `closed`.
+
+**(4) §4.6, счёт `V`.**
+> `V` MUST be the output of the named counting procedure over the observed graph: the number of response vectors reachable by the entity within the declared counting horizon. A closure removes response vectors; the resulting change of `V` is what §4.4 prices.
+
+**(5) §4.7, `undetermined`.**
+> An `undetermined` verdict is not a value. It keeps the entity countable and its lens priced by `u(t)`; it never licenses an exclusion, and it never licenses a permission — an exchange or a payment path — that has not been observed.
+
+**(6) §4.9, новый нормативный раздел.**
+> **4.9 The world graph and reachability verdicts.** Reachability is decided over the observed world graph `G`, frozen on `S` (R7). `G` has `entity` and `mean` nodes and `act` and `exchange` edges (§3.4 annex). For every entity the verdict procedure returns exactly one of `reachable`, `proven_unreachable`, `undetermined`. Only `proven_unreachable` over a **complete** observation licenses exclusion from `calc` (§4.2). The procedure is deterministic; its identity and version are part of the declaration (§3.4). Acquisition of `G` is a Perception act with a duration charged to the measurement window (§4.7, §5).
+
+**(7) §7, пять пунктов конформности.**
+> 16. Computes every verdict itself from the supplied graph and MUST NOT accept a verdict as an input.
+> 17. Keeps an entity whose recoverability verdict is `undetermined` in `calc`, priced by `u(t)`.
+> 18. Prices a closure by recomputation from the counters of §4.6, using no constant, and reports the affected entities and their share change.
+> 19. Rejects a closure list that contains the option's own execution path, or an empty list with `is_reversible = false`.
+> 20. Reports, for every amount of the acting agent's means, its provenance — measured balance or asserted authority — with the measuring procedure, and surfaces a declared endowment that cannot be a real one (R8) as a defect rather than as a price.
+
+**(8) §6, строки отчёта.**
+> Per entity: `recoverability: { verdict, witness_path?, horizon_mks, observation }`. Per option: `closed` with the share change it causes. Per system: the graph reference (procedure id and version) and the completeness of the observation.
+
+**7. Микро-выборы на время переноса** (не блокируют, решаются при написании нормы):
+
+- форма `exchange`: `gives/wants` против явного `rate` в ребре;
+- признак полноты: по сущности (как выше) или один на наблюдение;
+- `M(S)` хранит идентификаторы категорий или идентификаторы конкретных средств;
+- номер раздела: `4.9` или отдельный `3.5` в разделе данных;
+- объём отчёта: весь граф или только задействованные пути (на больших графах первое дорого).

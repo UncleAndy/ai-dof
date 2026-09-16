@@ -7,6 +7,7 @@ mod fixture_v07;
 mod generator;
 mod graph_mapper;
 mod harness_v07;
+mod harness_v08;
 mod measurement;
 mod options_v07;
 mod orchestrator;
@@ -744,10 +745,11 @@ fn run_harness_v06() -> Vec<String> {
     failures
 }
 
-/// Entry point. `v07` is the default: a bare run exercises the release.
+/// Entry point. `v08` is the default: a bare run exercises the release.
 fn main() {
-    let which = std::env::args().nth(1).unwrap_or_else(|| "v07".to_string());
+    let which = std::env::args().nth(1).unwrap_or_else(|| "v08".to_string());
     let failures = match which.as_str() {
+        "v08" => harness_v08::run_harness_v08(),
         "v07" => harness_v07::run_harness_v07(),
         "v06" => run_harness_v06(),
         "dump" => {
@@ -773,7 +775,7 @@ fn main() {
         }
         other => {
             println!(
-                "unknown harness {:?}: expected v07 (default), v06 or dump",
+                "unknown harness {:?}: expected v08 (default), v07, v06, dump or payload",
                 other
             );
             std::process::exit(2);

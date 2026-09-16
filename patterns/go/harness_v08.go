@@ -42,6 +42,14 @@ func runHarnessV08() {
 	baseIndex := baseCore.CalculateSystemDoF(baseState, nil, baseCtx)
 	check("the index of the released fixture is unchanged",
 		closeEnough(baseIndex, v07Index, 1e-6), fmt.Sprintf("%.6f", baseIndex))
+	// The fingerprints of the released fixture, in full: a run that stopped
+	// comparing must not be able to pass unnoticed, and a reader of the log must be
+	// able to see the values the run asserted against.
+	fmt.Println()
+	fmt.Printf("RULER  digest=%s\n", baseDecl.Digest())
+	fmt.Printf("OBSERVATION digest=%s\n", baseCtx.ObservationDigest)
+	fmt.Printf("INDEX  %.6f\n", baseIndex)
+	fmt.Println()
 
 	orch := NewDOFOrchestrator(0.05)
 	state := orch.mapper.PollEnvironment(FixtureT1Scene())

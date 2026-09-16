@@ -57,6 +57,14 @@ check("the observation digest is the v0.7 one, byte for byte",
 base_index = orch.core.calculate_system_dof(base_state, None, base_ctx)
 check("the index of the released fixture is unchanged",
       close_enough(base_index, V07_INDEX, 1e-6), f"{base_index:.6f}")
+# The fingerprints of the released fixture, in full: a run that stopped comparing
+# must not be able to pass unnoticed, and a reader of the log must be able to see
+# the values the run asserted against.
+print()
+print(f"RULER  digest={base_decl.digest()}")
+print(f"OBSERVATION digest={base_ctx.observation_digest}")
+print(f"INDEX  {base_index:.6f}")
+print()
 
 # --- the run variant ----------------------------------------------------------
 core, state, ctx, decl = run_t1()

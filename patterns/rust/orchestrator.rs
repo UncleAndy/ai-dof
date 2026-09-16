@@ -111,8 +111,9 @@ impl DofOrchestrator {
         let options = self.generate(&state, tau);
         let (options, _removed) = Self::viability_gate(options, tau);
         let ctx = self.observation();
-        let (options, _removed_structural) =
-            self.core.apply_structural_gate(&state, &options, ctx);
+        // v0.8 retired the structural gate of §4.5: a charged candidate is no
+        // longer removed from the set — it is evaluated, reported in full and
+        // barred by the candidate-vector test.
         let (groups, rates, weights, cap) = self.gate_context();
         let (options, _removed_resource) =
             self.core
@@ -146,9 +147,11 @@ impl DofOrchestrator {
         let options = self.generate(state, state.global_time_to_collapse_mks);
         let (options, removed) = Self::viability_gate(options, state.global_time_to_collapse_mks);
         let ctx = self.observation();
-        let (options, removed_structural) = self.core.apply_structural_gate(state, &options, ctx);
-        // Gate order is normative (§5 → §4.5 → §4.8): the reason a reader needs
-        // first is the one about the world, not the one about the wallet.
+        let (options, removed_structural) = (options, Vec::new());
+        // Gate order is normative (§5 → §4.8): the reason a reader needs first is
+        // the one about the world, not the one about the wallet. v0.8 retired the
+        // structural gate of §4.5 — a charged candidate is evaluated, reported in
+        // full and barred by the candidate-vector test of §4.5.
         let (groups, rates, weights, cap) = self.gate_context();
         let (options, removed_resource) =
             self.core

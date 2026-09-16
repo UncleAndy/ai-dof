@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Verify the DOF-Core reference ports against the frozen digests of the CURRENT
-# release, v0.7, and report the v0.6 harnesses separately as historical evidence.
+# release, v0.8, and report the v0.7 and v0.6 harnesses separately as historical
+# evidence.
 #
 # Usage:  bash patterns/tools/verify_ports.sh [REPO_DIR]   # defaults to this repo root
 #
@@ -21,17 +22,24 @@
 # wrong is not conformant; so they are grepped for by exact value and counted
 # per port rather than "the first 64-hex we happen to see".
 #
+# v0.8 does NOT change the ruler, so the decisive row is v0.8 and it must show
+# the SAME two digests v0.7 shipped: the candidate vector and the admissibility
+# test of §4.5 are not measurement inputs. A moved digest here is an error to be
+# fixed, not a new version — which is exactly why the v0.7 row is re-run
+# alongside: both releases must agree on the fingerprints.
+#
 # Expectations:
 #   * ports live at patterns/{python,go,cpp,rust};
 #   * every harness DECLARES its frozen digests as quoted 64-hex constants and
 #     asserts its own run against them (this script cross-checks those constants,
 #     so a run that silently stopped comparing cannot pass unnoticed);
-#   * the v0.7 harness is what each port runs by default; the v0.6 harness stays
-#     runnable as the historical record (`v06` argument, `smoke_test.py` in
-#     python) and is reported without deciding the verdict — except in python,
-#     whose v0.6 harness has three DOCUMENTED divergences that v0.7 makes
-#     deliberate (the ruler changed; a known zero is no longer excluded without
-#     an observation; acting on a passive object is no longer free without one);
+#   * the v0.8 harness is what each port runs by default; the v0.7 and v0.6
+#     harnesses stay runnable as the historical record (`v07`/`v06` arguments,
+#     `smoke_test_v07.py`/`smoke_test.py` in python) and are reported without
+#     deciding the verdict — except in python, whose v0.6 harness has three
+#     DOCUMENTED divergences that v0.7 makes deliberate (the ruler changed; a
+#     known zero is no longer excluded without an observation; acting on a
+#     passive object is no longer free without one);
 #   * toolchains come from nix-shell, which works offline here.
 #
 # Verified on 2026-09-16 against this repo (v0.6 row): VERIFIED with python 68 /
@@ -45,8 +53,8 @@ SELF_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO="${1:-$(cd "$SELF_DIR/../.." && pwd)}"
 OUT_DIR="$(mktemp -d)"
 status=0
-v07_ports_ok=0
-v07_ports_seen=0
+current_ports_ok=0
+current_ports_seen=0
 
 RULER_DIGEST="5126fd99641ffdc9c338d3d288fcf3cb6dcf093ca0a423f1cd265b3fcae4152a"
 OBS_DIGEST="f3891c6ab622325fd6668893dd9f7450d39aa2d0a7ad2849634a4f59219f6a1c"
@@ -55,16 +63,16 @@ V06_DIGEST="bed37c25fd9cb757e9ea4a861c01cd4660fd896a83cd39b7c73b8e0be7489ad4"
 printf 'repo: %s\nout:  %s\n' "$REPO" "$OUT_DIR"
 printf 'ruler digest:       %s\nobservation digest: %s\n\n' "$RULER_DIGEST" "$OBS_DIGEST"
 
-# --- v0.7 row: both digests, no failures, at least one check ------------------
-report_v07() {
+# --- current-release row (v0.8): both digests, no failures, checks ran --------
+report_current() {
     local name="$1" file="$2"
     local ok fail ruler obs
     ok=$(grep -c '^  OK' "$file" || true)
     fail=$(grep -c '^  FAIL' "$file" || true)
     ruler=$(grep -c "$RULER_DIGEST" "$file" || true)
     obs=$(grep -c "$OBS_DIGEST" "$file" || true)
-    v07_ports_seen=$((v07_ports_seen + 1))
-    printf '%-12s checks=%-4s failed=%-3s ruler=%s observation=%s\n' \
+    current_ports_seen=$((current_ports_seen + 1))
+    printf '%-14s checks=%-4s failed=%-3s ruler=%s observation=%s\n' \
         "$name" "$ok" "$fail" "$([ "$ruler" -gt 0 ] && echo yes || echo NO)" \
         "$([ "$obs" -gt 0 ] && echo yes || echo NO)"
     if [ "$fail" -ne 0 ]; then
@@ -77,11 +85,24 @@ report_v07() {
         status=1
     fi
     if [ "$ruler" -eq 0 ] || [ "$obs" -eq 0 ]; then
-        printf '  the v0.7 run does not show both frozen digests — that is a failure, not a warning\n'
+        printf '  the v0.8 run does not show both frozen digests — that is a failure, not a warning\n'
         status=1
     else
-        v07_ports_ok=$((v07_ports_ok + 1))
+        current_ports_ok=$((current_ports_ok + 1))
     fi
+}
+
+# --- v0.7 row: historical, but it must still show the SAME two digests --------
+report_v07() {
+    local name="$1" file="$2"
+    local ok fail ruler obs
+    ok=$(grep -c '^  OK' "$file" || true)
+    fail=$(grep -c '^  FAIL' "$file" || true)
+    ruler=$(grep -c "$RULER_DIGEST" "$file" || true)
+    obs=$(grep -c "$OBS_DIGEST" "$file" || true)
+    printf '%-14s checks=%-4s failed=%-3s ruler=%s observation=%s   (v0.7, historical)\n' \
+        "$name" "$ok" "$fail" "$([ "$ruler" -gt 0 ] && echo yes || echo no)" \
+        "$([ "$obs" -gt 0 ] && echo yes || echo no)"
 }
 
 # --- v0.6 row: historical evidence, reported but not decisive -----------------
@@ -91,32 +112,39 @@ report_historical() {
     ok=$(grep -c '^  OK' "$file" || true)
     fail=$(grep -c '^  FAIL' "$file" || true)
     dig=$(grep -c "$V06_DIGEST" "$file" || true)
-    printf '%-12s checks=%-4s failed=%-3s v0.6-digest=%s   (historical, not decisive)\n' \
+    printf '%-14s checks=%-4s failed=%-3s v0.6-digest=%s   (historical, not decisive)\n' \
         "$name" "$ok" "$fail" "$([ "$dig" -gt 0 ] && echo yes || echo no)"
 }
 
 if [ -d "$REPO/patterns/python" ]; then
     ( cd "$REPO/patterns/python" && nix-shell -p python3 -p python3Packages.pydantic \
-        --run "python3 world_graph.py; python3 smoke_test_v07.py" ) > "$OUT_DIR/python.out" 2>&1
-    report_v07 python "$OUT_DIR/python.out"
+        --run "python3 world_graph.py; python3 smoke_test_v08.py" ) > "$OUT_DIR/python.out" 2>&1
+    report_current python "$OUT_DIR/python.out"
+    ( cd "$REPO/patterns/python" && nix-shell -p python3 -p python3Packages.pydantic \
+        --run "python3 smoke_test_v07.py" ) > "$OUT_DIR/python_v07.out" 2>&1
+    report_v07 python-v07 "$OUT_DIR/python_v07.out"
     ( cd "$REPO/patterns/python" && nix-shell -p python3 -p python3Packages.pydantic \
         --run "python3 smoke_test.py" ) > "$OUT_DIR/python_v06.out" 2>&1
     report_historical python-v06 "$OUT_DIR/python_v06.out"
 fi
 
 if [ -d "$REPO/patterns/go" ]; then
-    ( cd "$REPO/patterns/go" && nix-shell -p go --run "go run . v07" ) > "$OUT_DIR/go.out" 2>&1
-    report_v07 go "$OUT_DIR/go.out"
+    ( cd "$REPO/patterns/go" && nix-shell -p go --run "go run . v08" ) > "$OUT_DIR/go.out" 2>&1
+    report_current go "$OUT_DIR/go.out"
+    ( cd "$REPO/patterns/go" && nix-shell -p go --run "go run . v07" ) > "$OUT_DIR/go_v07.out" 2>&1
+    report_v07 go-v07 "$OUT_DIR/go_v07.out"
     ( cd "$REPO/patterns/go" && nix-shell -p go --run "go run . v06" ) > "$OUT_DIR/go_v06.out" 2>&1
     report_historical go-v06 "$OUT_DIR/go_v06.out"
 fi
 
 if [ -d "$REPO/patterns/cpp" ]; then
     ( cd "$REPO/patterns/cpp" && nix-shell -p gcc --run \
-        "g++ -std=c++17 -O2 -I. -o $OUT_DIR/dof_cpp main.cpp && $OUT_DIR/dof_cpp v07" ) \
+        "g++ -std=c++17 -O2 -I. -o $OUT_DIR/dof_cpp main.cpp && $OUT_DIR/dof_cpp v08" ) \
         > "$OUT_DIR/cpp.out" 2>&1
-    report_v07 cpp "$OUT_DIR/cpp.out"
+    report_current cpp "$OUT_DIR/cpp.out"
     if [ -x "$OUT_DIR/dof_cpp" ]; then
+        "$OUT_DIR/dof_cpp" v07 > "$OUT_DIR/cpp_v07.out" 2>&1
+        report_v07 cpp-v07 "$OUT_DIR/cpp_v07.out"
         "$OUT_DIR/dof_cpp" v06 > "$OUT_DIR/cpp_v06.out" 2>&1
         report_historical cpp-v06 "$OUT_DIR/cpp_v06.out"
     fi
@@ -124,14 +152,16 @@ fi
 
 if [ -d "$REPO/patterns/rust" ]; then
     ( cd "$REPO/patterns/rust" && nix-shell -p rustc --run \
-        "rustc -O -o $OUT_DIR/dof_rust main.rs && $OUT_DIR/dof_rust v07" ) \
+        "rustc -O -o $OUT_DIR/dof_rust main.rs && $OUT_DIR/dof_rust v08" ) \
         > "$OUT_DIR/rust.out" 2>&1
-    report_v07 rust "$OUT_DIR/rust.out"
+    report_current rust "$OUT_DIR/rust.out"
     ( cd "$REPO/patterns/rust" && nix-shell -p rustc --run \
-        "rustc -C opt-level=0 -o $OUT_DIR/dof_rust0 main.rs && $OUT_DIR/dof_rust0 v07" ) \
+        "rustc -C opt-level=0 -o $OUT_DIR/dof_rust0 main.rs && $OUT_DIR/dof_rust0 v08" ) \
         > "$OUT_DIR/rust_o0.out" 2>&1
-    report_v07 rust-o0 "$OUT_DIR/rust_o0.out"
+    report_current rust-o0 "$OUT_DIR/rust_o0.out"
     if [ -x "$OUT_DIR/dof_rust" ]; then
+        "$OUT_DIR/dof_rust" v07 > "$OUT_DIR/rust_v07.out" 2>&1
+        report_v07 rust-v07 "$OUT_DIR/rust_v07.out"
         "$OUT_DIR/dof_rust" v06 > "$OUT_DIR/rust_v06.out" 2>&1
         report_historical rust-v06 "$OUT_DIR/rust_v06.out"
     fi
@@ -148,16 +178,16 @@ sed 's/^/  /' "$declare_out"
 
 declares_ruler=$(grep -c "$RULER_DIGEST" "$declare_out" || true)
 declares_obs=$(grep -c "$OBS_DIGEST" "$declare_out" || true)
-printf '\nharnesses declaring the v0.7 ruler digest:       %s\n' "$declares_ruler"
-printf 'harnesses declaring the v0.7 observation digest: %s\n' "$declares_obs"
-if [ "$v07_ports_seen" -eq 0 ]; then
-    printf 'no v0.7 harness ran at all\n'
+printf '\nharnesses declaring the v0.7/v0.8 ruler digest:       %s\n' "$declares_ruler"
+printf 'harnesses declaring the v0.7/v0.8 observation digest: %s\n' "$declares_obs"
+if [ "$current_ports_seen" -eq 0 ]; then
+    printf 'no v0.8 harness ran at all\n'
     status=1
-elif [ "$v07_ports_ok" -ne "$v07_ports_seen" ]; then
-    printf 'v0.7: %s of %s runs reproduce both digests\n' "$v07_ports_ok" "$v07_ports_seen"
+elif [ "$current_ports_ok" -ne "$current_ports_seen" ]; then
+    printf 'v0.8: %s of %s runs reproduce both digests\n' "$current_ports_ok" "$current_ports_seen"
     status=1
 else
-    printf 'v0.7: all %s runs reproduce both digests\n' "$v07_ports_seen"
+    printf 'v0.8: all %s runs reproduce both digests\n' "$current_ports_seen"
 fi
 
 if [ "$status" -eq 0 ]; then

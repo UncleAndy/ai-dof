@@ -248,6 +248,29 @@ pub struct CollapseCharge {
     pub dof_before: f64,
 }
 
+/// The v0.8 candidate vector (§4.5): three counts of entities — the protected
+/// dimensions — plus the index and the reversibility preference.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct CandidateVector {
+    pub d1: usize,
+    pub d2: usize,
+    pub d3: usize,
+    pub net_delta: f64,
+    pub reversible: bool,
+    pub option_id: String,
+}
+
+/// One entity this option drops out of a `reachable` verdict, with the witness it
+/// lost (§4.5, §6.3). A path loss counts even where no exclusion follows from it.
+#[derive(Clone, Debug, PartialEq)]
+pub struct LostPathEntry {
+    pub entity_id: String,
+    pub verdict_before: String,
+    pub verdict_after: String,
+    pub critical: bool,
+    pub witness_lost: Vec<String>,
+}
+
 /// One option row of the audit report.
 #[derive(Clone, Debug)]
 pub struct OptionReportRow {
@@ -269,6 +292,11 @@ pub struct OptionReportRow {
     pub mandate_exceeded: f64,
     pub closed: Vec<ClosedRef>,
     pub closure_share: BTreeMap<String, f64>,
+    /// §6.3 (v0.8): the protected dimensions, the dimension that barred the
+    /// candidate (empty when nothing did), and the path losses line by line.
+    pub candidate_vector: CandidateVector,
+    pub barring_key: Option<String>,
+    pub lost_paths: Vec<LostPathEntry>,
 }
 
 /// Full Proof-of-Implementation audit (DOF-SPEC §6).
@@ -297,6 +325,10 @@ pub struct DofReport {
     /// balance or an asserted authority.
     pub observation_digest: Option<String>,
     pub means_provenance: BTreeMap<String, MandateValue>,
+    /// §6.2 (v0.8): the vector every candidate was compared against, and whether
+    /// any candidate beat it. A refusal to act is a decision and must be audible.
+    pub baseline: CandidateVector,
+    pub no_candidate_better: bool,
 }
 
 /// What a report needs beyond the state, the candidates and the selection. It keeps
@@ -322,6 +354,13 @@ impl DofCalculusCore {
     pub fn new() -> Self {
         DofCalculusCore { epsilon: 1e-6 }
     }
+
+    /// v0.8 (§10): the tolerance that decides whether two candidates' NetDelta are
+    /// tied. The index is a sum of logarithms over a SET, so two ports that iterate
+    /// their container in different orders can disagree in the last bits (~1e-15)
+    /// while agreeing on every derivation — and a tie must be resolved identically
+    /// everywhere, because §7 requires the same CHOICE, not only the same numbers.
+    pub const NET_DELTA_TOLERANCE: f64 = 1e-9;
 
     /// Whether an entity belongs to the calculation set `calc` (DOF-SPEC §4.2).
     /// Excluded if it is a **witnessed** collapse source, or if its DoF is a known
@@ -664,6 +703,11 @@ impl DofCalculusCore {
 
     /// §4.5: removes options that destroy a counted entity while a charge-free
     /// candidate exists (Axiom 3). Every removal is recorded as `gate = "collapse"`.
+    /// RETIRED in v0.8: the live path no longer calls this. A charged candidate is
+    /// evaluated, reported in full, and made inadmissible by the candidate-vector
+    /// test of §4.5 (`select_candidate`), so `removed_options` carries no
+    /// structural removal. Kept because the v0.6 harness asserts the rule that was
+    /// in force then, and history must stay reproducible.
     pub fn apply_structural_gate(
         &self,
         current: &SystemStateMatrix,
@@ -699,6 +743,239 @@ impl DofCalculusCore {
 
     fn means_of(state: &SystemStateMatrix, resource: &str) -> f64 {
         state.resources.get(resource).copied().unwrap_or(0.0)
+    }
+
+    // ---------------------------------------------------------------------
+    // §4.5 (v0.8): the candidate vector and the ordered test
+    // ---------------------------------------------------------------------
+
+    /// The set of entities of calc(S) whose `current_dof` is the minimum over
+    /// calc(S) (§4.5). A set, not a node: a minimum attained by several known
+    /// zeros has no unique "critical node", and a flag would have to invent a
+    /// tie-break by `entity_id`.
+    pub fn critical_members(
+        &self,
+        state: &SystemStateMatrix,
+        ctx: Option<&ObservationContext>,
+    ) -> BTreeSet<String> {
+        let mut out: BTreeSet<String> = BTreeSet::new();
+        let members = self.calc_members(state, ctx);
+        let mut lowest = f64::INFINITY;
+        let mut found = false;
+        for id in members.iter() {
+            if let Some(ent) = state.entities.get(id) {
+                if ent.current_dof < lowest {
+                    lowest = ent.current_dof;
+                }
+                found = true;
+            }
+        }
+        if !found {
+            return out;
+        }
+        for id in members.iter() {
+            if let Some(ent) = state.entities.get(id) {
+                if ent.current_dof == lowest {
+                    out.insert(id.clone());
+                }
+            }
+        }
+        out
+    }
+
+    /// The entities this option drops out of a `reachable` verdict, line by line
+    /// (§4.5, §6.3).
+    ///
+    /// The verdict procedure runs twice over the SAME observation — once as
+    /// observed, once with the option's closure applied — so a verdict can only
+    /// move away from `reachable`, and the difference is computed rather than
+    /// declared. A lost witness is a loss: an entity that leaves `reachable` counts
+    /// even where no exclusion follows from it, because §4.2 excludes only on a
+    /// `proven_unreachable` verdict over a complete observation.
+    pub fn lost_paths(
+        &self,
+        state: &SystemStateMatrix,
+        option: &ActionOption,
+        ctx: Option<&ObservationContext>,
+    ) -> Vec<LostPathEntry> {
+        let mut out: Vec<LostPathEntry> = Vec::new();
+        let ctx = match ctx {
+            Some(c) => c,
+            None => return out,
+        };
+        if option.closed.is_empty() {
+            return out;
+        }
+        let closed_world = ctx.world.with_closed(&option.closed);
+        let critical = self.critical_members(state, Some(ctx));
+        let mut ids: Vec<String> = state.entities.keys().cloned().collect();
+        ids.sort();
+        for id in ids {
+            let before = ctx.world.verdict(&id, &ctx.means_class, ctx.horizon(&id));
+            if before.verdict != "reachable" {
+                continue;
+            }
+            let after = closed_world.verdict(&id, &ctx.means_class, ctx.horizon(&id));
+            if after.verdict == "reachable" {
+                continue;
+            }
+            out.push(LostPathEntry {
+                entity_id: id.clone(),
+                verdict_before: before.verdict.clone(),
+                verdict_after: after.verdict.clone(),
+                critical: critical.contains(&id),
+                witness_lost: before.witness.clone(),
+            });
+        }
+        out
+    }
+
+    /// The keys of one candidate (§4.5): all of them, from quantities the earlier
+    /// releases already produce.
+    pub fn candidate_vector(
+        &self,
+        state: &SystemStateMatrix,
+        option: &ActionOption,
+        ctx: Option<&ObservationContext>,
+        current_index: f64,
+    ) -> CandidateVector {
+        let (simulated, members) = self.simulate(state, option, ctx);
+        let projected = self.calculate_system_dof(&simulated, Some(&members), ctx);
+        let lost = self.lost_paths(state, option, ctx);
+        let d3 = lost.iter().filter(|row| row.critical).count();
+        CandidateVector {
+            d1: self.collapse_charges(state, option, ctx).len(),
+            d2: lost.len(),
+            d3,
+            net_delta: self.net_delta(state, option, projected, current_index),
+            reversible: self.is_reversible(option),
+            option_id: option.option_id.clone(),
+        }
+    }
+
+    /// Staying put: the zero vector, `NetDelta = 0` by definition.
+    pub fn baseline_vector() -> CandidateVector {
+        CandidateVector {
+            d1: 0,
+            d2: 0,
+            d3: 0,
+            net_delta: 0.0,
+            reversible: true,
+            option_id: String::new(),
+        }
+    }
+
+    /// The first dimension on which a candidate fails to beat staying put (§4.5,
+    /// §6.2). `None` means nothing barred it: it outranks the baseline, or ties it
+    /// while staying reversible.
+    pub fn barring_key(vector: &CandidateVector) -> Option<String> {
+        if vector.d1 > 0 {
+            return Some("d1".to_string());
+        }
+        if vector.d2 > 0 {
+            return Some("d2".to_string());
+        }
+        if vector.d3 > 0 {
+            return Some("d3".to_string());
+        }
+        if vector.net_delta <= 0.0 {
+            return Some("net_delta".to_string());
+        }
+        None
+    }
+
+    fn dimension(vector: &CandidateVector, key: &str) -> usize {
+        match key {
+            "d1" => vector.d1,
+            "d2" => vector.d2,
+            _ => vector.d3,
+        }
+    }
+
+    /// The v0.8 selection (§4.5): admissibility first, the index second. Returns
+    /// the winner — `None` when the system stays, which is a decision and not an
+    /// absence of one — and every candidate's vector.
+    ///
+    /// Staying put is a candidate LIKE ANY OTHER, so its zero vector enters the
+    /// set: that is what makes a protected dimension a BAR instead of a
+    /// comparison. Any candidate with `d1`, `d2` or `d3` above zero loses to it,
+    /// and no candidate can ever be preferred for cutting a path. Comparing
+    /// against the baseline only at the `NetDelta` step would let a positive delta
+    /// buy a lost path back — exactly the defect this release removes.
+    pub fn select_candidate(
+        &self,
+        current_state: &SystemStateMatrix,
+        options: &[ActionOption],
+        ctx: Option<&ObservationContext>,
+    ) -> (Option<ActionOption>, Vec<CandidateVector>) {
+        let mut vectors: Vec<CandidateVector> = Vec::new();
+        if options.is_empty() {
+            return (None, vectors);
+        }
+        struct Entry {
+            option: Option<ActionOption>,
+            vector: CandidateVector,
+        }
+        let current = self.calculate_system_dof(current_state, None, ctx);
+        let mut survivors: Vec<Entry> = Vec::new();
+        for option in options {
+            let vector = self.candidate_vector(current_state, option, ctx, current);
+            vectors.push(vector.clone());
+            survivors.push(Entry {
+                option: Some(option.clone()),
+                vector,
+            });
+        }
+        survivors.push(Entry {
+            option: None,
+            vector: Self::baseline_vector(),
+        });
+
+        // 1. Structural admissibility: d1 = d2 = d3 = 0. Inadmissible candidates
+        //    are never compared with one another.
+        for key in ["d1", "d2", "d3"] {
+            if survivors.is_empty() {
+                break;
+            }
+            let best = survivors
+                .iter()
+                .map(|e| Self::dimension(&e.vector, key))
+                .min()
+                .unwrap_or(0);
+            survivors.retain(|e| Self::dimension(&e.vector, key) == best);
+        }
+        // 2. The index, ties grouped with the tolerance of §10.
+        if !survivors.is_empty() {
+            let best = survivors
+                .iter()
+                .map(|e| e.vector.net_delta)
+                .fold(f64::NEG_INFINITY, f64::max);
+            survivors.retain(|e| (e.vector.net_delta - best).abs() <= Self::NET_DELTA_TOLERANCE);
+        }
+        // 3. Reversibility: a preference among equals, not a penalty (§4.4).
+        if survivors.iter().any(|e| e.vector.reversible) {
+            survivors.retain(|e| e.vector.reversible);
+        }
+        // 4. A complete tie goes to staying put, if it is still a candidate.
+        if survivors.iter().any(|e| e.option.is_none()) {
+            return (None, vectors);
+        }
+        if !survivors.is_empty() {
+            let best_id = survivors
+                .iter()
+                .map(|e| e.vector.option_id.clone())
+                .min()
+                .unwrap_or_default();
+            survivors.retain(|e| e.vector.option_id == best_id);
+        }
+        match survivors.first() {
+            // The survivor is selected only if it beats the baseline. With the
+            // baseline in the set this is already implied; the guard states the rule.
+            Some(entry) if entry.vector.net_delta > 0.0 => {
+                (entry.option.clone(), vectors)
+            }
+            _ => (None, vectors),
+        }
     }
 
     /// §4.8: the option's net draw on the agent, per resource. Consumption is the
@@ -912,46 +1189,15 @@ impl DofCalculusCore {
         self.net_delta(current, option, projected, current_dof)
     }
 
-    /// §4.5: strictly positive `NetDelta` over the "stay put" baseline
-    /// (`NetDelta = 0` by definition), with rung 1 of the ladder on ties.
+    /// §4.5 (v0.8): admissibility first, the index second. Returns the winner, or
+    /// `None` when the system stays — a decision and not an absence of one.
     pub fn evaluate_and_select(
         &self,
         current_state: &SystemStateMatrix,
         options: &[ActionOption],
         ctx: Option<&ObservationContext>,
     ) -> Option<ActionOption> {
-        if options.is_empty() {
-            return None;
-        }
-        let current = self.calculate_system_dof(current_state, None, ctx);
-        let mut best: Option<ActionOption> = None;
-        let mut best_net = 0.0f64;
-        let mut best_charges = 0usize;
-
-        for option in options {
-            let (simulated_state, members) = self.simulate(current_state, option, ctx);
-            let projected = self.calculate_system_dof(&simulated_state, Some(&members), ctx);
-            let net = self.net_delta(current_state, option, projected, current);
-            if net <= 0.0 {
-                continue; // §4.5: staying put wins; acting would degrade the index
-            }
-            let charges = self.collapse_charges(current_state, option, ctx).len();
-            let better = match &best {
-                None => true,
-                Some(b) => {
-                    net > best_net
-                        || (net == best_net
-                            && (charges < best_charges
-                                || (charges == best_charges && option.option_id < b.option_id)))
-                }
-            };
-            if better {
-                best_net = net;
-                best_charges = charges;
-                best = Some(option.clone());
-            }
-        }
-        best
+        self.select_candidate(current_state, options, ctx).0
     }
 
     /// §4.7: a resolvable unknown left unmeasured in every candidate.
@@ -1053,7 +1299,8 @@ impl DofCalculusCore {
         for option in options {
             let (simulated, members) = self.simulate(current_state, option, ctx);
             let projected = self.calculate_system_dof(&simulated, Some(&members), ctx);
-            let net = self.net_delta(current_state, option, projected, total);
+            let vector = self.candidate_vector(current_state, option, ctx, total);
+            let net = vector.net_delta;
             let is_selected = match selected {
                 Some(s) => s.option_id == option.option_id,
                 None => false,
@@ -1084,6 +1331,11 @@ impl DofCalculusCore {
                 mandate_exceeded: plan.mandate_exceeded,
                 closed: option.closed.clone(),
                 closure_share: self.closure_share(current_state, option, ctx),
+                // §6.3 (v0.8): the protected dimensions, the dimension that barred
+                // the candidate (empty when nothing did), and the path losses.
+                candidate_vector: vector.clone(),
+                barring_key: Self::barring_key(&vector),
+                lost_paths: self.lost_paths(current_state, option, ctx),
             });
         }
         let (psi_id, psi_digest, declaration_text) = match input.declaration {
@@ -1113,6 +1365,10 @@ impl DofCalculusCore {
             resources_after,
             observation_digest,
             means_provenance: input.means_provenance,
+            // §6.2 (v0.8): what the candidates were compared against, and whether
+            // any of them beat it. A silent "no action" is an omission.
+            baseline: Self::baseline_vector(),
+            no_candidate_better: !options.is_empty() && selected.is_none(),
         }
     }
 }

@@ -443,3 +443,115 @@ pub fn scene_other_units() -> HashMap<String, RawObservation> {
     }
     m
 }
+
+// ---------------------------------------------------------------------------
+// §4.5 (v0.8) run variant: the "compensation" fixture
+// ---------------------------------------------------------------------------
+
+/// The means of the v0.8 run variant.
+pub const SUPERVISE_MEAN: &str = "radio";
+pub const TRAINEE_MEAN: &str = "q_trainee_1";
+pub const MENTOR_MEAN: &str = "q_mentor_2";
+
+/// The released world plus the two entities D3 exists for (§4.5, T1).
+///
+/// `trainee` CAN act (V = 1) but its own act does not raise its own DoF, so its
+/// recoverability rests entirely on someone else's act. `mentor` is that someone:
+/// it performs `act_supervise` and holds a second vector of its own, so closing the
+/// mean behind the act costs the mentor a response vector — a price inside the
+/// index — without driving it to a known zero, which would make the option
+/// destructive instead of merely path-cutting. Both sit at 0.125 exactly:
+/// ψ_var = ½, ψ_opt = 4^(−½) = ½, ψ_con = ½.
+///
+/// Built as a POST-PROCESSING of the released scene, not as a branch inside it:
+/// the released fixture's own numbers and digests must not move.
+pub fn t1_scene() -> HashMap<String, RawObservation> {
+    let mut m = scene(&Options::default());
+
+    let mut mentor = LensObservation::default();
+    mentor.variety = Some((2.0, 2.0));
+    mentor.options = Some(vec![(1.0, 2.0)]);
+    mentor.constraint = Some((1.0, 1.0));
+    m.insert(
+        "mentor".to_string(),
+        RawObservation {
+            is_autonomous: true,
+            agency_index: 0.5,
+            is_collapse_source: false,
+            time_to_collapse_mks: 1e8,
+            lenses: mentor,
+            resource_layer: None,
+            world: None,
+        },
+    );
+
+    let mut trainee = LensObservation::default();
+    trainee.variety = Some((1.0, 1.0));
+    trainee.options = Some(vec![(1.0, 2.0)]);
+    trainee.constraint = Some((1.0, 1.0));
+    m.insert(
+        "trainee".to_string(),
+        RawObservation {
+            is_autonomous: false,
+            agency_index: 0.2,
+            is_collapse_source: false,
+            time_to_collapse_mks: 1e8,
+            lenses: trainee,
+            resource_layer: None,
+            world: None,
+        },
+    );
+
+    if let Some(entry) = m.get_mut(WORLD_KEY) {
+        if let Some(w) = entry.world.as_mut() {
+            for (id, dof) in [("mentor", 0.125), ("trainee", 0.125)] {
+                w.graph.entities.insert(
+                    id.to_string(),
+                    EntityNode {
+                        id: id.to_string(),
+                        observation: "complete".to_string(),
+                        current_dof: dof,
+                    },
+                );
+            }
+            for mean in [SUPERVISE_MEAN, TRAINEE_MEAN, MENTOR_MEAN] {
+                w.graph.means.push(mean.to_string());
+            }
+            // The trainee's own vector: it acts, on the robot, and never on itself
+            // — which is why losing the mentor's act costs it the path while its V
+            // stays above zero (so there is no collapse charge).
+            let mut trainee_act = ActEdge::default();
+            trainee_act.id = "a_trainee_1".to_string();
+            trainee_act.source = "trainee".to_string();
+            trainee_act.target = "robot".to_string();
+            trainee_act.category = "technical".to_string();
+            trainee_act.requires = vec![TRAINEE_MEAN.to_string()];
+            trainee_act.effect.insert("robot".to_string(), 0.01);
+            trainee_act.duration_mks = 1000.0;
+            w.graph.acts.push(trainee_act);
+            let mut supervise = ActEdge::default();
+            supervise.id = "act_supervise".to_string();
+            supervise.source = "mentor".to_string();
+            supervise.target = "trainee".to_string();
+            supervise.category = "technical".to_string();
+            supervise.requires = vec![SUPERVISE_MEAN.to_string()];
+            supervise.effect.insert("trainee".to_string(), 0.1);
+            supervise.duration_mks = 1000.0;
+            w.graph.acts.push(supervise);
+            let mut mentor_act = ActEdge::default();
+            mentor_act.id = "a_mentor_2".to_string();
+            mentor_act.source = "mentor".to_string();
+            mentor_act.target = "mentor".to_string();
+            mentor_act.category = "technical".to_string();
+            mentor_act.requires = vec![MENTOR_MEAN.to_string()];
+            mentor_act.effect.insert("mentor".to_string(), 0.01);
+            mentor_act.duration_mks = 1000.0;
+            w.graph.acts.push(mentor_act);
+            // A horizon is what makes a verdict a verdict: with no T_rec the
+            // trainee's answer would be `undetermined`, and D2 counts only a LOST
+            // `reachable`.
+            w.t_rec.insert("trainee".to_string(), TREC_MKS);
+        }
+    }
+    m
+}

@@ -157,6 +157,72 @@ pub fn opt_undeclared() -> ActionOption {
     o
 }
 
+// ---------------------------------------------------------------------------
+// §4.5 (v0.8): the "compensation" candidates
+// ---------------------------------------------------------------------------
+
+/// A gain that WOULD have won, and a path that is the price. No collapse charge
+/// and NetDelta > 0: every gate of v0.5–v0.7 passes it. `medkit` is the only act
+/// lifting `revivable` off a known zero, so closing it drops that entity out of
+/// `reachable`: D2 = 1, and D3 = 1 because `revivable` sits at the minimum
+/// current_dof of calc(S).
+pub fn t1_compensate() -> ActionOption {
+    let mut o = ActionOption::new(
+        "t1_compensate".to_string(),
+        "close medkit, gain on the drone".to_string(),
+        HashMap::from([("drone".to_string(), 0.1)]),
+        true,
+        1000.0,
+    );
+    o = o.with_closed(closures(&["medkit"]), "");
+    o
+}
+
+/// The same gain with a path that is NOT the price: closes one of robot's nine
+/// means. robot keeps eight vectors and its verdict stays `reachable`, so the
+/// vector is D1 = D2 = D3 = 0 and the option must be selected — the mirror of
+/// t1_compensate, and the reason the release ships a test and not a ban.
+pub fn t1_mirror() -> ActionOption {
+    let mut o = ActionOption::new(
+        "t1_mirror".to_string(),
+        "close m9, gain on the drone".to_string(),
+        HashMap::from([("drone".to_string(), 0.1)]),
+        true,
+        1000.0,
+    );
+    o = o.with_closed(closures(&["m9"]), "");
+    o
+}
+
+/// Loses a path that is NOT critical: closes the mean behind `act_supervise`, so
+/// `trainee` leaves `reachable` (D2 = 1) while standing above the minimum DoF of
+/// calc(S) (D3 = 0). Against t1_rival it shows that D2 is a bar and not a
+/// comparison, and that the third dimension cannot separate two candidates.
+pub fn t1_help() -> ActionOption {
+    let mut o = ActionOption::new(
+        "t1_help".to_string(),
+        "close radio, gain on the drone".to_string(),
+        HashMap::from([("drone".to_string(), 0.1)]),
+        true,
+        1000.0,
+    );
+    o = o.with_closed(closures(&[crate::fixture_v07::SUPERVISE_MEAN]), "");
+    o
+}
+
+/// t1_help's twin, with a critical path instead of a dependent's.
+pub fn t1_rival() -> ActionOption {
+    let mut o = ActionOption::new(
+        "t1_rival".to_string(),
+        "close medkit, gain on the drone".to_string(),
+        HashMap::from([("drone".to_string(), 0.1)]),
+        true,
+        1000.0,
+    );
+    o = o.with_closed(closures(&["medkit"]), "");
+    o
+}
+
 /// The seven options of §11.10 п.5, in a fixed order.
 pub fn standard_set() -> Vec<ActionOption> {
     vec![

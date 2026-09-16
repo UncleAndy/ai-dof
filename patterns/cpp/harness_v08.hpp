@@ -62,6 +62,14 @@ inline int run_harness_v08() {
     double base_index = base_core.calculate_system_dof(base_state, nullptr, base_ctx);
     check7("the index of the released fixture is unchanged", near(base_index, kV07Index, 1e-6),
            num7(base_index));
+    // The fingerprints of the released fixture, in full: a run that stopped
+    // comparing must not be able to pass unnoticed, and a reader of the log must be
+    // able to see the values the run asserted against.
+    std::cout << "\nRULER  digest=" << base_decl.digest() << "\n";
+    if (base_ctx != nullptr) {
+        std::cout << "OBSERVATION digest=" << base_ctx->observation_digest << "\n";
+    }
+    std::cout << "INDEX  " << num7(base_index) << "\n\n";
 
     DOFOrchestrator orch(0.05);
     SystemStateMatrix state = orch.measure(t1_scene());

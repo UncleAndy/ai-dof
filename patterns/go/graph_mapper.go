@@ -1,6 +1,10 @@
 package main
 
-import "math"
+import (
+	"fmt"
+	"math"
+	"sort"
+)
 
 type RawObservation struct {
 	IsAutonomous      bool
@@ -15,10 +19,180 @@ type GraphMapper struct {
 	PsiID             string
 	U0PriorQ          *float64
 	LastDeclaration   *MeasurementDeclaration
+	// The observation the state was decided over (§3.5/§4.9). Kept beside the
+	// state, never inside it: a world graph is a Perception artifact, exactly
+	// like the derived groups and the observed rates.
+	LastObservation *ObservationContext
+	// Mismatches between the declared derived numbers and what the named
+	// procedures recompute over the observation (§4.6/§4.9). Empty means the
+	// ruler is honest; a non-empty list means the declaration claimed a counter
+	// its own observation does not support.
+	LastGraphProblems []string
 }
+
+// Reserved keys of `raw` that describe the world/agent, not an entity.
+var reservedKeys = map[string]bool{"resource_layer": true, "world": true}
 
 func NewGraphMapper(contextSwitchCost float64) *GraphMapper {
 	return &GraphMapper{ContextSwitchCost: contextSwitchCost, PsiID: "perception-v1"}
+}
+
+// parseWorld builds the §3.5 observation out of the reserved `world` key. It is
+// an *observation*, so it arrives with the measurement and not inside the state:
+// the same state plus a different observation is a different decision, and the
+// report has to say which one was used.
+func parseWorld(worldRaw map[string]interface{}) (*WorldGraph, []string, map[string]float64, *string, *float64, string) {
+	graph := &WorldGraph{Entities: map[string]EntityNode{}, Means: []string{},
+		Acts: []ActEdge{}, Exchanges: []ExchangeEdge{}}
+	if ents, ok := worldRaw["entities"].(map[string]interface{}); ok {
+		for eid, specRaw := range ents {
+			spec, ok := specRaw.(map[string]interface{})
+			if !ok {
+				continue
+			}
+			node := EntityNode{ID: eid, Observation: "complete"}
+			if v, ok := spec["id"].(string); ok {
+				node.ID = v
+			}
+			if v, ok := spec["observation"].(string); ok {
+				node.Observation = v
+			}
+			if v, ok := spec["current_dof"].(float64); ok {
+				node.CurrentDoF = v
+			}
+			graph.Entities[eid] = node
+		}
+	}
+	if rawMeans, ok := worldRaw["means"].([]interface{}); ok {
+		for _, m := range rawMeans {
+			if s, ok := m.(string); ok {
+				graph.Means = append(graph.Means, s)
+			}
+		}
+	}
+	if rawActs, ok := worldRaw["acts"].([]interface{}); ok {
+		for _, aRaw := range rawActs {
+			a, ok := aRaw.(map[string]interface{})
+			if !ok {
+				continue
+			}
+			act := ActEdge{Effect: map[string]float64{}, Resources: map[string]float64{}}
+			act.ID, _ = a["id"].(string)
+			act.Source, _ = a["source"].(string)
+			act.Target, _ = a["target"].(string)
+			act.Category, _ = a["category"].(string)
+			if req, ok := a["requires"].([]interface{}); ok {
+				for _, r := range req {
+					if s, ok := r.(string); ok {
+						act.Requires = append(act.Requires, s)
+					}
+				}
+			}
+			if eff, ok := a["effect"].(map[string]interface{}); ok {
+				for k, v := range eff {
+					if f, ok := v.(float64); ok {
+						act.Effect[k] = f
+					}
+				}
+			}
+			if res, ok := a["resources"].(map[string]interface{}); ok {
+				for k, v := range res {
+					if f, ok := v.(float64); ok {
+						act.Resources[k] = f
+					}
+				}
+			}
+			act.DurationMks, _ = a["duration_mks"].(float64)
+			graph.Acts = append(graph.Acts, act)
+		}
+	}
+	if rawEx, ok := worldRaw["exchanges"].([]interface{}); ok {
+		for _, eRaw := range rawEx {
+			e, ok := eRaw.(map[string]interface{})
+			if !ok {
+				continue
+			}
+			ex := ExchangeEdge{Gives: map[string]float64{}, Wants: map[string]float64{}}
+			ex.ID, _ = e["id"].(string)
+			if g, ok := e["gives"].(map[string]interface{}); ok {
+				for k, v := range g {
+					if f, ok := v.(float64); ok {
+						ex.Gives[k] = f
+					}
+				}
+			}
+			if w, ok := e["wants"].(map[string]interface{}); ok {
+				for k, v := range w {
+					if f, ok := v.(float64); ok {
+						ex.Wants[k] = f
+					}
+				}
+			}
+			ex.DurationMks, _ = e["duration_mks"].(float64)
+			graph.Exchanges = append(graph.Exchanges, ex)
+		}
+	}
+	meansClass := []string{}
+	if mc, ok := worldRaw["means_class"].([]interface{}); ok {
+		for _, c := range mc {
+			if s, ok := c.(string); ok {
+				meansClass = append(meansClass, s)
+			}
+		}
+	}
+	tRec := map[string]float64{}
+	if tr, ok := worldRaw["t_rec"].(map[string]interface{}); ok {
+		for k, v := range tr {
+			if f, ok := v.(float64); ok {
+				tRec[k] = f
+			}
+		}
+	}
+	var numeraire *string
+	if n, ok := worldRaw["numeraire"].(string); ok {
+		numeraire = &n
+	}
+	var horizon *float64
+	if ch, ok := worldRaw["counting_horizon_mks"].(float64); ok {
+		horizon = &ch
+	}
+	procedure, _ := worldRaw["procedure"].(string)
+	return graph, meansClass, tRec, numeraire, horizon, procedure
+}
+
+// verifyGraphDerived: §4.6/§4.9. Derived numbers MUST equal what their procedure
+// computes. Recomputes the Variety counter and the reachability verdict of every
+// entity against the declaration's M(S) and T_rec, and returns the mismatches
+// (empty = the ruler is honest). A declaration that claims a counter its own
+// observation does not support is exactly the "declared, not derived" defect this
+// revision removes.
+func verifyGraphDerived(declaration *MeasurementDeclaration, graph *WorldGraph, countingHorizon *float64) []string {
+	problems := []string{}
+	cats := declaration.MeansClass
+	eids := make([]string, 0, len(declaration.Verdicts))
+	for eid := range declaration.Verdicts {
+		eids = append(eids, eid)
+	}
+	sort.Strings(eids)
+	for _, entityID := range eids {
+		declared := declaration.Verdicts[entityID]
+		vHere := graph.VCount(entityID, cats, countingHorizon)
+		if declared.V != vHere {
+			problems = append(problems, fmt.Sprintf(
+				"%s: declared V=%d but the counting procedure gives %d", entityID, declared.V, vHere))
+		}
+		var declaredVerdict string
+		if d, ok := declaration.Verdicts[entityID]; ok {
+			declaredVerdict = d.Verdict
+		}
+		verdictHere := graph.Verdict(entityID, cats, declared.TRecMks).Verdict
+		if declaredVerdict != verdictHere {
+			problems = append(problems, fmt.Sprintf(
+				"%s: declared verdict %q but the verdict procedure returns %q",
+				entityID, declaredVerdict, verdictHere))
+		}
+	}
+	return problems
 }
 
 func (m *GraphMapper) PollEnvironment(raw map[string]interface{}) *SystemStateMatrix {
@@ -79,7 +253,7 @@ func (m *GraphMapper) PollEnvironment(raw map[string]interface{}) *SystemStateMa
 	minTTC := math.Inf(1)
 
 	for eid, obsRaw := range raw {
-		if eid == "resource_layer" {
+		if reservedKeys[eid] {
 			continue
 		}
 		obs := obsRaw.(map[string]interface{})
@@ -122,17 +296,132 @@ func (m *GraphMapper) PollEnvironment(raw map[string]interface{}) *SystemStateMa
 		globalTTC = 1e15
 	}
 
-	declaration := NewDeclaration(m.PsiID, observations, globalTTC, m.U0PriorQ, units, groups, rates, mandate)
+	// §3.5 (v0.7): the observed world graph, when the cycle was given one.
+	var graph *WorldGraph
+	var meansClass []string
+	var tRec map[string]float64
+	var numeraire *string
+	var countingHorizon *float64
+	graphProcedure := ""
+	if worldRaw, ok := raw["world"].(map[string]interface{}); ok {
+		graph, meansClass, tRec, numeraire, countingHorizon, graphProcedure = parseWorld(worldRaw)
+	}
+	if graph != nil && graphProcedure == "" {
+		graphProcedure = m.PsiID + ":world_verdicts"
+	}
+	// §4.9: the counting horizon of the Variety procedure. A response vector must
+	// be executable inside it, so the default is the cycle's own τ — the
+	// observation may declare a different one, but never an implicit one.
+	if graph != nil && countingHorizon == nil {
+		h := globalTTC
+		countingHorizon = &h
+	}
+
+	// §4.6 (v0.7): the numeraire weights, the observed rate table and the mandate
+	// cap are DERIVED over the observation, not authored. Without a declared
+	// numeraire there is no unit for a scalar cap, so neither applies — which is
+	// what keeps a ruler without a world graph reading exactly as it did in v0.6.
+	weights := map[string]float64{}
+	var capValue *float64
+	if graph != nil && numeraire != nil {
+		members := map[string]bool{}
+		for _, grp := range groups {
+			for _, r := range grp {
+				members[r] = true
+			}
+		}
+		memberList := make([]string, 0, len(members))
+		for r := range members {
+			memberList = append(memberList, r)
+		}
+		sort.Strings(memberList)
+		weights = graph.WeightsTo(*numeraire, memberList)
+		// §3.5/§4.8: the axis rates are the *output* of the observation
+		// procedure, so with a graph in hand the table is derived rather than read
+		// from the layer. A declared table next to an observed graph would be a
+		// second ruler for the same quantity, free to drift.
+		derived := map[string]RateInfo{}
+		for _, a := range memberList {
+			for _, b := range memberList {
+				if a == b {
+					continue
+				}
+				res := graph.Rate(a, b, true)
+				if res.Status == "observed" && res.Rate != nil {
+					derived[a+"->"+b] = RateInfo{Rate: *res.Rate, DurationMks: res.DurationMks}
+				}
+			}
+		}
+		if len(derived) > 0 {
+			rates = derived
+		}
+		limitKeys := make([]string, 0, len(mandate))
+		for k := range mandate {
+			limitKeys = append(limitKeys, k)
+		}
+		sort.Strings(limitKeys)
+		limits := []float64{}
+		for _, key := range limitKeys {
+			switch key {
+			case "cap":
+				if v, ok := mandate[key].(float64); ok {
+					limits = append(limits, v)
+				}
+			case "external_limit_credit":
+				// Declared in credits, applied in the numeraire: converted
+				// through the *observed* weight, never a hard-coded 1.0.
+				if v, ok := mandate[key].(float64); ok {
+					if wCredit, seen := weights["credit"]; seen {
+						limits = append(limits, v*wCredit)
+					}
+				}
+			}
+		}
+		if len(limits) > 0 {
+			smallest := limits[0]
+			for _, v := range limits[1:] {
+				if v < smallest {
+					smallest = v
+				}
+			}
+			capValue = &smallest
+		}
+	}
+
+	// §4.6/§4.9: the verdicts and the counters are computed by the named
+	// procedures and then *declared*, so the declaration can be checked against
+	// the observation it came from (`verifyGraphDerived`).
+	verdicts := map[string]VerdictRecord{}
+	if graph != nil {
+		eids := make([]string, 0, len(observations))
+		for eid := range observations {
+			eids = append(eids, eid)
+		}
+		sort.Strings(eids)
+		for _, eid := range eids {
+			var horizon *float64
+			if v, ok := tRec[eid]; ok {
+				horizon = &v
+			}
+			verdict := graph.Verdict(eid, meansClass, horizon)
+			verdicts[eid] = VerdictRecord{Verdict: verdict.Verdict, TRecMks: horizon,
+				V: graph.VCount(eid, meansClass, countingHorizon)}
+		}
+	}
+
+	// Pass 2: the declaration is frozen on S, so τ is known before measuring.
+	declaration := NewDeclaration(m.PsiID, observations, globalTTC, m.U0PriorQ, units, groups,
+		rates, mandate, numeraire, weights, capValue, verdicts, meansClass, graphProcedure)
 	m.LastDeclaration = declaration
 	u0 := declaration.U0()
 
 	entities := make(map[string]*EntityState)
 	for eid, obsRaw := range raw {
-		if eid == "resource_layer" {
+		if reservedKeys[eid] {
 			continue
 		}
 		obs := obsRaw.(map[string]interface{})
-		mz := MeasureEntity(eid, observations[eid], u0, means, groups)
+		mz := MeasureEntity(eid, observations[eid], u0, means, groups, weights, capValue)
 		entities[eid] = &EntityState{
 			EntityID:          eid,
 			IsAutonomous:      obs["is_autonomous"].(bool),
@@ -143,6 +432,22 @@ func (m *GraphMapper) PollEnvironment(raw map[string]interface{}) *SystemStateMa
 			TimeToCollapseMks: obs["time_to_collapse_mks"].(float64),
 			Measurement:       &mz,
 		}
+	}
+
+	// §3.5/§4.9: the observation itself, pinned by its own digest (§6.2), and the
+	// self-check that the declared derived numbers are the ones the named
+	// procedures actually return over it.
+	m.LastObservation = nil
+	m.LastGraphProblems = []string{}
+	if graph != nil {
+		m.LastObservation = &ObservationContext{
+			World:              graph,
+			MeansClass:         meansClass,
+			TRec:               tRec,
+			CountingHorizonMks: countingHorizon,
+			ObservationDigest:  graph.ObservationDigest(meansClass, tRec, countingHorizon),
+		}
+		m.LastGraphProblems = verifyGraphDerived(declaration, graph, countingHorizon)
 	}
 
 	return &SystemStateMatrix{

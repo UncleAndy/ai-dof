@@ -1,6 +1,13 @@
-// DOF-Core Go SDK — entry point / smoke test.
+// DOF-Core Go SDK — the v0.6 harness (historical evidence).
+//
 // Mirrors patterns/smoke_test.py: it checks the same facts on the same fixture
 // and compares the canonical declaration digest with the other ports.
+//
+// It is kept runnable on purpose and now shows three DOCUMENTED divergences that
+// v0.7 makes deliberate (see harness_v07.go section 13): the ruler digest moved,
+// a known zero is no longer excluded without an observation, and acting on a
+// passive object is no longer free without one. It is the historical record, not
+// the release's conformance suite — that is `runHarnessV07`.
 //
 // This harness intentionally keeps BOTH verification sets:
 //   * the v0.4/v0.5 checks (canonical ruler, per-entity §4.1/§4.6 values,
@@ -20,8 +27,10 @@ import (
 const expectedDigest = "bed37c25fd9cb757e9ea4a861c01cd4660fd896a83cd39b7c73b8e0be7489ad4"
 
 var failures []string
+var checksRun int
 
 func check(name string, ok bool, detail ...string) {
+	checksRun++
 	mark := "  OK   "
 	if !ok {
 		mark = "  FAIL "
@@ -122,7 +131,9 @@ func withDeadline(source map[string]interface{}, ttc float64) map[string]interfa
 	return out
 }
 
-func main() {
+func runHarnessV06() {
+	failures = []string{}
+	checksRun = 0
 	orch := NewDOFOrchestrator(0.05)
 	state := orch.mapper.PollEnvironment(fixture())
 	core := NewDOFCalculusCore()
@@ -185,7 +196,7 @@ func main() {
 	drone := state.Entities["drone"]
 	check("drone: derived blocks are (4,16)", len(drone.Measurement.Blocks) == 1 && drone.Measurement.Blocks[0][0] == 4.0 && drone.Measurement.Blocks[0][1] == 16.0)
 
-	testBlocks := deriveBlocks(map[string]float64{"fuel": 2.0}, map[string]float64{"fuel": 4.0}, [][]string{{"credit", "energy"}})
+	testBlocks := deriveBlocks(map[string]float64{"fuel": 2.0}, map[string]float64{"fuel": 4.0}, [][]string{{"credit", "energy"}}, nil, nil)
 	check("derive_blocks singleton", len(testBlocks) == 2 && testBlocks[0][0] == 0.0 && testBlocks[0][1] == 0.0 && testBlocks[1][0] == 2.0 && testBlocks[1][1] == 4.0)
 
 	fmt.Println("=== 4. §4.6 guard and §4.2 exclusion (passive object) ===")
@@ -197,13 +208,13 @@ func main() {
 	check("stone: ψ_var = 0, no 0/0", variety == 0.0)
 	check("stone: current_dof = 0", stone.CurrentDoF == 0.0)
 	check("stone: no NaN in the index", !math.IsNaN(report.TotalSystemDoF))
-	check("stone: excluded when nothing can raise it (§4.2)", !core.isIncluded(stone))
+	check("stone: excluded when nothing can raise it (§4.2)", !core.isIncluded(stone, nil, state))
 	check("stone: floored flag is set", stone.Measurement.Floored)
 
 	fmt.Println("=== 5. §4.7: unmeasured lens ===")
 	unmapped := state.Entities["unmapped"]
 	check("unmapped: DoFKnown = false", !unmapped.DoFKnown)
-	check("unmapped: never excluded (§4.2)", core.isIncluded(unmapped))
+	check("unmapped: never excluded (§4.2)", core.isIncluded(unmapped, nil, state))
 	unknown := 0
 	for _, t := range unmapped.Measurement.Terms {
 		if !t.DoFKnown {
@@ -235,7 +246,7 @@ func main() {
 		OptionID:               "direct",
 		ProjectedResourceDelta: map[string]map[string]float64{"child": {"energy": -2.0}},
 	}
-	planDirect := core.PlanFunding(state, optDirect, decl.Groups, decl.Rates)
+	planDirect := core.PlanFunding(state, optDirect, decl.Groups, decl.Rates, nil, nil)
 	check("direct payment covered", planDirect.Covered)
 	check("direct payment spend energy=2", planDirect.Spend["energy"] == 2.0)
 
@@ -244,7 +255,7 @@ func main() {
 		ProjectedResourceDelta: map[string]map[string]float64{"child": {"energy": -12.0}},
 		EstimatedDurationMks:   1000.0,
 	}
-	planFunded := core.PlanFunding(state, optFunded, decl.Groups, decl.Rates)
+	planFunded := core.PlanFunding(state, optFunded, decl.Groups, decl.Rates, nil, nil)
 	check("funded payment covered", planFunded.Covered)
 	check("funded total_duration=2000", planFunded.TotalDurationMks == 2000.0)
 	check("funded spend credit=1", planFunded.Spend["credit"] == 1.0)
@@ -254,14 +265,14 @@ func main() {
 		ProjectedResourceDelta: map[string]map[string]float64{"child": {"energy": -12.0}},
 		EstimatedDurationMks:   4000001.0,
 	}
-	planNoTime := core.PlanFunding(state, optNoTime, decl.Groups, decl.Rates)
+	planNoTime := core.PlanFunding(state, optNoTime, decl.Groups, decl.Rates, nil, nil)
 	check("no time for trade uncovered", !planNoTime.Covered)
 
 	optUndeclared := &ActionOption{
 		OptionID:               "undeclared",
 		ProjectedResourceDelta: map[string]map[string]float64{"child": {"fuel": -1.0}},
 	}
-	planUndeclared := core.PlanFunding(state, optUndeclared, decl.Groups, decl.Rates)
+	planUndeclared := core.PlanFunding(state, optUndeclared, decl.Groups, decl.Rates, nil, nil)
 	check("undeclared fuel uncovered", planUndeclared.Uncovered["fuel"] == 1.0)
 
 	optOffset := &ActionOption{
@@ -276,15 +287,16 @@ func main() {
 
 	brokeState := *state
 	brokeState.Resources = map[string]float64{"credit": 0.4, "energy": 0.0}
-	planBroke := core.PlanFunding(&brokeState, optFunded, decl.Groups, decl.Rates)
+	planBroke := core.PlanFunding(&brokeState, optFunded, decl.Groups, decl.Rates, nil, nil)
 	check("broke agent insolvency", !planBroke.Covered)
 
 	optionsGate := []*ActionOption{optDirect, optFunded, optUndeclared, optOffset}
-	admissible, removedGate := core.ApplyResourceGate(state, optionsGate, decl.Groups, decl.Rates)
+	admissible, removedGate := core.ApplyResourceGate(state, optionsGate, decl.Groups, decl.Rates, nil, nil)
 	check("resource gate removes undeclared", len(admissible) == 3 && len(removedGate) == 1 && removedGate[0].Gate == "insolvency")
 
 	fmt.Println("=== 8. Report Resources ===")
-	repFunded := core.Report(state, []*ActionOption{optFunded}, optFunded, "FAST_PASS", decl, nil, decl.Groups, decl.Rates)
+	repFunded := core.Report(state, []*ActionOption{optFunded}, optFunded, "FAST_PASS",
+		ReportInput{Declaration: decl, Groups: decl.Groups, Rates: decl.Rates})
 	check("resources_before correct", repFunded.ResourcesBefore["credit"] == 6.0 && repFunded.ResourcesBefore["energy"] == 10.0)
 	check("resources_after correct", repFunded.ResourcesAfter["credit"] == 5.0 && repFunded.ResourcesAfter["energy"] == 0.0)
 
@@ -297,12 +309,12 @@ func main() {
 		IsReversible:         true,
 		EstimatedDurationMks: 1000.0,
 	}
-	charges := core.collapseCharges(state, killer)
+	charges := core.collapseCharges(state, killer, nil)
 	check("charge: the destroyed entity is named with its DoF before the option",
 		len(charges) == 1 && charges[0].EntityID == "adult" && charges[0].DoFBefore == adult.CurrentDoF,
 		fmt.Sprintf("charges=%v", charges))
-	simKill, members := core.simulate(state, killer)
-	projectedKill := core.CalculateSystemDoF(simKill, members)
+	simKill, members := core.simulate(state, killer, nil)
+	projectedKill := core.CalculateSystemDoF(simKill, members, nil)
 	expectedKill := totalBefore - math.Log(adult.CurrentDoF) + math.Log(core.epsilon)
 	check("charge: the term stays at the floor instead of disappearing",
 		math.Abs(projectedKill-expectedKill) < 1e-9,
@@ -314,24 +326,24 @@ func main() {
 		IsReversible:         true,
 		EstimatedDurationMks: 1000.0,
 	}
-	passiveSim, passiveMembers := core.simulate(state, passive)
+	passiveSim, passiveMembers := core.simulate(state, passive, nil)
 	check("frozen set: a passive object is neither charged nor rewarded",
-		len(core.collapseCharges(state, passive)) == 0 &&
-			math.Abs(core.CalculateSystemDoF(passiveSim, passiveMembers)-totalBefore) < 1e-12)
+		len(core.collapseCharges(state, passive, nil)) == 0 &&
+			math.Abs(core.CalculateSystemDoF(passiveSim, passiveMembers, nil)-totalBefore) < 1e-12)
 	spare := &ActionOption{
 		OptionID: "rescue_child", Description: "raise the weakest counted entity",
 		ProjectedDoFDelta:    map[string]float64{"child": 0.2, "unmapped": 0.0},
 		IsReversible:         true,
 		EstimatedDurationMks: 1000.0,
 	}
-	admissibleStruct, gateRemoved := core.ApplyStructuralGate(state, []*ActionOption{killer, spare})
+	admissibleStruct, gateRemoved := core.ApplyStructuralGate(state, []*ActionOption{killer, spare}, nil)
 	check("structural gate: the destructive option is removed while a charge-free one exists",
 		len(admissibleStruct) == 1 && admissibleStruct[0].OptionID == "rescue_child" &&
 			len(gateRemoved) == 1 && gateRemoved[0].Gate == "collapse",
 		fmt.Sprintf("removed=%v", gateRemoved))
 	check("Axiom 3: the charge alone already makes destruction unprofitable",
-		core.EvaluateAndSelect(state, []*ActionOption{killer}) == nil)
-	onlyDestructive, _ := core.ApplyStructuralGate(state, []*ActionOption{killer})
+		core.EvaluateAndSelect(state, []*ActionOption{killer}, nil) == nil)
+	onlyDestructive, _ := core.ApplyStructuralGate(state, []*ActionOption{killer}, nil)
 	check("structural gate: when every candidate destroys, they stay admissible", len(onlyDestructive) == 1)
 	harm := &ActionOption{
 		OptionID: "harm_child", Description: "degrade the child",
@@ -340,8 +352,8 @@ func main() {
 		EstimatedDurationMks: 1000.0,
 	}
 	check("stay-put baseline: an all-negative candidate set selects nothing",
-		core.EvaluateAndSelect(state, []*ActionOption{harm}) == nil &&
-			core.EvaluateAndSelect(state, nil) == nil)
+		core.EvaluateAndSelect(state, []*ActionOption{harm}, nil) == nil &&
+			core.EvaluateAndSelect(state, nil, nil) == nil)
 	check("fixture 1: a strictly positive option is selected", selected != nil)
 
 	fmt.Println("=== 10. §4.7: coverage and completeness of unmapped entities ===")

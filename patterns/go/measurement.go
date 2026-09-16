@@ -120,13 +120,37 @@ func canonicalGroups(groups [][]string, requirements map[string]float64, means m
 	return normalized
 }
 
-func deriveBlocks(requirements map[string]float64, means map[string]float64, groups [][]string) [][2]float64 {
+func deriveBlocks(requirements map[string]float64, means map[string]float64, groups [][]string, weights map[string]float64, cap *float64) [][2]float64 {
+	// §4.6 (v0.7): c_g = Σ w_r·requirement_r and C_g = min(Σ w_r·means_r, cap).
+	//
+	// `w_r` is the observed price of resource r in the group numeraire. Without
+	// it the sum adds credits to joules, and the value of the lens starts to
+	// depend on the unit a resource happens to be declared in: the lens would
+	// measure notation instead of the world. A resource with no path to the
+	// numeraire is its own singleton group and carries weight 1.0 — with no
+	// exchange available, its own unit IS its nominal.
+	//
+	// `cap` is the mandate: permission, never possibility. It can only lower
+	// C_g, so a narrow mandate removes an option a large balance would have paid
+	// for, and no mandate can make payable what the measured means cannot cover.
 	var blocks [][2]float64
+	w := func(r string) float64 {
+		if weights == nil {
+			return 1.0
+		}
+		if v, ok := weights[r]; ok {
+			return v
+		}
+		return 1.0
+	}
 	for _, group := range canonicalGroups(groups, requirements, means) {
 		var cG, CG float64
 		for _, r := range group {
-			cG += math.Max(0.0, requirements[r])
-			CG += math.Max(0.0, means[r])
+			cG += w(r) * math.Max(0.0, requirements[r])
+			CG += w(r) * math.Max(0.0, means[r])
+		}
+		if cap != nil {
+			CG = math.Min(CG, math.Max(0.0, *cap))
 		}
 		blocks = append(blocks, [2]float64{cG, CG})
 	}
@@ -148,9 +172,20 @@ type LensObservation struct {
 	Options      *[][2]float64       `json:"options"`
 	Constraint   *ConstraintObs     `json:"constraint"`
 	Requirements map[string]float64 `json:"requirements"`
+	// §4.6 (v0.7): the numeraire weights and the mandate cap. Declared per
+	// observation as an alternative to passing them in, exactly as the reference
+	// does; the caller's values win when both are present.
+	Weights map[string]float64 `json:"weights"`
+	Cap     *float64           `json:"cap"`
 }
 
-func (o LensObservation) psi(lens string, means map[string]float64, groups [][]string) *float64 {
+func (o LensObservation) psi(lens string, means map[string]float64, groups [][]string, weights map[string]float64, cap *float64) *float64 {
+	if weights == nil {
+		weights = o.Weights
+	}
+	if cap == nil {
+		cap = o.Cap
+	}
 	switch lens {
 	case "variety":
 		if o.Variety == nil {
@@ -164,7 +199,7 @@ func (o LensObservation) psi(lens string, means map[string]float64, groups [][]s
 			return &v
 		}
 		if o.Requirements != nil {
-			v := PsiOpt(deriveBlocks(o.Requirements, means, groups))
+			v := PsiOpt(deriveBlocks(o.Requirements, means, groups, weights, cap))
 			return &v
 		}
 		return nil
@@ -219,9 +254,18 @@ type EntityMeasurement struct {
 	BindingLens  string              `json:"binding_lens"`
 	Blocks       [][2]float64        `json:"blocks"`
 	Derivation   map[string]interface{} `json:"derivation"`
+	// §4.6 (v0.7): the declared counters behind the Variety share. Kept because
+	// the price of a closure is recomputed from them (§4.4), not from the lens.
+	VarietyCounters map[string]float64 `json:"variety_counters"`
 }
 
-func MeasureEntity(eid string, obs LensObservation, u float64, means map[string]float64, groups [][]string) EntityMeasurement {
+func MeasureEntity(eid string, obs LensObservation, u float64, means map[string]float64, groups [][]string, weights map[string]float64, cap *float64) EntityMeasurement {
+	if weights == nil {
+		weights = obs.Weights
+	}
+	if cap == nil {
+		cap = obs.Cap
+	}
 	psi := map[string]*float64{}
 	terms := []LensTerm{}
 	product := 1.0
@@ -231,7 +275,7 @@ func MeasureEntity(eid string, obs LensObservation, u float64, means map[string]
 	bindingValue := math.Inf(1)
 
 	for _, lens := range lensOrder {
-		value := obs.psi(lens, means, groups)
+		value := obs.psi(lens, means, groups, weights, cap)
 		psi[lens] = value
 		var contribution float64
 		if value == nil {
@@ -253,27 +297,38 @@ func MeasureEntity(eid string, obs LensObservation, u float64, means map[string]
 	var blocks [][2]float64
 	var derivation map[string]interface{}
 	if obs.Requirements != nil {
-		blocks = deriveBlocks(obs.Requirements, means, groups)
+		blocks = deriveBlocks(obs.Requirements, means, groups, weights, cap)
 		derivation = map[string]interface{}{
 			"procedure":    "derive_blocks",
-			"requirements":  obs.Requirements,
-			"means":         means,
-			"groups":        canonicalGroups(groups, obs.Requirements, means),
+			"requirements": obs.Requirements,
+			"means":        means,
+			"groups":       canonicalGroups(groups, obs.Requirements, means),
+			// §4.6 (v0.7): the numeraire weights and the mandate cap are part of
+			// the derivation, so a reader can recompute (c_g, C_g) and see that
+			// the sum is not adding different physical units together.
+			"weights": weights,
+			"cap":     cap,
 		}
 	}
 
+	var counters map[string]float64
+	if obs.Variety != nil {
+		counters = map[string]float64{"V": obs.Variety.V, "V_env": obs.Variety.VEnv}
+	}
+
 	return EntityMeasurement{
-		EntityID:     eid,
-		Psi:          psi,
-		Terms:        terms,
-		CurrentDoF:   clamp01(product),
-		DoFKnown:     knownAll,
-		Contribution: math.Log(math.Max(product, Epsilon)),
-		TermsSum:     termsSum,
-		Floored:      product < Epsilon,
-		BindingLens:  binding,
-		Blocks:       blocks,
-		Derivation:   derivation,
+		EntityID:        eid,
+		Psi:             psi,
+		Terms:           terms,
+		CurrentDoF:      clamp01(product),
+		DoFKnown:        knownAll,
+		Contribution:    math.Log(math.Max(product, Epsilon)),
+		TermsSum:        termsSum,
+		Floored:         product < Epsilon,
+		BindingLens:     binding,
+		Blocks:          blocks,
+		Derivation:      derivation,
+		VarietyCounters: counters,
 	}
 }
 
@@ -299,31 +354,79 @@ type MeasurementDeclaration struct {
 	Rates      map[string]RateInfo
 	Mandate    map[string]interface{}
 	Procedures map[string]string
+	// §3.4.1 hashed content (v0.7): the graph-derived values of §4.9 and the
+	// numeraire the group amounts are expressed in. Only what determines numbers
+	// is here — the graph itself, the witness paths and the observation digest
+	// are report context (§6.2), and an option's closure list is a per-option
+	// input like `projected_dof_delta`, not ruler content.
+	Numeraire      *string
+	Weights        map[string]float64
+	MandateCap     *float64
+	Verdicts       map[string]VerdictRecord
+	MeansClass     []string
+	GraphProcedure string
 }
 
-func NewDeclaration(psiID string, entities map[string]LensObservation, tauMks float64, u0PriorQ *float64, resources []ResourceInfo, groups [][]string, rates map[string]RateInfo, mandate map[string]interface{}) *MeasurementDeclaration {
+// VerdictRecord is one entity's declared verdict together with the counters and
+// the horizon it was computed with, so the declaration can be checked against
+// the observation it came from (`verifyGraphDerived`).
+type VerdictRecord struct {
+	Verdict string
+	TRecMks *float64
+	V       int
+}
+
+func NewDeclaration(psiID string, entities map[string]LensObservation, tauMks float64, u0PriorQ *float64, resources []ResourceInfo, groups [][]string, rates map[string]RateInfo, mandate map[string]interface{}, numeraire *string, weights map[string]float64, mandateCap *float64, verdicts map[string]VerdictRecord, meansClass []string, graphProcedure string) *MeasurementDeclaration {
 	procs := make(map[string]string)
 	for _, lens := range lensOrder {
 		procs[lens] = psiID + ":" + lens
 	}
 	procs["options_blocks"] = psiID + ":derive_blocks"
+	cls := append([]string{}, meansClass...)
+	sort.Strings(cls)
 	return &MeasurementDeclaration{
-		PsiID:      psiID,
-		LensOrder:  lensOrder,
-		U0PriorQ:   u0PriorQ,
-		Entities:   entities,
-		TauMks:     tauMks,
-		Resources:   resources,
-		Groups:     canonicalGroups(groups, nil, nil),
-		Rates:      rates,
-		Mandate:    mandate,
-		Procedures: procs,
+		PsiID:          psiID,
+		LensOrder:      lensOrder,
+		U0PriorQ:       u0PriorQ,
+		Entities:       entities,
+		TauMks:         tauMks,
+		Resources:      resources,
+		Groups:         canonicalGroups(groups, nil, nil),
+		Rates:          rates,
+		Mandate:        mandate,
+		Procedures:     procs,
+		Numeraire:      numeraire,
+		Weights:        weights,
+		MandateCap:     mandateCap,
+		Verdicts:       verdicts,
+		MeansClass:     cls,
+		GraphProcedure: graphProcedure,
 	}
 }
 
 func (d *MeasurementDeclaration) U0() float64 { return U0FromPrior(d.U0PriorQ) }
 
 func canonFloat(x float64) string { return fmt.Sprintf("%.6f", x) }
+
+// perEntityWeights / perEntityFloat render the optional per-entity ruler fields
+// as the reference does: a map of canonical strings, or null.
+func perEntityWeights(m map[string]float64) interface{} {
+	if m == nil {
+		return nil
+	}
+	out := make(map[string]interface{}, len(m))
+	for k, v := range m {
+		out[k] = canonFloat(v)
+	}
+	return out
+}
+
+func perEntityFloat(p *float64) interface{} {
+	if p == nil {
+		return nil
+	}
+	return canonFloat(*p)
+}
 
 func canonicalize(obj interface{}) interface{} {
 	switch v := obj.(type) {
@@ -399,7 +502,11 @@ func (d *MeasurementDeclaration) CanonicalText() string {
 		} else {
 			requirements = nil
 		}
-		entities[eid] = map[string]interface{}{"variety": variety, "options": options, "constraint": constraint, "requirements": requirements}
+		entities[eid] = map[string]interface{}{"variety": variety, "options": options, "constraint": constraint, "requirements": requirements,
+			// §4.6 (v0.7): the per-entity numeraire weights and mandate cap. Null
+			// when the entity does not declare them — the same shape every other
+			// port hashes, because a missing key and a null key hash differently.
+			"weights": perEntityWeights(obs.Weights), "cap": perEntityFloat(obs.Cap)}
 	}
 
 	var resources []interface{}
@@ -443,6 +550,43 @@ func (d *MeasurementDeclaration) CanonicalText() string {
 		}
 	}
 	doc["mandate"] = mandateCanon
+
+	// §3.4.1 (v0.7): the graph-derived content. Rendered in the canonical form —
+	// floats as fixed six-decimal strings, `v` as an INTEGER, absent as null —
+	// because the digest must be a function of the ruler and not of a language's
+	// default float notation.
+	weightsCanon := make(map[string]interface{})
+	for k, v := range d.Weights {
+		weightsCanon[k] = canonFloat(v)
+	}
+	verdictsCanon := make(map[string]interface{})
+	for eid, v := range d.Verdicts {
+		var tRec interface{}
+		if v.TRecMks != nil {
+			tRec = canonFloat(*v.TRecMks)
+		}
+		verdictsCanon[eid] = map[string]interface{}{
+			"verdict":   v.Verdict,
+			"t_rec_mks": tRec,
+			"v":         v.V,
+		}
+	}
+	var numeraire interface{}
+	if d.Numeraire != nil {
+		numeraire = *d.Numeraire
+	}
+	var mandateCap interface{}
+	if d.MandateCap != nil {
+		mandateCap = canonFloat(*d.MandateCap)
+	}
+	meansClass := append([]string{}, d.MeansClass...)
+	sort.Strings(meansClass)
+	doc["numeraire"] = numeraire
+	doc["weights"] = weightsCanon
+	doc["mandate_cap"] = mandateCap
+	doc["verdicts"] = verdictsCanon
+	doc["means_class"] = meansClass
+	doc["graph_procedure"] = d.GraphProcedure
 
 	canonDoc := canonicalize(doc)
 

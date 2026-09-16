@@ -31,6 +31,27 @@ def q6(x: float) -> float:
     return float("%.*f" % (Q_DECIMALS, x))
 
 
+def _canonical_payload(obj):
+    """Canonical serialization of §3.4.3 applied to the observation fingerprint.
+
+    Numbers become fixed six-decimal **strings**, dictionaries are key-sorted and
+    integers stay integers, so the fingerprint is a function of the observation
+    and not of a language's float notation (`1000.0`, `1000` and `1e3` are one
+    quantity, and three ports must agree on it).
+    """
+    if isinstance(obj, dict):
+        return {k: _canonical_payload(obj[k]) for k in sorted(obj)}
+    if isinstance(obj, (list, tuple)):
+        return [_canonical_payload(v) for v in obj]
+    if isinstance(obj, bool) or obj is None:
+        return obj
+    if isinstance(obj, int):
+        return obj
+    if isinstance(obj, float):
+        return "%.6f" % obj
+    return str(obj)
+
+
 # --------------------------------------------------------------------------- nodes
 class EntityNode(BaseModel):
     """A counted subject. `observation` is the per-entity completeness claim of §3.5."""
@@ -167,21 +188,27 @@ class WorldGraph(BaseModel):
         quotes, `M(S)`, `T_rec` and the counting horizon — and deliberately not
         the candidate set: a decision that moved with the options offered would
         not be reproducible (§4.2).
+
+        Numbers are serialized in the canonical form of §3.4.3 (fixed six
+        decimals, as strings), never in a language's own float notation: `1000.0`
+        and `1000` are the same quantity, and a fingerprint that depended on
+        which one a port happened to print would not be a fingerprint of the
+        observation.
         """
         payload = {
             "entities": {e.id: {"observation": e.observation,
-                                "current_dof": None if e.current_dof is None
-                                else round(float(e.current_dof), 9)}
+                                "current_dof": (None if e.current_dof is None
+                                                else float(e.current_dof))}
                          for e in sorted(self.entities.values(), key=lambda x: x.id)},
             "means": sorted(self.means),
-            "acts": [{ "id": a.id, "source": a.source, "target": a.target,
-                       "category": a.category, "requires": sorted(a.requires),
-                       "effect": {k: round(float(v), 9) for k, v in sorted(a.effect.items())},
-                       "duration_mks": a.duration_mks}
+            "acts": [{"id": a.id, "source": a.source, "target": a.target,
+                      "category": a.category, "requires": sorted(a.requires),
+                      "effect": {k: float(v) for k, v in sorted(a.effect.items())},
+                      "duration_mks": a.duration_mks}
                      for a in sorted(self.acts, key=lambda x: x.id)],
             "exchanges": [{"id": e.id,
-                           "gives": {k: round(float(v), 9) for k, v in sorted(e.gives.items())},
-                           "wants": {k: round(float(v), 9) for k, v in sorted(e.wants.items())},
+                           "gives": {k: float(v) for k, v in sorted(e.gives.items())},
+                           "wants": {k: float(v) for k, v in sorted(e.wants.items())},
                            "duration_mks": e.duration_mks}
                           for e in sorted(self.exchanges, key=lambda x: x.id)],
             "means_class": sorted(str(c) for c in (means_class or [])),
@@ -189,7 +216,7 @@ class WorldGraph(BaseModel):
             "counting_horizon_mks": (None if counting_horizon_mks is None
                                      else float(counting_horizon_mks)),
         }
-        blob = json.dumps(payload, sort_keys=True, separators=(",", ":"),
+        blob = json.dumps(_canonical_payload(payload), separators=(",", ":"),
                           ensure_ascii=True)
         return hashlib.sha256(blob.encode("utf-8")).hexdigest()
 

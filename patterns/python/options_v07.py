@@ -128,6 +128,56 @@ def gateable_set() -> List[ActionOption]:
     return [opt_win(), opt_lose(), opt_collapse(), opt_over_mandate(), opt_drone_heavy()]
 
 
+# --- §4.5 (v0.8): the "compensation" candidates -------------------------------
+def t1_compensate() -> ActionOption:
+    """A gain that *would* have won, and a path that is the price.
+
+    No collapse charge and `NetDelta > 0`: every gate of v0.5–v0.7 passes it, and
+    the ladder of those releases engaged only when two options tied on the index —
+    so under the old rules this option would have been selected exactly when it
+    maximized `NetDelta`. `medkit` is the only act lifting `revivable` off a known
+    zero, so closing it drops that entity out of `reachable`: `D2 = 1`, and
+    `D3 = 1` because `revivable` sits at the minimum `current_dof` of `calc(S)`.
+    """
+    return ActionOption(option_id="t1_compensate", description="close medkit, gain on the drone",
+                        projected_dof_delta={"drone": 0.1},
+                        estimated_duration_mks=1000.0, closed=closures("medkit"))
+
+
+def t1_mirror() -> ActionOption:
+    """The same gain with a path that is *not* the price.
+
+    Closes one of robot's nine means: robot keeps eight vectors and its verdict
+    stays `reachable`, so the vector is `D1 = D2 = D3 = 0` and the option must be
+    **selected**. The mirror of `t1_compensate`, and the reason the release ships a
+    filter and not a ban.
+    """
+    return ActionOption(option_id="t1_mirror", description="close m9, gain on the drone",
+                        projected_dof_delta={"drone": 0.1},
+                        estimated_duration_mks=1000.0, closed=closures("m9"))
+
+
+def t1_help() -> ActionOption:
+    """Loses a path that is *not* critical: closes the mean behind `act_supervise`.
+
+    `trainee` leaves `reachable` (`D2 = 1`) but stands above the minimum DoF of
+    `calc(S)`, so `D3 = 0`. Against `t1_rival` — the same `D1` and the same `D2`,
+    but a critical path — the **third key** is what decides, with the index never
+    consulted: the only reason a third key exists.
+    """
+    return ActionOption(option_id="t1_help", description="close radio, gain on the drone",
+                        projected_dof_delta={"drone": 0.1},
+                        estimated_duration_mks=1000.0, closed=closures("radio"))
+
+
+def t1_rival() -> ActionOption:
+    """`t1_help`'s twin, with a critical path instead of a dependent's."""
+    return ActionOption(option_id="t1_rival", description="close medkit, gain on the drone",
+                        projected_dof_delta={"drone": 0.1},
+                        estimated_duration_mks=1000.0, closed=closures("medkit"))
+
+
 __all__ = ["closures", "opt_win", "opt_lose", "opt_collapse", "opt_over_mandate",
            "opt_drone_heavy", "opt_bad_self", "opt_bad_empty", "opt_funded",
-           "opt_undeclared", "standard_set", "gateable_set"]
+           "opt_undeclared", "standard_set", "gateable_set",
+           "t1_compensate", "t1_mirror", "t1_help", "t1_rival"]

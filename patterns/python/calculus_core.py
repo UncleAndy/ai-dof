@@ -2,8 +2,9 @@
 
 Mirrors the normative DOF-SPEC: pure Nash evaluation index (sum of ln(DoF)),
 the `calc` calculation set, Collapse-Source isolation, Delta-T-aware selection,
-the collapse charge (§4.2) with structural admissibility (§4.5), the resource
-gate with verified conversion and insolvency (§4.8), and the
+the collapse charge (§4.2) with the ordered admissibility filter of §4.5 (v0.8:
+`D1 → D2 → D3 → NetDelta → reversibility`, with staying put a candidate), the
+resource gate with verified conversion and insolvency (§4.8), and the
 Proof-of-Implementation audit report (DOF-SPEC §6).
 
 Structural expression of the skill's axioms: Axiom 1 (maximize the total future
@@ -20,6 +21,13 @@ from pydantic import BaseModel, Field
 
 from measurement import EntityMeasurement, MeasurementDeclaration, psi_var
 from world_graph import ClosedRef, WorldGraph
+
+# §4.5 / §10 (v0.8): the tolerance used when grouping candidates whose `NetDelta`
+# ties. The index is a sum of logarithms over a *set*, so two ports that iterate
+# their container in different orders can disagree in the last bits (~1e-15)
+# while agreeing on every derivation. A tie must be resolved identically
+# everywhere: §7 requires the same *choice*, not only the same numbers.
+NET_DELTA_TOLERANCE = 1e-9
 
 
 class PsiReference(BaseModel):
@@ -98,6 +106,10 @@ class DofReport(BaseModel):
     # reported subgraph was taken from.
     means_provenance: Dict[str, object] = {}
     observation_digest: Optional[str] = None
+    # §6.2 (v0.8): the vector every candidate was compared against, and whether
+    # any candidate beat it. A refusal to act is a decision and must be audible.
+    baseline: Dict[str, object] = {}
+    no_candidate_better: bool = False
 
 
 class ObservationContext(BaseModel):
@@ -390,8 +402,17 @@ class DOFCalculusCore:
                               options: List[ActionOption],
                               ctx: Optional[ObservationContext] = None
                               ) -> Tuple[List[ActionOption], List[Dict[str, str]]]:
-        """§4.5: an option that destroys a counted entity is inadmissible while
-        a charge-free candidate exists. Every removal is recorded (§6.2).
+        """§4.5 **v0.7 rule, retired in v0.8** — kept for the historical harnesses.
+
+        `v0.8` no longer removes a charged candidate from the set: the candidate
+        is evaluated, reported in full, and loses to staying put on the first key
+        of the ordered filter (§4.5, `select_candidate`), so `removed_options`
+        carries no structural removal. This function survives because the `v0.6`
+        reference harness asserts the rule that was in force then and history
+        must stay reproducible; **nothing on the live path calls it**.
+        Original contract: an option that destroys a counted entity is
+        inadmissible while a charge-free candidate exists. Every removal is
+        recorded (§6.2).
 
         The charge is taken against `calc(S)`, and `calc` depends on the
         observation (§4.2/§4.9): an entity kept in the set by a `reachable` or
@@ -411,6 +432,91 @@ class DOFCalculusCore:
         # No alternative exists: Axiom 3 still forbids preferring destruction,
         # but with every candidate destructive the ladder decides (rung 1).
         return [o for o, _ in charged], []
+
+    # --- §4.5 (v0.8): the candidate vector and the ordered filter -------------
+    def critical_members(self, state: SystemStateMatrix,
+                         ctx: Optional[ObservationContext] = None,
+                         members: Optional[Set[str]] = None) -> Set[str]:
+        """§4.5: the entities of `calc(S)` at the minimum `current_dof`.
+
+        A set, not a node: a minimum attained by several known zeros has no
+        unique "critical node", and a flag would have to invent a tie-break by
+        `entity_id`. `D3` is the *count* of lost paths inside this set.
+        """
+        members = self.calc_members(state, ctx) if members is None else members
+        dofs = {e: state.entities[e].current_dof for e in members if e in state.entities}
+        if not dofs:
+            return set()
+        lowest = min(dofs.values())
+        return {e for e, value in dofs.items() if value == lowest}
+
+    def lost_paths(self, state: SystemStateMatrix, option: ActionOption,
+                   ctx: Optional[ObservationContext] = None) -> List[Dict[str, object]]:
+        """§4.5: the entities this option drops out of a `reachable` verdict.
+
+        The verdict procedure runs twice over the *same* observation — once as
+        observed, once with the option's closure applied — so a verdict can only
+        move away from `reachable` and the difference is computed, not declared.
+        A lost witness is a loss: an entity that leaves `reachable` counts even
+        where no exclusion follows from it, because §4.2 excludes only on a
+        `proven_unreachable` verdict over a complete observation.
+        """
+        if ctx is None or not option.closed:
+            return []
+        closed_world = ctx.world.with_closed(option.closed)
+        critical = self.critical_members(state, ctx)
+        rows: List[Dict[str, object]] = []
+        for e_id in sorted(state.entities):
+            before = ctx.world.verdict(e_id, ctx.means_class, ctx.horizon(e_id))
+            if before.verdict != "reachable":
+                continue
+            after = closed_world.verdict(e_id, ctx.means_class, ctx.horizon(e_id))
+            if after.verdict == "reachable":
+                continue
+            rows.append({"entity_id": e_id, "verdict_before": before.verdict,
+                         "verdict_after": after.verdict, "critical": e_id in critical,
+                         "witness_lost": list(before.witness)})
+        return rows
+
+    def candidate_vector(self, state: SystemStateMatrix, option: ActionOption,
+                         ctx: Optional[ObservationContext] = None,
+                         current_index: Optional[float] = None) -> Dict[str, object]:
+        """§4.5 (v0.8): the keys of one candidate, all of them computed.
+
+        `d1`/`d2`/`d3` are **counts of entities** — the protected dimensions.
+        They are integers bounded by `calc(S)` and by the observed graph, and
+        they are never mixed with the index: the integers decide admissibility,
+        the index selects among those that are admissible.
+        """
+        if current_index is None:
+            current_index = self.calculate_system_dof(state, None, ctx)
+        simulated, members = self.simulate(state, option, ctx)
+        projected = self.calculate_system_dof(simulated, members, ctx)
+        lost = self.lost_paths(state, option, ctx)
+        return {
+            "d1": len(self.collapse_charges(state, option, ctx)),
+            "d2": len(lost),
+            "d3": sum(1 for row in lost if row["critical"]),
+            "net_delta": self._net_delta(state, option, projected, current_index),
+            "reversible": self.is_reversible(option),
+            "option_id": option.option_id,
+        }
+
+    def baseline_vector(self) -> Dict[str, object]:
+        """§4.5: staying put — the zero vector, `NetDelta = 0` by definition."""
+        return {"d1": 0, "d2": 0, "d3": 0, "net_delta": 0.0,
+                "reversible": True, "option_id": None}
+
+    def barring_key(self, vector: Dict[str, object]) -> Optional[str]:
+        """§4.5/§6.2: the first key on which this candidate fails to beat staying
+        put. `None` means nothing barred it — it outranks the baseline, or ties
+        it while staying reversible."""
+        for key in ("d1", "d2", "d3"):
+            if int(vector[key]) > 0:
+                return key
+        if float(vector["net_delta"]) <= 0.0:
+            return "net_delta"
+        return None
 
     # --- §4.8 resource gate ---------------------------------------------------
     def requirement(self, option: ActionOption) -> Dict[str, float]:
@@ -586,24 +692,69 @@ class DOFCalculusCore:
     def evaluate_and_select(self, current_state: SystemStateMatrix,
                             options: List[ActionOption],
                             ctx: Optional[ObservationContext] = None) -> Optional[ActionOption]:
-        """Selection: strictly positive NetDelta over the `stay put` baseline
-        (NetDelta = 0 by definition), rung 1 of the ladder on ties (§4.5)."""
+        """§4.5 (v0.8): the keys are an **ordered filter**, not a tie-break.
+
+        `D1 → D2 → D3 → NetDelta → reversibility → option_id`, each key applied
+        only to the survivors of the previous one, with staying put a candidate
+        (the zero vector). The survivor is selected only if it beats the baseline
+        (`NetDelta > 0`); otherwise selection returns `none` and the system stays.
+        """
+        return self.select_candidate(current_state, options, ctx)[0]
+
+    def select_candidate(self, current_state: SystemStateMatrix,
+                         options: List[ActionOption],
+                         ctx: Optional[ObservationContext] = None
+                         ) -> Tuple[Optional[ActionOption], List[Dict[str, object]]]:
+        """The filter itself: the winner (or `None`) and every candidate's vector.
+
+        `NetDelta` ties are grouped with a tolerance, and for the same reason the
+        index is compared with one (§10): the index is a sum of logarithms over a
+        set, so two ports that sum in different orders can differ in the last
+        bits. A *tie* must be resolved identically everywhere — §7 requires the
+        same choice, not only the same numbers.
+        """
         if not options:
-            return None
-        current_system_dof = self.calculate_system_dof(current_state, None, ctx)
-        best: Optional[ActionOption] = None
-        best_key: Optional[Tuple[float, int, str]] = None
-        for option in options:
-            simulated, members = self.simulate(current_state, option, ctx)
-            projected_dof = self.calculate_system_dof(simulated, members, ctx)
-            net_delta = self._net_delta(current_state, option, projected_dof, current_system_dof)
-            if net_delta <= 0.0:
-                continue  # §4.5: staying put wins; acting would degrade the index
-            key = (-net_delta, len(self.collapse_charges(current_state, option, ctx)),
-                   option.option_id)
-            if best_key is None or key < best_key:
-                best_key, best = key, option
-        return best
+            return None, []
+        current_index = self.calculate_system_dof(current_state, None, ctx)
+        candidates = [(o, self.candidate_vector(current_state, o, ctx, current_index))
+                      for o in options]
+        vectors = [v for _, v in candidates]
+        # §4.5: staying put is a candidate **like any other**, so its zero vector
+        # enters the set. That is what makes a protected key a *bar* instead of a
+        # comparison: any candidate with `d1`, `d2` or `d3` above zero loses to it,
+        # and no candidate can ever be preferred for cutting a path. Comparing
+        # against the baseline only at the `NetDelta` key would let a positive
+        # delta buy a lost path back — exactly the defect this release removes.
+        candidates = candidates + [(None, self.baseline_vector())]
+        survivors = list(candidates)
+        for key in ("d1", "d2", "d3"):               # protected keys: the fewest
+            if not survivors:
+                break
+            best = min(int(v[key]) for _, v in survivors)
+            survivors = [(o, v) for o, v in survivors if int(v[key]) == best]
+        if survivors:                                 # the index: the greatest
+            best = max(float(v["net_delta"]) for _, v in survivors)
+            survivors = [(o, v) for o, v in survivors
+                         if abs(float(v["net_delta"]) - best) <= NET_DELTA_TOLERANCE]
+        if survivors and any(bool(v["reversible"]) for _, v in survivors):
+            survivors = [(o, v) for o, v in survivors if bool(v["reversible"])]
+        # §4.5 key 6: on a complete tie, staying put wins if it is still a
+        # candidate. A zero vector is a full tie with doing nothing, and doing
+        # nothing is what that vector means.
+        if any(o is None for o, _ in survivors):
+            return None, vectors
+        if survivors:                                 # deterministic fallback
+            smallest = min(str(v["option_id"]) for _, v in survivors)
+            survivors = [(o, v) for o, v in survivors if str(v["option_id"]) == smallest]
+        if not survivors:
+            return None, vectors
+        winner, vector = survivors[0]
+        # §4.5 key 4: the survivor is selected only if it beats the baseline. With
+        # the baseline in the set this is already implied — a winner that reached
+        # the end beat it strictly — and the guard stays as a statement of the rule.
+        if float(vector["net_delta"]) <= 0.0:
+            return None, vectors
+        return winner, vectors
 
     def _is_incomplete(self, state: SystemStateMatrix,
                        options: List[ActionOption]) -> bool:
@@ -670,10 +821,12 @@ class DOFCalculusCore:
                 resources_after[resource] = max(0.0, resources_after.get(resource, 0.0) - amount)
 
         option_rows: List[Dict[str, object]] = []
+        current_index = self.calculate_system_dof(current_state, None, ctx)
         for option in options:
             simulated, members = self.simulate(current_state, option, ctx)
             projected_dof = self.calculate_system_dof(simulated, members, ctx)
-            net_delta = self._net_delta(current_state, option, projected_dof, total)
+            vector = self.candidate_vector(current_state, option, ctx, current_index)
+            net_delta = float(vector["net_delta"])
             is_selected = (selected is not None and option.option_id == selected.option_id)
             plan = self.plan_funding(current_state, option, groups, rates, weights, cap)
             option_rows.append({
@@ -681,6 +834,13 @@ class DOFCalculusCore:
                 "is_reversible": self.is_reversible(option),
                 "projected_dof": projected_dof,
                 "net_delta": net_delta,
+                # §6.3 (v0.8): the structural keys, and — when the candidate lost
+                # to staying put — the key that barred it. The integers are what
+                # the selection compares; the index only breaks their ties.
+                "candidate_vector": vector,
+                "barring_key": self.barring_key(vector),
+                # §6.3 (v0.8): the path losses this option causes, line by line.
+                "lost_paths": self.lost_paths(current_state, option, ctx),
                 "selected": is_selected,
                 "estimated_duration_mks": option.estimated_duration_mks,
                 # §6.3: every collapse this option causes, as an auditable line
@@ -711,4 +871,8 @@ class DOFCalculusCore:
             resources_after=resources_after,
             means_provenance=dict(means_provenance or {}),
             observation_digest=(ctx.observation_digest if ctx else None),
+            # §6.2 (v0.8): what the candidates were compared against, and whether
+            # any of them beat it. A silent "no action" is an omission.
+            baseline=self.baseline_vector(),
+            no_candidate_better=bool(options) and selected is None,
         )

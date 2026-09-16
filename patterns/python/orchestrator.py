@@ -61,26 +61,25 @@ class DOFOrchestrator:
 
     def _gates(self, state: SystemStateMatrix, options: List[ActionOption]
                ) -> Tuple[List[ActionOption], List[Dict[str, str]]]:
-        """§5 → §4.5 → §4.8, in that order, with every removal recorded.
+        """§5 → §4.8, with every removal recorded.
 
-        The observation comes from the mapper and is handed to the structural
-        gate: the charge of §4.2 is taken against `calc(S)`, and `calc` is decided
-        by the verdicts of §4.9 — so the gate and the index must be scored against
-        the same set, or the gate would filter a different world than the one the
-        decision was made in.
+        `v0.8` **retired the structural gate**: a charged candidate is no longer
+        removed from the set. It is evaluated, reported in full and loses to
+        staying put on the first key of the ordered filter (§4.5), so the
+        structural decision is visible per option as `d1` instead of as a deletion
+        here. Two gates remain: viability (§5) and insolvency (§4.8).
         """
         ctx = self.mapper.last_observation
         declaration = self.mapper.last_declaration
         tau = state.global_time_to_collapse_mks
         viable, removed_viability = self._apply_viability_gate(options, tau)
-        admissible, removed_structural = self.core.apply_structural_gate(state, viable, ctx)
         affordable, removed_resource = self.core.apply_resource_gate(
-            state, admissible,
+            state, viable,
             groups=declaration.groups if declaration else None,
             rates=declaration.rates if declaration else None,
             weights=declaration.weights if declaration else None,
             cap=declaration.mandate_cap if declaration else None)
-        return affordable, removed_viability + removed_structural + removed_resource
+        return affordable, removed_viability + removed_resource
 
     def step(self, raw_observations: dict) -> Optional[ActionOption]:
         """Run one decision cycle and return the verified safe vector."""

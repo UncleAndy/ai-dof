@@ -274,10 +274,75 @@ def arbitrage_scene() -> dict:
     return scene(exchanges=quotes)
 
 
+# --- §4.5 (v0.8) run variant: the "compensation" fixture -----------------------
+SUPERVISE_MEAN = "radio"
+TRAINEE_MEAN = "q_trainee_1"
+MENTOR_MEAN = "q_mentor_2"
+
+
+def t1_entities() -> Dict[str, dict]:
+    """The two entities the v0.8 run variant adds (§4.5, T1).
+
+    `trainee` is the case `D3` exists for: it *can* act (`V = 1`) but its own act
+    does not raise its own DoF, so its recoverability rests entirely on someone
+    else's act. `mentor` is that someone: it performs `act_supervise` and holds a
+    second vector of its own, so closing the mean behind the act costs the mentor
+    *a* response vector — a price inside the index — without driving it to a known
+    zero, which would make the option destructive instead of merely path-cutting.
+    Both sit at `0.125` exactly: `ψ_var = ½`, `ψ_opt = 4^(−½) = ½`, `ψ_con = ½`.
+    """
+    return {
+        "mentor": {"is_autonomous": True, "agency_index": 0.5, "is_collapse_source": False,
+                   "time_to_collapse_mks": 1e8,
+                   "lenses": {"variety": {"V": 2.0, "V_env": 2.0}, "options": [[1.0, 2.0]],
+                              "constraint": {"F": 1.0, "F_env": 1.0}}},
+        "trainee": {"is_autonomous": False, "agency_index": 0.2, "is_collapse_source": False,
+                    "time_to_collapse_mks": 1e8,
+                    "lenses": {"variety": {"V": 1.0, "V_env": 1.0}, "options": [[1.0, 2.0]],
+                               "constraint": {"F": 1.0, "F_env": 1.0}}},
+    }
+
+
+def t1_scene() -> dict:
+    """`scene()` plus the two entities and the three acts of the v0.8 variant.
+
+    Built as a **post-processing** of the released world rather than as a branch
+    inside it: the released fixture's own numbers and digests must not move, and
+    threading a flag through `world()` would put that at risk for no gain.
+    """
+    out = scene()
+    out.update(t1_entities())
+    world = out["world"]
+    world["entities"].update({
+        "mentor": {"id": "mentor", "observation": "complete", "current_dof": 0.125},
+        "trainee": {"id": "trainee", "observation": "complete", "current_dof": 0.125},
+    })
+    world["means"] = list(world["means"]) + [SUPERVISE_MEAN, TRAINEE_MEAN, MENTOR_MEAN]
+    world["acts"] = list(world["acts"]) + [
+        # The trainee's own vector: it acts, on the robot, and never on itself —
+        # which is why losing the mentor's act costs it the path (`D2`) while its
+        # `V` stays above zero (so there is no collapse charge).
+        {"id": "a_trainee_1", "source": "trainee", "target": "robot",
+         "category": "technical", "requires": [TRAINEE_MEAN],
+         "effect": {"robot": 0.01}, "duration_mks": 1000.0},
+        {"id": "act_supervise", "source": "mentor", "target": "trainee",
+         "category": "technical", "requires": [SUPERVISE_MEAN],
+         "effect": {"trainee": 0.1}, "duration_mks": 1000.0},
+        {"id": "a_mentor_2", "source": "mentor", "target": "mentor",
+         "category": "technical", "requires": [MENTOR_MEAN],
+         "effect": {"mentor": 0.01}, "duration_mks": 1000.0},
+    ]
+    # A horizon is what makes a verdict a verdict: with no `T_rec` the trainee's
+    # answer would be `undetermined`, and `D2` counts only a *lost* `reachable`.
+    world["t_rec"] = dict(world["t_rec"])
+    world["t_rec"]["trainee"] = T_REC_MKS
+    return out
+
+
 __all__ = [
     "M_S", "T_REC_MKS", "COUNTING_HORIZON_MKS", "T_REC", "EXCHANGES", "NUMERAIRE",
     "MANDATE_CAP", "EXTERNAL_LIMIT_CREDIT", "GROUP", "MEANS", "RESOURCES",
-    "GROUP_BALANCE_NUMERAIRE", "ROBOT_MEANS", "MEDKIT",
+    "GROUP_BALANCE_NUMERAIRE", "ROBOT_MEANS", "MEDKIT", "SUPERVISE_MEAN",
     "graph_entities", "graph_acts", "graph_means", "entity_specs", "world", "layer", "scene",
-    "arbitrage_scene",
+    "arbitrage_scene", "t1_entities", "t1_scene",
 ]

@@ -112,28 +112,48 @@ pub fn canonical_groups(
     normalized
 }
 
-/// §4.6 (v0.6): the derived `(c_g, C_g)` pair of every resource block. Named
+/// §4.6 (v0.7): the derived `(c_g, C_g)` pair of every resource block. Named
 /// procedure: resources inside a group are mutually exchangeable, so they share
 /// one block — `c_g` is what the transition draws from the group, `C_g` is what
 /// the agent can commit to it. Zero is legal on both sides; `psi_opt` then
 /// applies the `c_g > 0 ∧ C_g = 0` gate. The derivation is total: every resource
 /// of the inputs lands in exactly one group.
+///
+/// `weights` are the observed prices of each resource in the group's numeraire.
+/// Without them the sum adds credits to joules, and the value of the lens starts to
+/// depend on the unit a resource happens to be declared in: the lens would measure
+/// notation instead of the world. A resource with no path to the numeraire is its
+/// own singleton group and carries weight 1.0 — with no exchange available, its own
+/// unit IS its nominal.
+///
+/// `cap` is the mandate: permission, never possibility. It can only lower `C_g`.
 pub fn derive_blocks(
     requirements: &BTreeMap<String, f64>,
     means: &BTreeMap<String, f64>,
     groups: &[Vec<String>],
+    weights: Option<&BTreeMap<String, f64>>,
+    cap: Option<f64>,
 ) -> Vec<(f64, f64)> {
+    let weight_of = |r: &str| -> f64 {
+        match weights {
+            Some(w) => w.get(r).copied().unwrap_or(1.0),
+            None => 1.0,
+        }
+    };
     let mut blocks = Vec::new();
     for group in canonical_groups(groups, Some(requirements), Some(means)) {
         let mut c_g = 0.0;
         let mut cap_g = 0.0;
         for resource in group.iter() {
             if let Some(v) = requirements.get(resource) {
-                c_g += v.max(0.0);
+                c_g += weight_of(resource) * v.max(0.0);
             }
             if let Some(v) = means.get(resource) {
-                cap_g += v.max(0.0);
+                cap_g += weight_of(resource) * v.max(0.0);
             }
+        }
+        if let Some(c) = cap {
+            cap_g = cap_g.min(c.max(0.0));
         }
         blocks.push((c_g, cap_g));
     }
@@ -150,6 +170,10 @@ pub struct LensObservation {
     pub options: Option<Vec<(f64, f64)>>,     // [(c_g, C_g)]
     pub constraint: Option<(f64, f64)>,       // (F, F_env)
     pub requirements: Option<BTreeMap<String, f64>>,  // {"energy": 4.0} (§4.6)
+    // §4.6 (v0.7): the numeraire weights and the mandate cap. Declared per
+    // observation as an alternative to passing them in; the caller's values win.
+    pub weights: Option<BTreeMap<String, f64>>,
+    pub cap: Option<f64>,
 }
 
 impl LensObservation {
@@ -158,7 +182,11 @@ impl LensObservation {
         lens: &str,
         means: Option<&BTreeMap<String, f64>>,
         groups: Option<&Vec<Vec<String>>>,
+        call_weights: Option<&BTreeMap<String, f64>>,
+        call_cap: Option<f64>,
     ) -> Option<f64> {
+        let eff_weights = call_weights.or(self.weights.as_ref());
+        let eff_cap = call_cap.or(self.cap);
         match lens {
             "variety" => self.variety.map(|(v, ve)| psi_var(v, ve)),
             "options" => {
@@ -172,6 +200,8 @@ impl LensObservation {
                         reqs,
                         means.unwrap_or(&no_means),
                         groups.unwrap_or(&no_groups),
+                        eff_weights,
+                        eff_cap,
                     )));
                 }
                 None
@@ -221,6 +251,11 @@ pub struct DerivationInfo {
     pub requirements: BTreeMap<String, f64>,
     pub means: BTreeMap<String, f64>,
     pub groups: Vec<Vec<String>>,
+    /// §4.6 (v0.7): the numeraire weights and the mandate cap are part of the
+    /// derivation, so a reader can recompute `(c_g, C_g)` and see that the sum is
+    /// not adding different physical units together.
+    pub weights: BTreeMap<String, f64>,
+    pub cap: Option<f64>,
 }
 
 /// Result of measuring one entity.
@@ -238,6 +273,9 @@ pub struct EntityMeasurement {
     /// §4.6 (v0.6): the derived blocks actually used, and the derivation itself.
     pub blocks: Vec<(f64, f64)>,
     pub derivation: Option<DerivationInfo>,
+    /// §4.6 (v0.7): the declared counters behind the Variety share — kept because
+    /// the price of a closure is recomputed from them (§4.4), not from the lens.
+    pub variety_counters: Option<BTreeMap<String, f64>>,
 }
 
 /// Apply §4.6–§4.7 to one entity.
@@ -247,7 +285,11 @@ pub fn measure_entity(
     u: f64,
     means: Option<&BTreeMap<String, f64>>,
     groups: Option<&Vec<Vec<String>>>,
+    call_weights: Option<&BTreeMap<String, f64>>,
+    call_cap: Option<f64>,
 ) -> EntityMeasurement {
+    let eff_weights = call_weights.or(obs.weights.as_ref());
+    let eff_cap = call_cap.or(obs.cap);
     let mut psi: BTreeMap<String, Option<f64>> = BTreeMap::new();
     let mut terms: Vec<LensTerm> = Vec::new();
     let mut product = 1.0;
@@ -257,7 +299,7 @@ pub fn measure_entity(
     let mut binding_value = f64::INFINITY;
 
     for lens in LENS_ORDER.iter() {
-        let value = obs.psi(lens, means, groups);
+        let value = obs.psi(lens, means, groups, eff_weights, eff_cap);
         psi.insert((*lens).to_string(), value);
         let contribution = match value {
             None => {
@@ -289,16 +331,27 @@ pub fn measure_entity(
     let effective_groups = groups.unwrap_or(&no_groups);
     let (blocks, derivation) = match obs.requirements.as_ref() {
         Some(reqs) => (
-            derive_blocks(reqs, effective_means, effective_groups),
+            derive_blocks(reqs, effective_means, effective_groups, eff_weights, eff_cap),
             Some(DerivationInfo {
                 procedure: DERIVE_BLOCKS_PROCEDURE.to_string(),
                 requirements: reqs.clone(),
                 means: effective_means.clone(),
                 groups: canonical_groups(effective_groups, Some(reqs), Some(effective_means)),
+                weights: eff_weights.cloned().unwrap_or_default(),
+                cap: eff_cap,
             }),
         ),
         None => (Vec::new(), None),
     };
+
+    // §4.6 (v0.7): the declared counters are kept with the measurement, because the
+    // price of a closure (§4.4) is recomputed FROM them rather than from the lens.
+    let variety_counters = obs.variety.map(|(v, v_env)| {
+        let mut m: BTreeMap<String, f64> = BTreeMap::new();
+        m.insert("V".to_string(), v);
+        m.insert("V_env".to_string(), v_env);
+        m
+    });
 
     EntityMeasurement {
         entity_id: entity_id.to_string(),
@@ -312,6 +365,7 @@ pub fn measure_entity(
         binding_lens: binding,
         blocks,
         derivation,
+        variety_counters,
     }
 }
 
@@ -343,6 +397,17 @@ pub enum MandateValue {
     Text(String),
 }
 
+/// One entity's declared verdict together with the counters and the horizon it was
+/// computed with, so the declaration can be checked against the observation it came
+/// from (`verify_graph_derived`).
+#[derive(Clone, Debug)]
+pub struct VerdictRecord {
+    pub verdict: String,
+    pub t_rec_mks: Option<f64>,
+    /// A count, not a measurement: serialized as an INTEGER.
+    pub v: i64,
+}
+
 /// The frozen ruler (§3.4). `BTreeMap` keeps entity keys sorted, which the
 /// canonical form requires.
 #[derive(Clone, Debug)]
@@ -356,9 +421,21 @@ pub struct MeasurementDeclaration {
     pub groups: Vec<Vec<String>>,
     pub rates: BTreeMap<String, Rate>,
     pub mandate: BTreeMap<String, MandateValue>,
+    // §3.4.1 hashed content (v0.7): the graph-derived values of §4.9 and the
+    // numeraire the group amounts are expressed in. Only what determines numbers is
+    // here — the graph itself, the witness paths and the observation digest are
+    // report context (§6.2), and an option's closure list is a per-option input like
+    // `projected_dof_delta`, not ruler content.
+    pub numeraire: Option<String>,
+    pub weights: BTreeMap<String, f64>,
+    pub mandate_cap: Option<f64>,
+    pub verdicts: BTreeMap<String, VerdictRecord>,
+    pub means_class: Vec<String>,
+    pub graph_procedure: String,
 }
 
 impl MeasurementDeclaration {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         psi_id: &str,
         entities: BTreeMap<String, LensObservation>,
@@ -378,6 +455,12 @@ impl MeasurementDeclaration {
             groups: canonical_groups(&groups, None, None),
             rates,
             mandate,
+            numeraire: None,
+            weights: BTreeMap::new(),
+            mandate_cap: None,
+            verdicts: BTreeMap::new(),
+            means_class: Vec::new(),
+            graph_procedure: String::new(),
         }
     }
 
@@ -471,7 +554,17 @@ impl MeasurementDeclaration {
                 s.push(',');
             }
             first = false;
-            let _ = write!(s, "\"{}\":{{\"constraint\":", eid);
+            // §4.6 (v0.7): the per-entity numeraire weights and mandate cap. `null`
+            // when the entity does not declare them — a missing key and a null key
+            // hash differently, and every port must write the same shape.
+            let _ = write!(s, "\"{}\":{{\"cap\":", eid);
+            match obs.cap {
+                Some(c) => {
+                    let _ = write!(s, "\"{:.6}\"", c);
+                }
+                None => s.push_str("null"),
+            }
+            s.push_str(",\"constraint\":");
             match obs.constraint {
                 Some((f, fe)) => {
                     let _ = write!(s, "{{\"F\":\"{:.6}\",\"F_env\":\"{:.6}\"}}", f, fe);
@@ -515,13 +608,53 @@ impl MeasurementDeclaration {
                 }
                 None => s.push_str("null"),
             }
+            s.push_str(",\"weights\":");
+            match &obs.weights {
+                Some(w) => {
+                    s.push('{');
+                    for (i, (key, value)) in w.iter().enumerate() {
+                        if i > 0 {
+                            s.push(',');
+                        }
+                        let _ = write!(s, "\"{}\":\"{:.6}\"", key, value);
+                    }
+                    s.push('}');
+                }
+                None => s.push_str("null"),
+            }
             s.push('}');
         }
         let _ = write!(s, "}},\"freeze\":{{\"tau_mks\":\"{:.6}\"}}", self.tau_mks);
+        let _ = write!(s, ",\"graph_procedure\":\"{}\"", self.graph_procedure);
         s.push_str(",\"groups\":");
         s.push_str(&Self::groups_json(&self.groups));
         s.push_str(",\"lens_order\":[\"variety\",\"options\",\"constraint\"],\"mandate\":");
         s.push_str(&Self::mandate_json(&self.mandate));
+        s.push_str(",\"mandate_cap\":");
+        match self.mandate_cap {
+            Some(c) => {
+                let _ = write!(s, "\"{:.6}\"", c);
+            }
+            None => s.push_str("null"),
+        }
+        s.push_str(",\"means_class\":[");
+        {
+            let mut cls = self.means_class.clone();
+            cls.sort();
+            for (i, c) in cls.iter().enumerate() {
+                if i > 0 {
+                    s.push(',');
+                }
+                let _ = write!(s, "\"{}\"", c);
+            }
+        }
+        s.push_str("],\"numeraire\":");
+        match &self.numeraire {
+            Some(n) => {
+                let _ = write!(s, "\"{}\"", n);
+            }
+            None => s.push_str("null"),
+        }
         s.push_str(",\"procedures\":{");
         let _ = write!(
             s,
@@ -540,7 +673,31 @@ impl MeasurementDeclaration {
             }
             None => s.push_str("null"),
         }
-        s.push('}');
+        // §4.9 (v0.7): the verdicts and counters the declaration claims, and the
+        // numeraire weights those claims were computed with.
+        s.push_str(",\"verdicts\":{");
+        for (i, (eid, rec)) in self.verdicts.iter().enumerate() {
+            if i > 0 {
+                s.push(',');
+            }
+            let _ = write!(s, "\"{}\":{{\"t_rec_mks\":", eid);
+            match rec.t_rec_mks {
+                Some(h) => {
+                    let _ = write!(s, "\"{:.6}\"", h);
+                }
+                None => s.push_str("null"),
+            }
+            // `v` is an INTEGER: a count, not a measurement.
+            let _ = write!(s, ",\"v\":{},\"verdict\":\"{}\"}}", rec.v, rec.verdict);
+        }
+        s.push_str("},\"weights\":{");
+        for (i, (key, value)) in self.weights.iter().enumerate() {
+            if i > 0 {
+                s.push(',');
+            }
+            let _ = write!(s, "\"{}\":\"{:.6}\"", key, value);
+        }
+        s.push_str("}}");
         s
     }
 

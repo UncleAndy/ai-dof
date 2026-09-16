@@ -3,20 +3,34 @@
 // check that the canonical declaration digest matches the other ports.
 
 mod dof_core;
+mod fixture_v07;
 mod generator;
 mod graph_mapper;
+mod harness_v07;
 mod measurement;
+mod options_v07;
 mod orchestrator;
+mod world_graph;
 
 use std::collections::{BTreeMap, HashMap};
 
-use dof_core::{ActionOption, DofCalculusCore};
+use dof_core::{ActionOption, DofCalculusCore, ReportInput};
 use graph_mapper::{RawObservation, ResourceLayer, RESOURCE_LAYER_KEY};
 use measurement::{
     derive_blocks, psi_con, psi_opt, psi_var, LensObservation, MandateValue, Rate, ResourceUnit,
     EPSILON,
 };
 use orchestrator::DofOrchestrator;
+
+// Two harnesses live in this port and both stay runnable, because a release must
+// carry its own evidence and the previous release's:
+//
+//   ./dof_rust v07     # the release's conformance suite (harness_v07.rs), default
+//   ./dof_rust v06     # the v0.6 harness (this file), historical evidence
+//   ./dof_rust dump    # the canonical text and both frozen digests
+//
+// `v07` is the default so that any tool that builds and runs the port without
+// arguments exercises the current release.
 
 /// Reference digest of the shared fixture declaration (computed by the Python port).
 const EXPECTED_DIGEST: &str = "bed37c25fd9cb757e9ea4a861c01cd4660fd896a83cd39b7c73b8e0be7489ad4";
@@ -41,6 +55,7 @@ fn obs(agency: f64, collapse: bool, ttc: f64, lenses: LensObservation) -> RawObs
         time_to_collapse_mks: ttc,
         lenses,
         resource_layer: None,
+        world: None,
     }
 }
 
@@ -59,6 +74,7 @@ fn fixture() -> HashMap<String, RawObservation> {
                 options: Some(vec![(1.0, 10.0)]),
                 constraint: Some((4.0, 1.0)),
                 requirements: None,
+                ..LensObservation::default()
             },
         ),
     );
@@ -73,6 +89,7 @@ fn fixture() -> HashMap<String, RawObservation> {
                 options: Some(vec![(2.0, 4.0)]),
                 constraint: Some((1.0, 3.0)),
                 requirements: None,
+                ..LensObservation::default()
             },
         ),
     );
@@ -87,6 +104,7 @@ fn fixture() -> HashMap<String, RawObservation> {
                 options: Some(vec![(1.0, 100.0)]),
                 constraint: Some((5.0, 1.0)),
                 requirements: None,
+                ..LensObservation::default()
             },
         ),
     );
@@ -101,6 +119,7 @@ fn fixture() -> HashMap<String, RawObservation> {
                 options: Some(vec![]),
                 constraint: Some((0.0, 0.0)),
                 requirements: None,
+                ..LensObservation::default()
             },
         ),
     );
@@ -115,6 +134,7 @@ fn fixture() -> HashMap<String, RawObservation> {
                 options: None,
                 constraint: Some((1.0, 1.0)),
                 requirements: None,
+                ..LensObservation::default()
             },
         ),
     );
@@ -185,7 +205,7 @@ fn with_deadline(source: &HashMap<String, RawObservation>, ttc: f64) -> HashMap<
         .collect()
 }
 
-fn main() {
+fn run_harness_v06() -> Vec<String> {
     let mut failures: Vec<String> = Vec::new();
     let mut orch = DofOrchestrator::new(0.05);
     let state = orch.measure(&fixture());
@@ -240,7 +260,7 @@ fn main() {
     check(
         &mut failures,
         "stone: excluded when nothing can raise it (§4.2)",
-        !core.is_included(stone),
+        !core.is_included(stone, None, Some(&state)),
         "",
     );
     check(&mut failures, "stone: floored flag is set", stone_m.floored, "");
@@ -252,7 +272,7 @@ fn main() {
     check(
         &mut failures,
         "unmapped: never excluded (§4.2)",
-        core.is_included(unmapped),
+        core.is_included(unmapped, None, Some(&state)),
         "",
     );
     let unmeasured: Vec<_> = unmapped_m.terms.iter().filter(|t| !t.dof_known).collect();
@@ -321,15 +341,15 @@ fn main() {
         true,
         1000.0,
     );
-    let charges = core.collapse_charges(&state, &killer);
+    let charges = core.collapse_charges(&state, &killer, None);
     check(
         &mut failures,
         "charge: the destroyed entity is named with its DoF before the option",
         charges.len() == 1 && charges[0].entity_id == "adult" && charges[0].dof_before == adult.current_dof,
         &format!("charges={:?}", charges),
     );
-    let (sim_kill, members) = core.simulate(&state, &killer);
-    let projected_kill = core.calculate_system_dof(&sim_kill, Some(&members));
+    let (sim_kill, members) = core.simulate(&state, &killer, None);
+    let projected_kill = core.calculate_system_dof(&sim_kill, Some(&members), None);
     let expected_kill = total_before - adult.current_dof.ln() + EPSILON.ln();
     check(
         &mut failures,
@@ -350,12 +370,12 @@ fn main() {
         true,
         1000.0,
     );
-    let (passive_sim, passive_members) = core.simulate(&state, &passive);
+    let (passive_sim, passive_members) = core.simulate(&state, &passive, None);
     check(
         &mut failures,
         "frozen set: a passive object is neither charged nor rewarded",
-        core.collapse_charges(&state, &passive).is_empty()
-            && (core.calculate_system_dof(&passive_sim, Some(&passive_members)) - total_before).abs() < 1e-12,
+        core.collapse_charges(&state, &passive, None).is_empty()
+            && (core.calculate_system_dof(&passive_sim, Some(&passive_members), None) - total_before).abs() < 1e-12,
         "",
     );
     let spare = ActionOption::new(
@@ -365,7 +385,7 @@ fn main() {
         true,
         1000.0,
     );
-    let (admissible, gate_removed) = core.apply_structural_gate(&state, &[killer.clone(), spare.clone()]);
+    let (admissible, gate_removed) = core.apply_structural_gate(&state, &[killer.clone(), spare.clone()], None);
     check(
         &mut failures,
         "structural gate: the destructive option is removed while a charge-free one exists",
@@ -378,10 +398,10 @@ fn main() {
     check(
         &mut failures,
         "Axiom 3: the charge alone already makes destruction unprofitable",
-        core.evaluate_and_select(&state, &[killer.clone()]).is_none(),
+        core.evaluate_and_select(&state, &[killer.clone()], None).is_none(),
         "",
     );
-    let (only_destructive, _) = core.apply_structural_gate(&state, &[killer.clone()]);
+    let (only_destructive, _) = core.apply_structural_gate(&state, &[killer.clone()], None);
     check(
         &mut failures,
         "structural gate: when every candidate destroys, they stay admissible",
@@ -398,8 +418,8 @@ fn main() {
     check(
         &mut failures,
         "stay-put baseline: an all-negative candidate set selects nothing",
-        core.evaluate_and_select(&state, &[harm]).is_none()
-            && core.evaluate_and_select(&state, &[]).is_none(),
+        core.evaluate_and_select(&state, &[harm], None).is_none()
+            && core.evaluate_and_select(&state, &[], None).is_none(),
         "",
     );
     check(&mut failures, "fixture 1: a strictly positive option is selected", selected.is_some(), "");
@@ -479,6 +499,8 @@ fn main() {
         &BTreeMap::from([("fuel".to_string(), 2.0)]),
         &BTreeMap::from([("fuel".to_string(), 4.0)]),
         &[vec!["credit".to_string(), "energy".to_string()]],
+        None,
+        None,
     );
     check(
         &mut failures,
@@ -552,7 +574,7 @@ fn main() {
         .projected_resource_delta
         .insert("adult".to_string(), HashMap::from([("energy".to_string(), 1.0)]));
 
-    let plan_direct = core.plan_funding(&state, &direct, Some(&groups), Some(&rates));
+    let plan_direct = core.plan_funding(&state, &direct, Some(&groups), Some(&rates), None, None);
     check(
         &mut failures,
         "step 1: means cover the draw ⇒ payable, nothing converted",
@@ -561,7 +583,7 @@ fn main() {
             && plan_direct.conversions.is_empty(),
         "",
     );
-    let plan_funded = core.plan_funding(&state, &funded, Some(&groups), Some(&rates));
+    let plan_funded = core.plan_funding(&state, &funded, Some(&groups), Some(&rates), None, None);
     let conversion_ok = plan_funded.covered
         && plan_funded.conversions.len() == 1
         && plan_funded.conversions[0].from == "credit"
@@ -585,13 +607,13 @@ fn main() {
     check(
         &mut failures,
         "step 3: an exchange that does not fit in τ leaves the deficit uncovered",
-        !core.plan_funding(&state, &no_time, Some(&groups), Some(&rates)).covered,
+        !core.plan_funding(&state, &no_time, Some(&groups), Some(&rates), None, None).covered,
         "",
     );
     check(
         &mut failures,
         "step 3: a resource whose balance is not declared cannot be bought",
-        core.plan_funding(&state, &undeclared, Some(&groups), Some(&rates))
+        core.plan_funding(&state, &undeclared, Some(&groups), Some(&rates), None, None)
             .uncovered
             .get("fuel")
             .copied()
@@ -617,7 +639,7 @@ fn main() {
     check(
         &mut failures,
         "step 3: a price the agent cannot pay is not a cheaper price",
-        !core.plan_funding(&state_broke, &funded, Some(&groups), Some(&rates)).covered,
+        !core.plan_funding(&state_broke, &funded, Some(&groups), Some(&rates), None, None).covered,
         "",
     );
     let (admissible_res, removed_res) = core.apply_resource_gate(
@@ -625,6 +647,8 @@ fn main() {
         &[direct.clone(), funded.clone(), undeclared.clone(), offset.clone()],
         Some(&groups),
         Some(&rates),
+        None,
+        None,
     );
     check(
         &mut failures,
@@ -656,10 +680,11 @@ fn main() {
         &[funded.clone()],
         &Some(funded.clone()),
         "FAST_PASS",
-        None,
-        Vec::new(),
-        Some(&groups),
-        Some(&rates),
+        ReportInput {
+            groups: Some(&groups),
+            rates: Some(&rates),
+            ..ReportInput::default()
+        },
     );
     check(
         &mut failures,
@@ -686,10 +711,11 @@ fn main() {
         &[undeclared.clone()],
         &None,
         "FAST_PASS",
-        None,
-        Vec::new(),
-        Some(&groups),
-        Some(&rates),
+        ReportInput {
+            groups: Some(&groups),
+            rates: Some(&rates),
+            ..ReportInput::default()
+        },
     );
     check(
         &mut failures,
@@ -714,5 +740,46 @@ fn main() {
     } else {
         println!("FAILURES: {:?}", failures);
         println!("FAILED");
+    }
+    failures
+}
+
+/// Entry point. `v07` is the default: a bare run exercises the release.
+fn main() {
+    let which = std::env::args().nth(1).unwrap_or_else(|| "v07".to_string());
+    let failures = match which.as_str() {
+        "v07" => harness_v07::run_harness_v07(),
+        "v06" => run_harness_v06(),
+        "dump" => {
+            harness_v07::dump_reference();
+            Vec::new()
+        }
+        "payload" => {
+            // The canonical payload behind the observation digest: the tool that
+            // turns a cross-port mismatch into a `diff`.
+            let mut orch = DofOrchestrator::new(0.05);
+            orch.measure(&fixture_v07::scene(&fixture_v07::Options::default()));
+            if let Some(ctx) = orch.mapper().last_observation.as_ref() {
+                println!(
+                    "{}",
+                    ctx.world.observation_payload(
+                        &ctx.means_class,
+                        &ctx.t_rec,
+                        ctx.counting_horizon_mks
+                    )
+                );
+            }
+            Vec::new()
+        }
+        other => {
+            println!(
+                "unknown harness {:?}: expected v07 (default), v06 or dump",
+                other
+            );
+            std::process::exit(2);
+        }
+    };
+    if !failures.is_empty() {
+        std::process::exit(1);
     }
 }

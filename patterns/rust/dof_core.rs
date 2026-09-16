@@ -9,7 +9,48 @@
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
-use crate::measurement::{EntityMeasurement, LensTerm, MeasurementDeclaration, PsiReference, Rate};
+use crate::measurement::{
+    psi_var, EntityMeasurement, LensTerm, MeasurementDeclaration, MandateValue, PsiReference, Rate,
+};
+use crate::world_graph::{q6, ClosedRef, Verdict, WorldGraph};
+
+/// The observation a cycle is decided over (§3.5, §4.9).
+///
+/// Deliberately NOT a state field: the world graph is a Perception artifact supplied
+/// to the cycle, exactly as the derived groups and the observed rates are (§4.8).
+/// Without it every verdict is `undetermined`, which means no entity at a known zero
+/// is excluded and no collapse-source label is honoured — the fail-safe direction:
+/// nothing is proven, so nothing is removed.
+#[derive(Clone, Debug, Default)]
+pub struct ObservationContext {
+    pub world: WorldGraph,
+    pub means_class: Vec<String>,
+    pub t_rec: BTreeMap<String, f64>,
+    pub counting_horizon_mks: Option<f64>,
+    pub observation_digest: String,
+}
+
+impl ObservationContext {
+    pub fn horizon(&self, entity_id: &str) -> Option<f64> {
+        self.t_rec.get(entity_id).copied()
+    }
+    pub fn verdict(&self, entity_id: &str) -> String {
+        self.world
+            .verdict(entity_id, &self.means_class, self.horizon(entity_id))
+            .verdict
+    }
+    pub fn v_before(&self, entity_id: &str) -> usize {
+        self.world.v_count(entity_id, &self.means_class, self.counting_horizon_mks)
+    }
+    pub fn v_after_closure(&self, entity_id: &str, closed: &[ClosedRef]) -> usize {
+        if closed.is_empty() {
+            return self.v_before(entity_id);
+        }
+        self.world
+            .with_closed(closed)
+            .v_count(entity_id, &self.means_class, self.counting_horizon_mks)
+    }
+}
 
 #[derive(Clone, Debug)]
 pub struct EntityState {
@@ -74,6 +115,13 @@ pub struct ActionOption {
     /// = production; `energy` must be present (as 0.0) for every entity named in
     /// `projected_dof_delta`.
     pub projected_resource_delta: HashMap<String, HashMap<String, f64>>,
+    /// §3.3/§4.4 (v0.7): the transitions this option CLOSES — the acts and means
+    /// that cease to exist once it executes. `is_reversible` is DERIVED from this
+    /// list (true exactly when it is empty) and is kept only as a reported field: a
+    /// label that could be set to dodge the price is not a rule.
+    pub closed: Vec<ClosedRef>,
+    /// The graph act implementing this option.
+    pub act_id: String,
 }
 
 impl ActionOption {
@@ -91,7 +139,19 @@ impl ActionOption {
             is_reversible,
             estimated_duration_mks,
             projected_resource_delta: HashMap::new(),
+            closed: Vec::new(),
+            act_id: String::new(),
         }
+    }
+
+    /// Declare what the option closes (§3.3/§4.4). `is_reversible` is derived from
+    /// this list, so declaring a closure is what makes an option irreversible — the
+    /// flag is reported, never trusted.
+    pub fn with_closed(mut self, closed: Vec<ClosedRef>, act_id: &str) -> Self {
+        self.is_reversible = closed.is_empty();
+        self.closed = closed;
+        self.act_id = act_id.to_string();
+        self
     }
 
     /// Declare what the option draws (§3.3). Kept separate so existing callers
@@ -104,6 +164,20 @@ impl ActionOption {
         self.projected_resource_delta = projected_resource_delta;
         self
     }
+}
+
+/// §6.1 (v0.7): the recoverability verdict, its witness, and the completeness claim
+/// behind it. A `proven_unreachable` verdict without a witness is not a verdict, so
+/// the report carries both — and names the observation, because "no path" is only
+/// meaningful together with "and the observation was complete for this entity".
+#[derive(Clone, Debug, Default)]
+pub struct RecoverabilityRow {
+    pub verdict: String,
+    pub witness: Vec<String>,
+    pub horizon_mks: Option<f64>,
+    pub observation: String,
+    pub admissible_seen: usize,
+    pub reason: String,
 }
 
 /// One entity row of the audit report.
@@ -126,6 +200,8 @@ pub struct EntityReportRow {
     /// reader can recompute `(c_g, C_g)` from the raw requirements.
     pub blocks: Vec<(f64, f64)>,
     pub derivation: Option<crate::measurement::DerivationInfo>,
+    /// §6.1 (v0.7): the recoverability verdict and its witness.
+    pub recoverability: RecoverabilityRow,
 }
 
 /// A deficit covered by an exchange (§4.8): the audit line that shows the price
@@ -151,6 +227,9 @@ pub struct FundingPlan {
     pub spend: BTreeMap<String, f64>,
     pub conversions: Vec<Conversion>,
     pub uncovered: BTreeMap<String, f64>,
+    /// §4.8 (v0.7): the part of the spend above the mandate ceiling, in the group
+    /// numeraire. It can only remove an option a larger balance would have paid for.
+    pub mandate_exceeded: f64,
     pub total_duration_mks: f64,
 }
 
@@ -185,6 +264,11 @@ pub struct OptionReportRow {
     pub resource_consumption: HashMap<String, HashMap<String, f64>>,
     pub conversion_applied: Vec<Conversion>,
     pub resources_uncovered: BTreeMap<String, f64>,
+    /// §4.8/§6.3 (v0.7): how much of the mandate the spend would have used, and what
+    /// the closure decomposes into.
+    pub mandate_exceeded: f64,
+    pub closed: Vec<ClosedRef>,
+    pub closure_share: BTreeMap<String, f64>,
 }
 
 /// Full Proof-of-Implementation audit (DOF-SPEC §6).
@@ -208,6 +292,26 @@ pub struct DofReport {
     /// only if the spend is written where the next cycle can see it (§4.8).
     pub resources_before: BTreeMap<String, f64>,
     pub resources_after: BTreeMap<String, f64>,
+    /// §6.2 (v0.7): the identity of the observation a reported subgraph was taken
+    /// from, and where the amounts a decision rests on came from — a measured
+    /// balance or an asserted authority.
+    pub observation_digest: Option<String>,
+    pub means_provenance: BTreeMap<String, MandateValue>,
+}
+
+/// What a report needs beyond the state, the candidates and the selection. It keeps
+/// the report call site readable now that the report is where the release's reasons
+/// are written down (§6).
+#[derive(Clone, Debug, Default)]
+pub struct ReportInput<'a> {
+    pub declaration: Option<&'a MeasurementDeclaration>,
+    pub removed: Vec<RemovedOption>,
+    pub groups: Option<&'a Vec<Vec<String>>>,
+    pub rates: Option<&'a BTreeMap<String, Rate>>,
+    pub weights: Option<&'a BTreeMap<String, f64>>,
+    pub cap: Option<f64>,
+    pub ctx: Option<&'a ObservationContext>,
+    pub means_provenance: BTreeMap<String, MandateValue>,
 }
 
 pub struct DofCalculusCore {
@@ -220,31 +324,91 @@ impl DofCalculusCore {
     }
 
     /// Whether an entity belongs to the calculation set `calc` (DOF-SPEC §4.2).
-    /// Excluded if it is a collapse source, or if its DoF is a **known** zero (no
-    /// recovery path is asserted for it). A node with unknown DoF
-    /// (`dof_known == false`) is never excluded (Axiom 5).
+    /// Excluded if it is a **witnessed** collapse source, or if its DoF is a known
+    /// zero whose recoverability verdict is `proven_unreachable` (§4.2/§4.9). A node
+    /// with unknown DoF is never excluded (Axiom 5), and neither is a node whose
+    /// verdict is `reachable` or `undetermined` — incompleteness of an observation is
+    /// never read as proof.
     ///
-    /// The witness of unrecoverability MUST NOT be the Generator's candidate set
-    /// (§4.2): what a poor option list fails to propose says nothing about the
-    /// world, so `calc` is decided from the entity's own state only.
-    pub fn is_included(&self, entity: &EntityState) -> bool {
-        if entity.is_collapse_source {
+    /// The witness of exclusion MUST NOT be the Generator's candidate set (§4.2), and
+    /// a verdict is computed from the observation, never asserted.
+    pub fn is_included(
+        &self,
+        entity: &EntityState,
+        ctx: Option<&ObservationContext>,
+        state: Option<&SystemStateMatrix>,
+    ) -> bool {
+        if entity.is_collapse_source && self.label_witnessed(entity, ctx, state) {
             return false;
         }
+        self.is_included_without_label(entity, ctx)
+    }
+
+    /// `calc` membership with the collapse-source label NOT honoured (§4.2). Used in
+    /// two places, and it must be the same rule in both: deciding who is counted, and
+    /// deciding whether a label has a witness. The witness question is "would this
+    /// entity be counted if its own label were ignored" — asking it with the label
+    /// already applied would be circular, and would make every label unfalsifiable.
+    pub fn is_included_without_label(
+        &self,
+        entity: &EntityState,
+        ctx: Option<&ObservationContext>,
+    ) -> bool {
         if entity.current_dof > 0.0 {
             return true;
         }
-        !entity.dof_known
+        if !entity.dof_known {
+            return true;
+        }
+        match ctx {
+            None => true, // fail-safe: no observation, no proof
+            Some(c) => c.verdict(&entity.entity_id) != "proven_unreachable",
+        }
+    }
+
+    /// A label is honoured only with a machine-verifiable act (§4.2): an act performed
+    /// by this entity that drives an entity which would otherwise be counted to a known
+    /// zero.
+    pub fn label_witnessed(
+        &self,
+        entity: &EntityState,
+        ctx: Option<&ObservationContext>,
+        state: Option<&SystemStateMatrix>,
+    ) -> bool {
+        let (c, s) = match (ctx, state) {
+            (Some(c), Some(s)) => (c, s),
+            _ => return false,
+        };
+        let mut counted: BTreeSet<String> = BTreeSet::new();
+        let mut dof_before: BTreeMap<String, f64> = BTreeMap::new();
+        for (eid, e) in s.entities.iter() {
+            if self.is_included_without_label(e, Some(c)) {
+                counted.insert(eid.clone());
+            }
+            dof_before.insert(eid.clone(), e.current_dof);
+        }
+        if !counted.contains(&entity.entity_id) {
+            return false;
+        }
+        let acts = c.world.collapse_acts(&counted, &dof_before);
+        c.world
+            .acts
+            .iter()
+            .any(|a| a.source == entity.entity_id && acts.contains(&a.id))
     }
 
     /// `calc(S)`, frozen for the whole cycle (§4.2): computed once, on `S`, and the
     /// same entities are summed in `S` and in `S'`, so a term cannot appear or
     /// disappear between the two sides of `NetDelta`.
-    pub fn calc_members(&self, state: &SystemStateMatrix) -> BTreeSet<String> {
+    pub fn calc_members(
+        &self,
+        state: &SystemStateMatrix,
+        ctx: Option<&ObservationContext>,
+    ) -> BTreeSet<String> {
         state
             .entities
             .values()
-            .filter(|e| self.is_included(e))
+            .filter(|e| self.is_included(e, ctx, Some(state)))
             .map(|e| e.entity_id.clone())
             .collect()
     }
@@ -256,12 +420,13 @@ impl DofCalculusCore {
         &self,
         state: &SystemStateMatrix,
         members: Option<&BTreeSet<String>>,
+        ctx: Option<&ObservationContext>,
     ) -> f64 {
         let owned;
         let set = match members {
             Some(m) => m,
             None => {
-                owned = self.calc_members(state);
+                owned = self.calc_members(state, ctx);
                 &owned
             }
         };
@@ -274,28 +439,176 @@ impl DofCalculusCore {
         total
     }
 
-    /// Simulate an option's projected deltas into a new state (clamped to [0,1]) and
-    /// return it with the **frozen** member set of `calc(S)` (§4.2): everything
-    /// counted in `S` stays counted in `S'` — destroying a counted entity cannot
-    /// raise the index by removing a negative term — while an entity outside
-    /// `calc(S)` stays outside it, so acting on something that is not a subject of
-    /// the decision is neither rewarded nor punished.
+    fn coerce_dof(v: f64) -> f64 {
+        v.clamp(0.0, 1.0)
+    }
+
+    /// §4.3/§4.4: the DoF the entity would have after the option's closure, recomputed
+    /// from the counters. Only the Variety share moves, so the whole product moves by
+    /// its ratio. `None` means the entity is not affected or its Variety lens was
+    /// unmeasured.
+    pub fn dof_after_closure(
+        &self,
+        entity: &EntityState,
+        option: &ActionOption,
+        ctx: &ObservationContext,
+    ) -> Option<f64> {
+        let measurement = entity.measurement.as_ref()?;
+        let counters = measurement.variety_counters.as_ref()?;
+        let var_before = measurement.psi.get("variety").copied().flatten()?;
+        let v_env = counters.get("V_env").copied().unwrap_or(0.0);
+        let v_before = ctx.v_before(&entity.entity_id);
+        let v_after = ctx.v_after_closure(&entity.entity_id, &option.closed);
+        if v_after == v_before {
+            return None; // this entity is not affected
+        }
+        Some(Self::coerce_dof(
+            entity.current_dof / var_before * psi_var(v_after as f64, v_env),
+        ))
+    }
+
+    /// The DoF this option would leave the entity with, closure included (§4.3). ONE
+    /// definition, used by both `simulate` and `collapse_charges`: if the charge were
+    /// computed from the raw delta while the index was computed from the closure-aware
+    /// value, an option that destroys an entity BY CLOSING ITS TRANSITIONS would be
+    /// scored as a collapse and charged as nothing — the structural gate of §4.5 would
+    /// then pass exactly the option it exists to stop.
+    pub fn projected_dof(
+        &self,
+        entity: &EntityState,
+        option: &ActionOption,
+        ctx: Option<&ObservationContext>,
+    ) -> f64 {
+        let add = option.projected_dof_delta.get(&entity.entity_id).copied().unwrap_or(0.0);
+        let mut new_dof = Self::coerce_dof(entity.current_dof + add);
+        if let Some(c) = ctx {
+            if !option.closed.is_empty() {
+                if let Some(recomputed) = self.dof_after_closure(entity, option, c) {
+                    new_dof = recomputed;
+                }
+            }
+        }
+        new_dof
+    }
+
+    /// §4.4 guards: closing one's own execution path, or a false label with nothing
+    /// closed. `None` when the option is conformant.
+    pub fn closure_error(&self, option: &ActionOption) -> Option<String> {
+        if !option.closed.is_empty() && !option.act_id.is_empty() {
+            for c in option.closed.iter() {
+                if c.kind == "act" && c.id == option.act_id {
+                    return Some(format!(
+                        "{}: closes its own execution path (§4.4 guard 1)",
+                        option.option_id
+                    ));
+                }
+            }
+        }
+        if option.closed.is_empty() && !option.is_reversible {
+            return Some(format!(
+                "{}: is_reversible=false with an empty closure list (§4.4 guard 2)",
+                option.option_id
+            ));
+        }
+        None
+    }
+
+    /// §4.4: the reported flag is DERIVED — true exactly when nothing is closed.
+    pub fn is_reversible(&self, option: &ActionOption) -> bool {
+        option.closed.is_empty()
+    }
+
+    /// §6.3: the per-entity decomposition of a closure's price. A DECOMPOSITION of the
+    /// loss already inside `NetDelta` (§4.3/§4.4), never an extra charge.
+    pub fn closure_share(
+        &self,
+        state: &SystemStateMatrix,
+        option: &ActionOption,
+        ctx: Option<&ObservationContext>,
+    ) -> BTreeMap<String, f64> {
+        let mut out: BTreeMap<String, f64> = BTreeMap::new();
+        let c = match ctx {
+            Some(c) => c,
+            None => return out,
+        };
+        if option.closed.is_empty() {
+            return out;
+        }
+        for (eid, entity) in state.entities.iter() {
+            let measurement = match entity.measurement.as_ref() {
+                Some(m) => m,
+                None => continue,
+            };
+            let counters = match measurement.variety_counters.as_ref() {
+                Some(v) => v,
+                None => continue,
+            };
+            let var_before = match measurement.psi.get("variety").copied().flatten() {
+                Some(v) => v,
+                None => continue,
+            };
+            let _ = var_before;
+            let v_env = counters.get("V_env").copied().unwrap_or(0.0);
+            let v_after = c.v_after_closure(eid, &option.closed);
+            let v_before = c.v_before(eid);
+            if v_after == v_before {
+                continue;
+            }
+            let after = psi_var(v_after as f64, v_env).max(self.epsilon);
+            let before = psi_var(v_before as f64, v_env).max(self.epsilon);
+            out.insert(eid.clone(), q6(after.ln() - before.ln()));
+        }
+        out
+    }
+
+    /// §6.1: the verdict, its witness and the completeness claim behind it.
+    pub fn recoverability_row(
+        &self,
+        entity_id: &str,
+        ctx: Option<&ObservationContext>,
+    ) -> RecoverabilityRow {
+        let c = match ctx {
+            Some(c) => c,
+            None => {
+                return RecoverabilityRow {
+                    verdict: "undetermined".to_string(),
+                    witness: Vec::new(),
+                    horizon_mks: None,
+                    observation: "unobserved".to_string(),
+                    admissible_seen: 0,
+                    reason: "no observation was supplied for this cycle".to_string(),
+                }
+            }
+        };
+        let v: Verdict = c.world.verdict(entity_id, &c.means_class, c.horizon(entity_id));
+        let observation = c
+            .world
+            .entities
+            .get(entity_id)
+            .map(|n| n.observation.clone())
+            .unwrap_or_else(|| "unobserved".to_string());
+        RecoverabilityRow {
+            verdict: v.verdict,
+            witness: v.witness,
+            horizon_mks: c.horizon(entity_id),
+            observation,
+            admissible_seen: v.admissible_seen,
+            reason: v.reason,
+        }
+    }
+
+    /// Simulate an option's projected deltas into a new state and return it with the
+    /// **frozen** member set of `calc(S)` (§4.2).
     pub fn simulate(
         &self,
         current: &SystemStateMatrix,
         option: &ActionOption,
+        ctx: Option<&ObservationContext>,
     ) -> (SystemStateMatrix, BTreeSet<String>) {
-        let members = self.calc_members(current);
+        let members = self.calc_members(current, ctx);
         let mut simulated = current.entities.clone();
-        for (eid, e_state) in &current.entities {
-            let add = option.projected_dof_delta.get(eid).copied().unwrap_or(0.0);
-            let mut new_dof = e_state.current_dof + add;
-            if new_dof < 0.0 {
-                new_dof = 0.0;
-            }
-            if new_dof > 1.0 {
-                new_dof = 1.0;
-            }
+        for (eid, e_state) in current.entities.iter() {
+            let new_dof = self.projected_dof(e_state, option, ctx);
             if let Some(ent) = simulated.get_mut(eid) {
                 ent.current_dof = new_dof;
             }
@@ -321,9 +634,10 @@ impl DofCalculusCore {
         &self,
         current: &SystemStateMatrix,
         option: &ActionOption,
+        ctx: Option<&ObservationContext>,
     ) -> Vec<CollapseCharge> {
         let mut charges: Vec<CollapseCharge> = Vec::new();
-        for eid in self.calc_members(current) {
+        for eid in self.calc_members(current, ctx) {
             let entity = match current.entities.get(&eid) {
                 Some(e) => e,
                 None => continue,
@@ -331,9 +645,14 @@ impl DofCalculusCore {
             if !entity.dof_known {
                 continue; // unknown DoF is never a collapse (§4.2)
             }
-            let add = option.projected_dof_delta.get(&eid).copied().unwrap_or(0.0);
-            let new_dof = (entity.current_dof + add).clamp(0.0, 1.0);
-            if new_dof == 0.0 {
+            // The projected value is the closure-aware one (§4.3): an option can
+            // destroy a counted entity by closing its transitions while declaring no
+            // delta at all, and that is exactly the case §4.5 must catch.
+            let new_dof = self.projected_dof(entity, option, ctx);
+            // §4.2: a charge requires a *transition* into the zero, not a stay at it —
+            // charging an entity that was already at zero would make every option
+            // destructive in any state containing a recoverable zero.
+            if new_dof == 0.0 && entity.current_dof > 0.0 {
                 charges.push(CollapseCharge {
                     entity_id: eid,
                     dof_before: entity.current_dof,
@@ -349,13 +668,14 @@ impl DofCalculusCore {
         &self,
         current: &SystemStateMatrix,
         options: &[ActionOption],
+        ctx: Option<&ObservationContext>,
     ) -> (Vec<ActionOption>, Vec<RemovedOption>) {
         if options.is_empty() {
             return (Vec::new(), Vec::new());
         }
         let charge_free_exists = options
             .iter()
-            .any(|o| self.collapse_charges(current, o).is_empty());
+            .any(|o| self.collapse_charges(current, o, ctx).is_empty());
         if !charge_free_exists {
             // No alternative exists: the ladder decides among the destructive candidates.
             return (options.to_vec(), Vec::new());
@@ -363,7 +683,7 @@ impl DofCalculusCore {
         let mut admissible = Vec::new();
         let mut removed = Vec::new();
         for option in options {
-            if self.collapse_charges(current, option).is_empty() {
+            if self.collapse_charges(current, option, ctx).is_empty() {
                 admissible.push(option.clone());
             } else {
                 removed.push(RemovedOption {
@@ -422,12 +742,22 @@ impl DofCalculusCore {
         option: &ActionOption,
         groups: Option<&Vec<Vec<String>>>,
         rates: Option<&BTreeMap<String, Rate>>,
+        weights: Option<&BTreeMap<String, f64>>,
+        cap: Option<f64>,
     ) -> FundingPlan {
         let need = self.requirement(option);
         let mut spend: BTreeMap<String, f64> = BTreeMap::new();
         let mut conversions: Vec<Conversion> = Vec::new();
         let mut uncovered: BTreeMap<String, f64> = BTreeMap::new();
         let mut total_duration = option.estimated_duration_mks;
+        // The numeraire weights: used to choose an offer canonically and to express
+        // the mandate ceiling in one unit.
+        let weight_of = |r: &str| -> f64 {
+            match weights {
+                Some(w) => w.get(r).copied().unwrap_or(1.0),
+                None => 1.0,
+            }
+        };
 
         for (resource, needed) in need.iter() {
             let mut remaining = *needed;
@@ -438,10 +768,13 @@ impl DofCalculusCore {
             remaining -= direct;
 
             if let Some(rate_table) = rates {
+                // §4.8 (v0.7): the offer is chosen CANONICALLY — the cheapest in the
+                // group numeraire first, then the shorter exchange, then the key.
+                // Choosing by declaration order (or by resource name) would let a
+                // rename change what the report says happened, and two ports would
+                // describe the same world differently.
+                let mut offers: Vec<(f64, f64, String, String, f64, f64)> = Vec::new();
                 for (key, spec) in rate_table.iter() {
-                    if remaining <= 0.0 {
-                        break;
-                    }
                     let (source, target) = match key.split_once("->") {
                         Some((s, t)) => (s, t),
                         None => continue,
@@ -461,15 +794,32 @@ impl DofCalculusCore {
                     if total_duration + spec.duration_mks > state.global_time_to_collapse_mks {
                         continue; // the exchange does not fit in τ
                     }
-                    *spend.entry(source.to_string()).or_insert(0.0) += amount_source;
-                    total_duration += spec.duration_mks;
+                    offers.push((
+                        weight_of(source) * amount_source,
+                        spec.duration_mks,
+                        key.clone(),
+                        source.to_string(),
+                        amount_source,
+                        spec.rate,
+                    ));
+                }
+                if remaining > 0.0 && !offers.is_empty() {
+                    offers.sort_by(|a, b| {
+                        a.0.partial_cmp(&b.0)
+                            .unwrap_or(std::cmp::Ordering::Equal)
+                            .then(a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal))
+                            .then(a.2.cmp(&b.2))
+                    });
+                    let best = &offers[0];
+                    *spend.entry(best.3.clone()).or_insert(0.0) += best.4;
+                    total_duration += best.1;
                     conversions.push(Conversion {
-                        from: source.to_string(),
+                        from: best.3.clone(),
                         to: resource.clone(),
-                        amount_from: amount_source,
+                        amount_from: best.4,
                         amount_to: remaining,
-                        rate: spec.rate,
-                        duration_mks: spec.duration_mks,
+                        rate: best.5,
+                        duration_mks: best.1,
                     });
                     remaining = 0.0;
                 }
@@ -479,25 +829,42 @@ impl DofCalculusCore {
             }
         }
 
+        // §4.8 (v0.7): the mandate caps what may be spent, in the group numeraire. It
+        // can only remove an option a larger balance would have paid for, and it can
+        // never make payable what the measured means cannot cover.
+        let mut mandate_exceeded = 0.0;
+        if let Some(c) = cap {
+            let mut spent = 0.0;
+            for (r, amount) in spend.iter() {
+                spent += weight_of(r) * amount;
+            }
+            if spent > c {
+                mandate_exceeded = spent - c;
+            }
+        }
+
         FundingPlan {
-            covered: uncovered.is_empty(),
+            covered: uncovered.is_empty() && mandate_exceeded <= 0.0,
             need,
             spend,
             conversions,
             uncovered,
+            mandate_exceeded,
             total_duration_mks: total_duration,
         }
     }
 
-    /// §4.8 step 3: an unpayable option is inadmissible, unconditionally. Unlike
-    /// the structural gate of §4.5 there is no "no alternative" escape: a
-    /// shortage that survives full verified conversion is a verdict, not a price.
+    /// §4.8 step 3: an unpayable option is inadmissible, unconditionally. Unlike the
+    /// structural gate of §4.5 there is no "no alternative" escape: a shortage that
+    /// survives full verified conversion is a verdict, not a price.
     pub fn apply_resource_gate(
         &self,
         state: &SystemStateMatrix,
         options: &[ActionOption],
         groups: Option<&Vec<Vec<String>>>,
         rates: Option<&BTreeMap<String, Rate>>,
+        weights: Option<&BTreeMap<String, f64>>,
+        cap: Option<f64>,
     ) -> (Vec<ActionOption>, Vec<RemovedOption>) {
         if options.is_empty() {
             return (Vec::new(), Vec::new());
@@ -505,7 +872,10 @@ impl DofCalculusCore {
         let mut admissible = Vec::new();
         let mut removed = Vec::new();
         for option in options {
-            if self.plan_funding(state, option, groups, rates).covered {
+            if self
+                .plan_funding(state, option, groups, rates, weights, cap)
+                .covered
+            {
                 admissible.push(option.clone());
             } else {
                 removed.push(RemovedOption {
@@ -517,19 +887,29 @@ impl DofCalculusCore {
         (admissible, removed)
     }
 
-    /// Net Delta = DoF_proj - DoF_curr - ΔT, minus 0.5 if irreversible.
+    /// §4.4 (v0.7): no flat penalty. An irreversible option's price is already inside
+    /// `projected`, because the closure lowered the affected entities' Variety counter
+    /// in `S'` (§4.3); subtracting anything here would charge the same loss twice.
     fn net_delta(
+        &self,
+        current: &SystemStateMatrix,
+        _option: &ActionOption,
+        projected: f64,
+        current_dof: f64,
+    ) -> f64 {
+        projected - current_dof - current.context_switch_cost
+    }
+
+    /// Public view of the §4.4 arithmetic, for the conformance harness: a check must
+    /// be able to ask what the rule computes without going through a selection.
+    pub fn net_delta_pub(
         &self,
         current: &SystemStateMatrix,
         option: &ActionOption,
         projected: f64,
         current_dof: f64,
     ) -> f64 {
-        let mut net = projected - current_dof - current.context_switch_cost;
-        if !option.is_reversible {
-            net -= 0.5;
-        }
-        net
+        self.net_delta(current, option, projected, current_dof)
     }
 
     /// §4.5: strictly positive `NetDelta` over the "stay put" baseline
@@ -538,23 +918,24 @@ impl DofCalculusCore {
         &self,
         current_state: &SystemStateMatrix,
         options: &[ActionOption],
+        ctx: Option<&ObservationContext>,
     ) -> Option<ActionOption> {
         if options.is_empty() {
             return None;
         }
-        let current = self.calculate_system_dof(current_state, None);
+        let current = self.calculate_system_dof(current_state, None, ctx);
         let mut best: Option<ActionOption> = None;
         let mut best_net = 0.0f64;
         let mut best_charges = 0usize;
 
         for option in options {
-            let (simulated_state, members) = self.simulate(current_state, option);
-            let projected = self.calculate_system_dof(&simulated_state, Some(&members));
+            let (simulated_state, members) = self.simulate(current_state, option, ctx);
+            let projected = self.calculate_system_dof(&simulated_state, Some(&members), ctx);
             let net = self.net_delta(current_state, option, projected, current);
             if net <= 0.0 {
                 continue; // §4.5: staying put wins; acting would degrade the index
             }
-            let charges = self.collapse_charges(current_state, option).len();
+            let charges = self.collapse_charges(current_state, option, ctx).len();
             let better = match &best {
                 None => true,
                 Some(b) => {
@@ -607,14 +988,12 @@ impl DofCalculusCore {
         options: &[ActionOption],
         selected: &Option<ActionOption>,
         mode: &str,
-        declaration: Option<&MeasurementDeclaration>,
-        removed: Vec<RemovedOption>,
-        groups: Option<&Vec<Vec<String>>>,
-        rates: Option<&BTreeMap<String, Rate>>,
+        input: ReportInput,
     ) -> DofReport {
+        let ctx = input.ctx;
         let mut entity_rows: Vec<EntityReportRow> = Vec::new();
         for (_eid, ent) in &current_state.entities {
-            let included = self.is_included(ent);
+            let included = self.is_included(ent, ctx, Some(current_state));
             let contribution = if included {
                 ent.current_dof.max(self.epsilon).ln()
             } else {
@@ -642,9 +1021,11 @@ impl DofCalculusCore {
                 floored,
                 blocks,
                 derivation,
+                // §6.1 (v0.7): the verdict, its witness and the completeness behind it.
+                recoverability: self.recoverability_row(&ent.entity_id, ctx),
             });
         }
-        let total = self.calculate_system_dof(current_state, None);
+        let total = self.calculate_system_dof(current_state, None, ctx);
 
         // §6.2 (v0.6): the means before the cycle and after the selected option's
         // spend ledger — what actually left the stock, not what was declared.
@@ -654,7 +1035,14 @@ impl DofCalculusCore {
         }
         let mut resources_after = resources_before.clone();
         if let Some(chosen) = selected {
-            let plan = self.plan_funding(current_state, chosen, groups, rates);
+            let plan = self.plan_funding(
+                current_state,
+                chosen,
+                input.groups,
+                input.rates,
+                input.weights,
+                input.cap,
+            );
             for (resource, amount) in plan.spend.iter() {
                 let before = resources_after.get(resource).copied().unwrap_or(0.0);
                 resources_after.insert(resource.clone(), (before - amount).max(0.0));
@@ -663,35 +1051,51 @@ impl DofCalculusCore {
 
         let mut option_rows: Vec<OptionReportRow> = Vec::new();
         for option in options {
-            let (simulated, members) = self.simulate(current_state, option);
-            let projected = self.calculate_system_dof(&simulated, Some(&members));
+            let (simulated, members) = self.simulate(current_state, option, ctx);
+            let projected = self.calculate_system_dof(&simulated, Some(&members), ctx);
             let net = self.net_delta(current_state, option, projected, total);
             let is_selected = match selected {
                 Some(s) => s.option_id == option.option_id,
                 None => false,
             };
-            let plan = self.plan_funding(current_state, option, groups, rates);
+            let plan = self.plan_funding(
+                current_state,
+                option,
+                input.groups,
+                input.rates,
+                input.weights,
+                input.cap,
+            );
             option_rows.push(OptionReportRow {
                 option_id: option.option_id.clone(),
-                is_reversible: option.is_reversible,
+                is_reversible: self.is_reversible(option),
                 projected_dof: projected,
                 net_delta: net,
                 selected: is_selected,
                 estimated_duration_mks: option.estimated_duration_mks,
                 // §6.3: every collapse this option causes, as an auditable line
-                collapse_charges: self.collapse_charges(current_state, option),
+                collapse_charges: self.collapse_charges(current_state, option, ctx),
                 // §6.3 (v0.6): what it draws, and how "affordable" was established.
                 resource_consumption: option.projected_resource_delta.clone(),
                 conversion_applied: plan.conversions,
                 resources_uncovered: plan.uncovered,
+                // §6.3 (v0.7): the mandate that would have been exceeded, what the
+                // option closes, and how the closure's loss decomposes per entity.
+                mandate_exceeded: plan.mandate_exceeded,
+                closed: option.closed.clone(),
+                closure_share: self.closure_share(current_state, option, ctx),
             });
         }
-        let (psi_id, psi_digest, declaration_text) = match declaration {
+        let (psi_id, psi_digest, declaration_text) = match input.declaration {
             Some(d) => (d.psi_id.clone(), d.digest(), d.canonical_text()),
             None => match &current_state.psi {
                 Some(p) => (p.id.clone(), p.digest.clone(), String::new()),
                 None => (String::new(), String::new(), String::new()),
             },
+        };
+        let observation_digest = match ctx {
+            Some(c) if !c.observation_digest.is_empty() => Some(c.observation_digest.clone()),
+            _ => None,
         };
         DofReport {
             entities: entity_rows,
@@ -703,10 +1107,12 @@ impl DofCalculusCore {
             psi_id,
             psi_digest,
             declaration: declaration_text,
-            removed_options: removed,
+            removed_options: input.removed,
             incomplete: self.is_incomplete(current_state, options),
             resources_before,
             resources_after,
+            observation_digest,
+            means_provenance: input.means_provenance,
         }
     }
 }

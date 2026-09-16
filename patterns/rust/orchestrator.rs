@@ -1,12 +1,15 @@
 // DOF-Core Reactive Circuit with Interruption (Rust port).
 // Ties the three layers; switches FAST PASS / DEEP by τ.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
-use crate::dof_core::{ActionOption, DofCalculusCore, DofReport, RemovedOption, SystemStateMatrix};
+use crate::dof_core::{
+    ActionOption, DofCalculusCore, DofReport, ObservationContext, RemovedOption, ReportInput,
+    SystemStateMatrix,
+};
 use crate::generator::Generator;
 use crate::graph_mapper::{GraphMapper, RawObservation};
-use crate::measurement::Rate;
+use crate::measurement::{MandateValue, Rate};
 
 pub struct DofOrchestrator {
     mapper: GraphMapper,
@@ -60,19 +63,46 @@ impl DofOrchestrator {
         self.mapper.poll_environment(raw)
     }
 
+    /// The three layers, exposed read-only for the conformance harness: a check must
+    /// be able to ask what the mapper observed and what the core decided.
+    pub fn mapper(&self) -> &GraphMapper {
+        &self.mapper
+    }
+
+    pub fn core(&self) -> &DofCalculusCore {
+        &self.core
+    }
+
     /// The deterministic candidate set for a state (§4.7 coverage is a Generator duty).
     pub fn generator_fallback(&self, state: &SystemStateMatrix, n_options: usize) -> Vec<ActionOption> {
         self.generator.safe_fallback(state, n_options)
     }
 
-    /// The derived groups and observed rates of the ruler frozen on this cycle.
-    /// They live in the declaration, so the gate and the report see exactly the
-    /// exchange layer the digest covers.
-    fn gate_context(&self) -> (Option<&Vec<Vec<String>>>, Option<&BTreeMap<String, Rate>>) {
+    /// The derived exchange layer of the ruler frozen on this cycle: groups, observed
+    /// rates, the numeraire weights and the mandate ceiling. They live in the
+    /// declaration, so the gate and the report see exactly the exchange layer the
+    /// digest covers.
+    #[allow(clippy::type_complexity)]
+    fn gate_context(
+        &self,
+    ) -> (
+        Option<&Vec<Vec<String>>>,
+        Option<&BTreeMap<String, Rate>>,
+        Option<&BTreeMap<String, f64>>,
+        Option<f64>,
+    ) {
         match self.mapper.last_declaration.as_ref() {
-            Some(d) => (Some(&d.groups), Some(&d.rates)),
-            None => (None, None),
+            Some(d) => (Some(&d.groups), Some(&d.rates), Some(&d.weights), d.mandate_cap),
+            None => (None, None, None, None),
         }
+    }
+
+    /// The observation this cycle was decided over (§3.5/§4.9). It reaches the
+    /// structural gate on purpose: the charge of §4.2 is taken against `calc(S)`, and
+    /// `calc` is decided by the verdicts of §4.9 — so the gate and the index must be
+    /// scored against the same set.
+    fn observation(&self) -> Option<&ObservationContext> {
+        self.mapper.last_observation.as_ref()
     }
 
     pub fn step(&mut self, raw: &HashMap<String, RawObservation>) -> Option<ActionOption> {
@@ -80,11 +110,14 @@ impl DofOrchestrator {
         let tau = state.global_time_to_collapse_mks;
         let options = self.generate(&state, tau);
         let (options, _removed) = Self::viability_gate(options, tau);
-        let (options, _removed_structural) = self.core.apply_structural_gate(&state, &options);
-        let (groups, rates) = self.gate_context();
+        let ctx = self.observation();
+        let (options, _removed_structural) =
+            self.core.apply_structural_gate(&state, &options, ctx);
+        let (groups, rates, weights, cap) = self.gate_context();
         let (options, _removed_resource) =
-            self.core.apply_resource_gate(&state, &options, groups, rates);
-        self.core.evaluate_and_select(&state, &options)
+            self.core
+                .apply_resource_gate(&state, &options, groups, rates, weights, cap);
+        self.core.evaluate_and_select(&state, &options, ctx)
     }
 
     /// Like step(), but also returns the Proof-of-Implementation audit.
@@ -112,24 +145,57 @@ impl DofOrchestrator {
         };
         let options = self.generate(state, state.global_time_to_collapse_mks);
         let (options, removed) = Self::viability_gate(options, state.global_time_to_collapse_mks);
-        let (options, removed_structural) = self.core.apply_structural_gate(state, &options);
+        let ctx = self.observation();
+        let (options, removed_structural) = self.core.apply_structural_gate(state, &options, ctx);
         // Gate order is normative (§5 → §4.5 → §4.8): the reason a reader needs
         // first is the one about the world, not the one about the wallet.
-        let (groups, rates) = self.gate_context();
-        let (options, removed_resource) = self.core.apply_resource_gate(state, &options, groups, rates);
+        let (groups, rates, weights, cap) = self.gate_context();
+        let (options, removed_resource) =
+            self.core
+                .apply_resource_gate(state, &options, groups, rates, weights, cap);
         let mut all_removed = removed;
         all_removed.extend(removed_structural);
         all_removed.extend(removed_resource);
-        let selected = self.core.evaluate_and_select(state, &options);
+        let selected = self.core.evaluate_and_select(state, &options, ctx);
+
+        // §6.2 (v0.7): where the amounts a decision rests on came from — a measured
+        // balance or an asserted authority — so a reader can check the ceiling against
+        // a measurement instead of against a claim.
+        let mut means_provenance: BTreeMap<String, MandateValue> = BTreeMap::new();
+        means_provenance.insert(
+            "source".to_string(),
+            MandateValue::Text("measured balance (§4.8)".to_string()),
+        );
+        for (resource, amount) in state.resources.iter() {
+            means_provenance.insert(
+                format!("measured:{}", resource),
+                MandateValue::Number(*amount),
+            );
+        }
+        if let Some(d) = self.mapper.last_declaration.as_ref() {
+            if let Some(n) = d.numeraire.as_ref() {
+                means_provenance.insert("numeraire".to_string(), MandateValue::Text(n.clone()));
+            }
+            if let Some(c) = d.mandate_cap {
+                means_provenance.insert("mandate_cap".to_string(), MandateValue::Number(c));
+            }
+        }
+
         let report = self.core.report(
             state,
             &options,
             &selected,
             mode,
-            self.mapper.last_declaration.as_ref(),
-            all_removed,
-            groups,
-            rates,
+            ReportInput {
+                declaration: self.mapper.last_declaration.as_ref(),
+                removed: all_removed,
+                groups,
+                rates,
+                weights,
+                cap,
+                ctx,
+                means_provenance,
+            },
         );
         (selected, report)
     }

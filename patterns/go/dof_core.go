@@ -1,18 +1,9 @@
-// DOF-Core calculus kernel (Go port).
-// Mirrors patterns/calculus_core.py: pure Nash evaluation index (sum of ln(DoF)),
-// the `calc` calculation set, Collapse-Source isolation, Delta-T-aware selection,
-// and the Proof-of-Implementation audit report (DOF-SPEC §6).
-//
-// Axioms: Axiom 1 (maximize the total future DoF of the system AND its constituent
-// entities); Axiom 3 (never trade one entity's collapse for another's gain);
-// Axiom 5 (prefer reversible actions; never assume unknown possibilities have zero
-// DoF — a node with DoFKnown == false is never excluded as a hopeless zero).
-
 package main
 
 import (
 	"math"
 	"sort"
+	"strings"
 )
 
 type EntityState struct {
@@ -23,27 +14,26 @@ type EntityState struct {
 	IsCollapseSource  bool    `json:"is_collapse_source"`
 	DoFKnown          bool    `json:"dof_known"`
 	TimeToCollapseMks float64 `json:"time_to_collapse_mks"`
-	// Port-level extension (not a §3.1 field): the measurement that produced
-	// CurrentDoF, kept so the audit can show the per-lens terms (§6.1).
-	Measurement *EntityMeasurement `json:"-"`
+	Measurement       *EntityMeasurement `json:"-"`
 }
 
 type SystemStateMatrix struct {
 	GlobalTimeToCollapseMks float64                 `json:"global_time_to_collapse_mks"`
 	ContextSwitchCost       float64                 `json:"context_switch_cost"`
 	Entities                map[string]*EntityState `json:"entities"`
-	Psi                     *PsiReference           `json:"psi"` // frozen ruler (§3.4)
+	Psi                     *PsiReference           `json:"psi"`
+	Resources               map[string]float64      `json:"resources"`
 }
 
 type ActionOption struct {
-	OptionID             string             `json:"option_id"`
-	Description          string             `json:"description"`
-	ProjectedDoFDelta    map[string]float64 `json:"projected_dof_delta"`
-	IsReversible         bool               `json:"is_reversible"`
-	EstimatedDurationMks float64            `json:"estimated_duration_mks"` // microseconds (DOF-SPEC §3.3)
+	OptionID             string                        `json:"option_id"`
+	Description          string                        `json:"description"`
+	ProjectedDoFDelta    map[string]float64            `json:"projected_dof_delta"`
+	ProjectedResourceDelta map[string]map[string]float64 `json:"projected_resource_delta"`
+	IsReversible         bool                          `json:"is_reversible"`
+	EstimatedDurationMks float64                       `json:"estimated_duration_mks"`
 }
 
-// EntityReportRow is one entity row of the audit report.
 type EntityReportRow struct {
 	EntityID         string     `json:"entity_id"`
 	IsCollapseSource bool       `json:"is_collapse_source"`
@@ -51,37 +41,36 @@ type EntityReportRow struct {
 	CurrentDoF       float64    `json:"current_dof"`
 	DoFKnown         bool       `json:"dof_known"`
 	Contribution     float64    `json:"contribution"`
-	LensTerms        []LensTerm `json:"lens_terms"`   // §6.1: why, not only what
-	BindingLens      string     `json:"binding_lens"` // the channel holding it back
-	Floored          bool       `json:"floored"`      // ε-floor applied at entity level
+	LensTerms        []LensTerm `json:"lens_terms"`
+	BindingLens      string     `json:"binding_lens"`
+	Floored          bool       `json:"floored"`
+	Blocks           [][2]float64 `json:"blocks"`
+	Derivation       map[string]interface{} `json:"derivation"`
 }
 
-// CollapseCharge is one entity a candidate drove from a counted state to a
-// known zero (§4.2, §6.3): the audit line that makes the price of destruction
-// explicit instead of implicit.
 type CollapseCharge struct {
 	EntityID  string  `json:"entity_id"`
 	DoFBefore float64 `json:"dof_before"`
 }
 
-// OptionReportRow is one option row of the audit report.
 type OptionReportRow struct {
-	OptionID             string           `json:"option_id"`
-	IsReversible         bool             `json:"is_reversible"`
-	ProjectedDoF         float64          `json:"projected_dof"`
-	NetDelta             float64          `json:"net_delta"`
-	Selected             bool             `json:"selected"`
-	EstimatedDurationMks float64          `json:"estimated_duration_mks"`
-	CollapseCharges      []CollapseCharge `json:"collapse_charges"`
+	OptionID             string                         `json:"option_id"`
+	IsReversible         bool                           `json:"is_reversible"`
+	ProjectedDoF         float64                        `json:"projected_dof"`
+	NetDelta             float64                        `json:"net_delta"`
+	Selected             bool                           `json:"selected"`
+	EstimatedDurationMks float64                        `json:"estimated_duration_mks"`
+	CollapseCharges      []CollapseCharge               `json:"collapse_charges"`
+	ResourceConsumption  map[string]map[string]float64   `json:"resource_consumption"`
+	ConversionApplied    []map[string]interface{}        `json:"conversion_applied"`
+	ResourcesUncovered   map[string]float64              `json:"resources_uncovered"`
 }
 
-// RemovedOption records a candidate removed before evaluation (§6.2).
 type RemovedOption struct {
 	OptionID string `json:"option_id"`
 	Gate     string `json:"gate"`
 }
 
-// DofReport is the full Proof-of-Implementation audit (DOF-SPEC §6).
 type DofReport struct {
 	Entities                []EntityReportRow `json:"entities"`
 	TotalSystemDoF          float64           `json:"total_system_dof"`
@@ -93,10 +82,9 @@ type DofReport struct {
 	PsiDigest               string            `json:"psi_digest"`
 	Declaration             string            `json:"declaration"`
 	RemovedOptions          []RemovedOption   `json:"removed_options"`
-	// Incomplete (§6.2): true iff a resolvable unknown was left unmeasured in
-	// every candidate, so the decision is declared incomplete rather than
-	// presented as informed.
-	Incomplete bool `json:"incomplete"`
+	Incomplete              bool              `json:"incomplete"`
+	ResourcesBefore         map[string]float64 `json:"resources_before"`
+	ResourcesAfter          map[string]float64 `json:"resources_after"`
 }
 
 type DOFCalculusCore struct {
@@ -107,13 +95,6 @@ func NewDOFCalculusCore() *DOFCalculusCore {
 	return &DOFCalculusCore{epsilon: 1e-6}
 }
 
-// isIncluded reports whether an entity belongs to the calculation set `calc` (DOF-SPEC §4.2).
-// Excluded if it is a collapse source, or if its DoF is a **known** zero (no recovery path is
-// asserted for it). A node with unknown DoF (DoFKnown == false) is never excluded (Axiom 5).
-//
-// The witness of unrecoverability MUST NOT be the Generator's candidate set (§4.2): what a poor
-// option list fails to propose says nothing about the world, so calc is decided from the entity's
-// own state only.
 func (c *DOFCalculusCore) isIncluded(entity *EntityState) bool {
 	if entity.IsCollapseSource {
 		return false
@@ -124,9 +105,6 @@ func (c *DOFCalculusCore) isIncluded(entity *EntityState) bool {
 	return !entity.DoFKnown
 }
 
-// calcMembers returns calc(S), frozen for the whole cycle (§4.2): it is computed once, on S, and
-// the same entities are summed in S and in S', so a term cannot appear or disappear between the
-// two sides of NetDelta.
 func (c *DOFCalculusCore) calcMembers(state *SystemStateMatrix) map[string]bool {
 	members := make(map[string]bool, len(state.Entities))
 	for eid, entity := range state.Entities {
@@ -137,9 +115,6 @@ func (c *DOFCalculusCore) calcMembers(state *SystemStateMatrix) map[string]bool 
 	return members
 }
 
-// CalculateSystemDoF computes the evaluation index: pure Nash product (sum of ln(DoF)) over the
-// frozen calc set. Values are negative; only their ordering matters. See DOF-SPEC §4.1.
-// Pass nil members to use calc(state) itself.
 func (c *DOFCalculusCore) CalculateSystemDoF(state *SystemStateMatrix, members map[string]bool) float64 {
 	if members == nil {
 		members = c.calcMembers(state)
@@ -155,11 +130,6 @@ func (c *DOFCalculusCore) CalculateSystemDoF(state *SystemStateMatrix, members m
 	return total
 }
 
-// simulate applies an option's projected deltas (clamped to [0,1]) and returns the simulated state
-// together with the **frozen** member set of calc(S) (§4.2): everything counted in S stays counted
-// in S' — destroying a counted entity cannot raise the index by removing a negative term — while an
-// entity outside calc(S) stays outside it, so acting on something that is not a subject of the
-// decision is neither rewarded nor punished.
 func (c *DOFCalculusCore) simulate(current *SystemStateMatrix, option *ActionOption) (*SystemStateMatrix, map[string]bool) {
 	members := c.calcMembers(current)
 	simulated := make(map[string]*EntityState, len(current.Entities))
@@ -184,11 +154,10 @@ func (c *DOFCalculusCore) simulate(current *SystemStateMatrix, option *ActionOpt
 		ContextSwitchCost:       current.ContextSwitchCost,
 		Entities:                simulated,
 		Psi:                     current.Psi,
+		Resources:               current.Resources,
 	}, members
 }
 
-// collapseCharges lists the counted entities a candidate drives to a known zero (§4.2). The charge
-// depends on neither the Generator's candidate set nor the victim's post-collapse prospects.
 func (c *DOFCalculusCore) collapseCharges(current *SystemStateMatrix, option *ActionOption) []CollapseCharge {
 	charges := []CollapseCharge{}
 	for eid, entity := range current.Entities {
@@ -210,8 +179,6 @@ func (c *DOFCalculusCore) collapseCharges(current *SystemStateMatrix, option *Ac
 	return charges
 }
 
-// ApplyStructuralGate removes options that destroy a counted entity while a charge-free candidate
-// exists (§4.5, Axiom 3). Every removal is recorded as gate = "collapse".
 func (c *DOFCalculusCore) ApplyStructuralGate(current *SystemStateMatrix, options []*ActionOption) ([]*ActionOption, []RemovedOption) {
 	if len(options) == 0 {
 		return nil, nil
@@ -224,7 +191,6 @@ func (c *DOFCalculusCore) ApplyStructuralGate(current *SystemStateMatrix, option
 		}
 	}
 	if !chargeFree {
-		// No alternative exists: the ladder decides among the destructive candidates.
 		return options, nil
 	}
 	admissible := []*ActionOption{}
@@ -239,7 +205,147 @@ func (c *DOFCalculusCore) ApplyStructuralGate(current *SystemStateMatrix, option
 	return admissible, removed
 }
 
-// netDelta = DoF_proj - DoF_curr - ΔT, minus 0.5 if irreversible (Axiom 5).
+func (c *DOFCalculusCore) requirement(option *ActionOption) map[string]float64 {
+	net := make(map[string]float64)
+	for _, entityDeltas := range option.ProjectedResourceDelta {
+		for resource, delta := range entityDeltas {
+			net[resource] += delta
+		}
+	}
+	need := make(map[string]float64)
+	for r, val := range net {
+		if val < 0.0 {
+			need[r] = -val
+		}
+	}
+	return need
+}
+
+func (c *DOFCalculusCore) sameGroup(a, b string, groups [][]string) bool {
+	if a == b {
+		return true
+	}
+	for _, group := range groups {
+		hasA, hasB := false, false
+		for _, m := range group {
+			if m == a {
+				hasA = true
+			}
+			if m == b {
+				hasB = true
+			}
+		}
+		if hasA && hasB {
+			return true
+		}
+	}
+	return false
+}
+
+type FundingResult struct {
+	Covered           bool
+	Need              map[string]float64
+	Spend             map[string]float64
+	Conversions       []map[string]interface{}
+	Uncovered         map[string]float64
+	TotalDurationMks float64
+}
+
+func (c *DOFCalculusCore) PlanFunding(state *SystemStateMatrix, option *ActionOption, groups [][]string, rates map[string]RateInfo) FundingResult {
+	need := c.requirement(option)
+	means := state.Resources
+	tau := state.GlobalTimeToCollapseMks
+	spend := make(map[string]float64)
+	var conversions []map[string]interface{}
+	uncovered := make(map[string]float64)
+	totalDuration := option.EstimatedDurationMks
+
+	sortedNeed := make([]string, 0, len(need))
+	for r := range need {
+		sortedNeed = append(sortedNeed, r)
+	}
+	sort.Strings(sortedNeed)
+
+	for _, resource := range sortedNeed {
+		remaining := need[resource]
+		available := math.Max(0.0, means[resource]-spend[resource])
+		direct := math.Min(remaining, available)
+		spend[resource] += direct
+		remaining -= direct
+
+		sortedRates := make([]string, 0, len(rates))
+		for r := range rates {
+			sortedRates = append(sortedRates, r)
+		}
+		sort.Strings(sortedRates)
+
+		for _, key := range sortedRates {
+			if remaining <= 0.0 {
+				break
+			}
+			parts := strings.Split(key, "->")
+			if len(parts) != 2 {
+				continue
+			}
+			source, target := parts[0], parts[1]
+			if target != resource {
+				continue
+			}
+			rateSpec := rates[key]
+			rate := rateSpec.Rate
+			duration := rateSpec.DurationMks
+			if rate <= 0.0 || !c.sameGroup(source, resource, groups) {
+				continue
+			}
+			amountSource := remaining / rate
+			if amountSource > math.Max(0.0, means[source]-spend[source]) {
+				continue
+			}
+			if totalDuration+duration > tau {
+				continue
+			}
+			spend[source] += amountSource
+			totalDuration += duration
+			conversions = append(conversions, map[string]interface{}{
+				"from":          source,
+				"to":            resource,
+				"amount_from":   amountSource,
+				"amount_to":     remaining,
+				"rate":          rate,
+				"duration_mks": duration,
+			})
+			remaining = 0.0
+		}
+		if remaining > 0.0 {
+			uncovered[resource] = remaining
+		}
+	}
+	return FundingResult{
+		Covered:           len(uncovered) == 0,
+		Need:              need,
+		Spend:             spend,
+		Conversions:       conversions,
+		Uncovered:         uncovered,
+		TotalDurationMks: totalDuration,
+	}
+}
+
+func (c *DOFCalculusCore) ApplyResourceGate(state *SystemStateMatrix, options []*ActionOption, groups [][]string, rates map[string]RateInfo) ([]*ActionOption, []RemovedOption) {
+	if len(options) == 0 {
+		return nil, nil
+	}
+	admissible := []*ActionOption{}
+	removed := []RemovedOption{}
+	for _, option := range options {
+		if c.PlanFunding(state, option, groups, rates).Covered {
+			admissible = append(admissible, option)
+		} else {
+			removed = append(removed, RemovedOption{OptionID: option.OptionID, Gate: "insolvency"})
+		}
+	}
+	return admissible, removed
+}
+
 func (c *DOFCalculusCore) netDelta(current *SystemStateMatrix, option *ActionOption, projected, currentDoF float64) float64 {
 	net := projected - currentDoF - current.ContextSwitchCost
 	if !option.IsReversible {
@@ -248,8 +354,6 @@ func (c *DOFCalculusCore) netDelta(current *SystemStateMatrix, option *ActionOpt
 	return net
 }
 
-// EvaluateAndSelect picks the best admissible option: strictly positive NetDelta over the
-// "stay put" baseline (NetDelta = 0 by definition), with rung 1 of the ladder on ties (§4.5).
 func (c *DOFCalculusCore) EvaluateAndSelect(currentState *SystemStateMatrix, options []*ActionOption) *ActionOption {
 	if len(options) == 0 {
 		return nil
@@ -265,7 +369,7 @@ func (c *DOFCalculusCore) EvaluateAndSelect(currentState *SystemStateMatrix, opt
 		projected := c.CalculateSystemDoF(simulated, members)
 		net := c.netDelta(currentState, option, projected, current)
 		if net <= 0.0 {
-			continue // §4.5: staying put wins; acting would degrade the index
+			continue
 		}
 		charges := len(c.collapseCharges(currentState, option))
 		better := !haveBest || net > bestNet ||
@@ -278,7 +382,6 @@ func (c *DOFCalculusCore) EvaluateAndSelect(currentState *SystemStateMatrix, opt
 	return best
 }
 
-// isIncomplete reports whether a resolvable unknown (§4.7) was left unmeasured in every candidate.
 func (c *DOFCalculusCore) isIncomplete(state *SystemStateMatrix, options []*ActionOption) bool {
 	cheapest := math.Inf(1)
 	for _, option := range options {
@@ -287,7 +390,7 @@ func (c *DOFCalculusCore) isIncomplete(state *SystemStateMatrix, options []*Acti
 		}
 	}
 	if math.IsInf(cheapest, 1) {
-		return false // no procedure available at all
+		return false
 	}
 	for eid, entity := range state.Entities {
 		if entity.DoFKnown {
@@ -310,8 +413,7 @@ func (c *DOFCalculusCore) isIncomplete(state *SystemStateMatrix, options []*Acti
 	return false
 }
 
-// Report builds the transparent audit (DOF-SPEC §6). Required by the license (PoI).
-func (c *DOFCalculusCore) Report(currentState *SystemStateMatrix, options []*ActionOption, selected *ActionOption, mode string, declaration *MeasurementDeclaration, removed []RemovedOption) *DofReport {
+func (c *DOFCalculusCore) Report(currentState *SystemStateMatrix, options []*ActionOption, selected *ActionOption, mode string, declaration *MeasurementDeclaration, removed []RemovedOption, groups [][]string, rates map[string]RateInfo) *DofReport {
 	var entityRows []EntityReportRow
 	for _, ent := range currentState.Entities {
 		included := c.isIncluded(ent)
@@ -331,6 +433,8 @@ func (c *DOFCalculusCore) Report(currentState *SystemStateMatrix, options []*Act
 			row.LensTerms = ent.Measurement.Terms
 			row.BindingLens = ent.Measurement.BindingLens
 			row.Floored = ent.Measurement.Floored
+			row.Blocks = ent.Measurement.Blocks
+			row.Derivation = ent.Measurement.Derivation
 		}
 		entityRows = append(entityRows, row)
 	}
@@ -341,6 +445,7 @@ func (c *DOFCalculusCore) Report(currentState *SystemStateMatrix, options []*Act
 		projected := c.CalculateSystemDoF(simulated, members)
 		net := c.netDelta(currentState, option, projected, total)
 		isSelected := selected != nil && selected.OptionID == option.OptionID
+		plan := c.PlanFunding(currentState, option, groups, rates)
 		optionRows = append(optionRows, OptionReportRow{
 			OptionID:             option.OptionID,
 			IsReversible:         option.IsReversible,
@@ -348,10 +453,28 @@ func (c *DOFCalculusCore) Report(currentState *SystemStateMatrix, options []*Act
 			NetDelta:             net,
 			Selected:             isSelected,
 			EstimatedDurationMks: option.EstimatedDurationMks,
-			// §6.3: every collapse this option causes, as an auditable line
-			CollapseCharges: c.collapseCharges(currentState, option),
+			CollapseCharges:      c.collapseCharges(currentState, option),
+			ResourceConsumption:  option.ProjectedResourceDelta,
+			ConversionApplied:    plan.Conversions,
+			ResourcesUncovered:   plan.Uncovered,
 		})
 	}
+
+	resBefore := make(map[string]float64)
+	for k, v := range currentState.Resources {
+		resBefore[k] = v
+	}
+	resAfter := make(map[string]float64)
+	for k, v := range currentState.Resources {
+		resAfter[k] = v
+	}
+	if selected != nil {
+		plan := c.PlanFunding(currentState, selected, groups, rates)
+		for resource, amount := range plan.Spend {
+			resAfter[resource] = math.Max(0.0, resAfter[resource]-amount)
+		}
+	}
+
 	report := &DofReport{
 		Entities:                entityRows,
 		TotalSystemDoF:          total,
@@ -361,6 +484,8 @@ func (c *DOFCalculusCore) Report(currentState *SystemStateMatrix, options []*Act
 		Options:                 optionRows,
 		RemovedOptions:          removed,
 		Incomplete:              c.isIncomplete(currentState, options),
+		ResourcesBefore:         resBefore,
+		ResourcesAfter:          resAfter,
 	}
 	if declaration != nil {
 		report.PsiID = declaration.PsiID

@@ -2,6 +2,7 @@ import json
 from typing import Dict, List
 
 from calculus_core import ActionOption, SystemStateMatrix
+from measurement import MANDATORY_RESOURCE
 
 
 # In a deployment the execution time of an option is a Perception-layer output
@@ -56,6 +57,12 @@ class Generator:
             if candidates:
                 target = min(candidates, key=lambda e: e.current_dof)
                 delta[target.entity_id] = 0.2
+            # §3.3 (v0.6): what the option draws from the agent. The deterministic
+            # fallback is a local step that buys nothing, so its draw is an
+            # explicit zero for every entity it names — written, not omitted.
+            draws: Dict[str, Dict[str, float]] = {
+                eid: {MANDATORY_RESOURCE: 0.0} for eid in delta
+            }
             opts.append(
                 ActionOption(
                     option_id=f"fallback_{i}",
@@ -63,6 +70,7 @@ class Generator:
                     projected_dof_delta=delta,
                     is_reversible=True,
                     estimated_duration_mks=FALLBACK_DURATION_MKS,
+                    projected_resource_delta=draws,
                 )
             )
         return opts
@@ -73,10 +81,15 @@ class Generator:
             f"Current system state: {state.model_dump_json()}. "
             f"Generate {n_options} distinct, non-redundant action options. "
             "Each option must include: option_id, description, "
-            "projected_dof_delta (per entity_id), and is_reversible. "
+            "projected_dof_delta (per entity_id), is_reversible, and "
+            "projected_resource_delta (per entity_id, then per resource_id: what "
+            "the option draws from the acting agent; negative = consumption, "
+            "positive = production). "
             "Every option MUST carry an entry in projected_dof_delta for every "
             "entity with dof_known=false (0.0 if the option leaves it unchanged), "
-            "so that an unmapped entity is never made invisible by omission. "
+            "so that an unmapped entity is never made invisible by omission, and "
+            "an explicit `energy` entry (0.0 if it consumes none) for every entity "
+            "it names in projected_dof_delta. "
             "Objective (Axiom 1): maximize the total future DoF of the system AND "
             "its constituent entities; never sacrifice one entity's future for "
             "another's gain. Uncertainty (Axiom 5): prefer reversible actions and "

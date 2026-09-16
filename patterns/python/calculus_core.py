@@ -2,7 +2,8 @@
 
 Mirrors the normative DOF-SPEC: pure Nash evaluation index (sum of ln(DoF)),
 the `calc` calculation set, Collapse-Source isolation, Delta-T-aware selection,
-the collapse charge (§4.2) with structural admissibility (§4.5), and the
+the collapse charge (§4.2) with structural admissibility (§4.5), the resource
+gate with verified conversion and insolvency (§4.8), and the
 Proof-of-Implementation audit report (DOF-SPEC §6).
 
 Structural expression of the skill's axioms: Axiom 1 (maximize the total future
@@ -14,7 +15,7 @@ a node with dof_known=False is never excluded as a hopeless zero).
 """
 
 import math
-from typing import List, Dict, Optional, Set, Tuple
+from typing import List, Dict, Optional, Sequence, Set, Tuple
 from pydantic import BaseModel, Field
 
 from measurement import EntityMeasurement, MeasurementDeclaration
@@ -44,6 +45,11 @@ class SystemStateMatrix(BaseModel):
     context_switch_cost: float                       # Penalty for changing current process (ΔT)
     entities: Dict[str, EntityState]
     psi: Optional[PsiReference] = None               # Frozen measurement ruler (§3.4)
+    # §3.2 (v0.6): the acting agent's available means per resource, in the unit
+    # declared for that resource in the ruler. An empty map means the agent
+    # declares no means, so any option with a non-zero consumption is
+    # inadmissible (§4.8) — an absent balance is never read as "unlimited".
+    resources: Dict[str, float] = {}
 
 
 class ActionOption(BaseModel):
@@ -52,6 +58,11 @@ class ActionOption(BaseModel):
     projected_dof_delta: Dict[str, float]            # Forecast of DoF change for each node
     is_reversible: bool = True
     estimated_duration_mks: float = Field(0.0, ge=0.0)  # Execution time (us); a Perception-layer output (§3.3)
+    # §3.3 (v0.6): what the option draws from the acting agent, attributed to the
+    # entity whose transitions consume it. Negative = consumption, positive =
+    # production. `energy` MUST be present (written as 0.0) for every entity
+    # named in `projected_dof_delta`.
+    projected_resource_delta: Dict[str, Dict[str, float]] = {}
 
 
 class DofReport(BaseModel):
@@ -70,6 +81,11 @@ class DofReport(BaseModel):
     declaration: Optional[str] = None
     removed_options: List[Dict[str, str]] = []
     incomplete: bool = False
+    # §6.2 (v0.6): the acting agent's means at the start of the cycle and after
+    # the selected option's consumption. Multi-step accumulation is auditable
+    # only if the spend is written where the next cycle can see it (§4.8).
+    resources_before: Dict[str, float] = {}
+    resources_after: Dict[str, float] = {}
 
 
 class DOFCalculusCore:
@@ -114,6 +130,10 @@ class DOFCalculusCore:
         counted entity cannot raise the index by removing a negative term, while
         an entity outside `calc(S)` stays outside it — acting on something that
         is not a subject of the decision is neither rewarded nor punished.
+
+        The agent's means travel with the state unchanged: `simulate` scores the
+        DoF consequences of an option, and the resource side is decided by the
+        gate of §4.8 (a DoF projection must not silently also pay for itself).
         """
         members = self.calc_members(current_state)
         simulated_entities: Dict[str, EntityState] = {}
@@ -134,6 +154,7 @@ class DOFCalculusCore:
             context_switch_cost=current_state.context_switch_cost,
             entities=simulated_entities,
             psi=current_state.psi,
+            resources=current_state.resources,
         )
         return simulated, members
 
@@ -172,6 +193,124 @@ class DOFCalculusCore:
         # No alternative exists: Axiom 3 still forbids preferring destruction,
         # but with every candidate destructive the ladder decides (rung 1).
         return [o for o, _ in charged], []
+
+    # --- §4.8 resource gate ---------------------------------------------------
+    def requirement(self, option: ActionOption) -> Dict[str, float]:
+        """§4.8: the option's net draw on the agent, per resource.
+
+        Consumption is the negative component of the declared delta summed over
+        the entities the option names. A resource that the option produces more
+        of than it consumes yields no requirement — production is not a payment.
+        """
+        net: Dict[str, float] = {}
+        for entity_deltas in option.projected_resource_delta.values():
+            for resource, delta in entity_deltas.items():
+                net[resource] = net.get(resource, 0.0) + float(delta)
+        return {r: -value for r, value in net.items() if value < 0.0}
+
+    @staticmethod
+    def _same_group(a: str, b: str, groups: Optional[Sequence[Sequence[str]]]) -> bool:
+        """§4.8: exchange is possible only inside a derived group."""
+        if a == b:
+            return True
+        for group in (groups or []):
+            members = {str(r) for r in group}
+            if a in members and b in members:
+                return True
+        return False
+
+    def plan_funding(self, state: SystemStateMatrix, option: ActionOption,
+                     groups: Optional[Sequence[Sequence[str]]] = None,
+                     rates: Optional[Dict[str, Dict[str, float]]] = None
+                     ) -> Dict[str, object]:
+        """§4.8: decide *how* an option is paid for, and whether it can be.
+
+        Step 1 is a direct comparison against the agent's means. Step 2 is
+        **verified** conversion: the exchange path must exist (declared rate),
+        the resources must share a group, an offer must satisfy the requirement
+        (`amount = deficit / rate`), the price must be payable from the agent's
+        means, and the exchange's **own time** must still fit in `τ`. Anything
+        that fails is not a cheaper conversion — it is a deficit that stays
+        uncovered, and step 3 turns that into insolvency.
+
+        The spend ledger is what actually leaves the agent's stock: a deficit
+        bought from another resource spends *that* resource, not the one the
+        option declared it would consume.
+        """
+        need = self.requirement(option)
+        means = state.resources
+        tau = state.global_time_to_collapse_mks
+        spend: Dict[str, float] = {}
+        conversions: List[Dict[str, object]] = []
+        uncovered: Dict[str, float] = {}
+        total_duration = option.estimated_duration_mks
+
+        for resource in sorted(need):
+            remaining = need[resource]
+            available = max(0.0, means.get(resource, 0.0) - spend.get(resource, 0.0))
+            direct = min(remaining, available)
+            spend[resource] = spend.get(resource, 0.0) + direct
+            remaining -= direct
+
+            for key in sorted(rates or {}):
+                if remaining <= 0.0:
+                    break
+                source, _, target = key.partition("->")
+                if target != resource:
+                    continue
+                spec = rates[key] or {}
+                rate = float(spec.get("rate", 0.0))
+                duration = float(spec.get("duration_mks", 0.0))
+                if rate <= 0.0 or not self._same_group(source, resource, groups):
+                    continue
+                amount_source = remaining / rate
+                if amount_source > max(0.0, means.get(source, 0.0) - spend.get(source, 0.0)):
+                    continue                        # the price is not payable
+                if total_duration + duration > tau:
+                    continue                        # the exchange does not fit in τ
+                spend[source] = spend.get(source, 0.0) + amount_source
+                total_duration += duration
+                conversions.append({
+                    "from": source, "to": resource,
+                    "amount_from": amount_source, "amount_to": remaining,
+                    "rate": rate, "duration_mks": duration,
+                })
+                remaining = 0.0
+
+            if remaining > 0.0:
+                uncovered[resource] = remaining
+
+        return {
+            "covered": not uncovered,
+            "need": need,
+            "spend": spend,
+            "conversions": conversions,
+            "uncovered": uncovered,
+            "total_duration_mks": total_duration,
+        }
+
+    def apply_resource_gate(self, state: SystemStateMatrix, options: List[ActionOption],
+                            groups: Optional[Sequence[Sequence[str]]] = None,
+                            rates: Optional[Dict[str, Dict[str, float]]] = None
+                            ) -> Tuple[List[ActionOption], List[Dict[str, str]]]:
+        """§4.8 step 3: an unpayable option is inadmissible, unconditionally.
+
+        Unlike the structural gate of §4.5 there is no "no alternative" escape:
+        a shortage that survives full verified conversion is a **verdict**, not
+        a price, so it cannot be traded against a preference for acting. Not
+        affordable is not the same as expensive, exactly as unreachable is not
+        the same as distant. Every removal is recorded (§6.2).
+        """
+        if not options:
+            return [], []
+        admissible: List[ActionOption] = []
+        removed: List[Dict[str, str]] = []
+        for option in options:
+            if self.plan_funding(state, option, groups, rates)["covered"]:
+                admissible.append(option)
+            else:
+                removed.append({"option_id": option.option_id, "gate": "insolvency"})
+        return admissible, removed
 
     def calculate_system_dof(self, state: SystemStateMatrix,
                              members: Optional[Set[str]] = None) -> float:
@@ -243,7 +382,9 @@ class DOFCalculusCore:
     def report(self, current_state: SystemStateMatrix, options: List[ActionOption],
                selected: Optional[ActionOption], mode: str,
                declaration: Optional[MeasurementDeclaration] = None,
-               removed_options: Optional[List[Dict[str, str]]] = None) -> DofReport:
+               removed_options: Optional[List[Dict[str, str]]] = None,
+               groups: Optional[Sequence[Sequence[str]]] = None,
+               rates: Optional[Dict[str, Dict[str, float]]] = None) -> DofReport:
         """Transparent audit (DOF-SPEC §6). Required by the license (PoI)."""
         entity_rows: List[Dict[str, object]] = []
         for e_id, ent in current_state.entities.items():
@@ -262,14 +403,26 @@ class DOFCalculusCore:
             row["lens_terms"] = m.terms if m else []
             row["binding_lens"] = m.binding_lens if m else None
             row["floored"] = m.floored if m else False
+            # §4.6 (v0.6): the derived blocks and the derivation behind them.
+            row["blocks"] = m.blocks if m else []
+            row["derivation"] = m.derivation if m else None
             entity_rows.append(row)
         total = self.calculate_system_dof(current_state)
+
+        resources_before = dict(current_state.resources)
+        resources_after = dict(current_state.resources)
+        if selected is not None:
+            plan = self.plan_funding(current_state, selected, groups, rates)
+            for resource, amount in plan["spend"].items():
+                resources_after[resource] = max(0.0, resources_after.get(resource, 0.0) - amount)
+
         option_rows: List[Dict[str, object]] = []
         for option in options:
             simulated, members = self.simulate(current_state, option)
             projected_dof = self.calculate_system_dof(simulated, members)
             net_delta = self._net_delta(current_state, option, projected_dof, total)
             is_selected = (selected is not None and option.option_id == selected.option_id)
+            plan = self.plan_funding(current_state, option, groups, rates)
             option_rows.append({
                 "option_id": option.option_id,
                 "is_reversible": option.is_reversible,
@@ -279,6 +432,11 @@ class DOFCalculusCore:
                 "estimated_duration_mks": option.estimated_duration_mks,
                 # §6.3: every collapse this option causes, as an auditable line
                 "collapse_charges": self.collapse_charges(current_state, option),
+                # §6.3 (v0.6): what the option draws, and how "affordable" was
+                # established — by cash in hand or by an observed trade.
+                "resource_consumption": option.projected_resource_delta,
+                "conversion_applied": plan["conversions"],
+                "resources_uncovered": plan["uncovered"],
             })
         return DofReport(
             entities=entity_rows,
@@ -292,4 +450,6 @@ class DOFCalculusCore:
             declaration=(declaration.canonical_text() if declaration else None),
             removed_options=removed_options or [],
             incomplete=self._is_incomplete(current_state, options),
+            resources_before=resources_before,
+            resources_after=resources_after,
         )

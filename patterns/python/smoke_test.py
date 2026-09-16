@@ -19,12 +19,22 @@ Checks, in order:
  10. §4.5  — structural admissibility (a destructive option is removed while a
              charge-free alternative exists) and the `NetDelta > 0` stay-put baseline.
  11. §4.7  — coverage of unmapped entities by every candidate, and `incomplete`.
+ 12. §4.6  — the block-level `(c_g, C_g)` are *derived* by the named procedure
+             from raw requirements, the agent's means and the derived groups;
+             the declaration carries the resource units, groups and rates.
+ 13. §4.8  — the resource gate: direct comparison, verified conversion (path,
+             offer, payable price, the exchange's own time against τ) and
+             insolvency — including a resource whose balance is not declared at
+             all (an invalid input, not an evaluation mode).
+ 14. §6.2/§6.3 — `resources_before`/`resources_after`, per-option
+             `resource_consumption` and `conversion_applied`.
 """
 import json
 import math
 
 from calculus_core import ActionOption, DOFCalculusCore
-from measurement import EPSILON, LENS_ORDER, U_MAX, U_MIN, psi_con, psi_opt, psi_var
+from measurement import (EPSILON, LENS_ORDER, U_MAX, U_MIN, LensObservation,
+                         build_declaration, derive_blocks, psi_con, psi_opt, psi_var)
 from orchestrator import DOFOrchestrator
 
 FAILURES = []
@@ -68,7 +78,29 @@ obs_fast = {
                  # the Options lens was never measured: u(t) applies (§4.7)
                  "lenses": {"variety": {"V": 2.0, "V_env": 2.0},
                             "constraint": {"F": 1.0, "F_env": 1.0}}},
+    # v0.6: this entity does not declare blocks at all — it declares what its
+    # transitions *require*, and the blocks are derived against the agent's means.
+    "drone": {"is_autonomous": True, "agency_index": 0.6, "is_collapse_source": False,
+              "time_to_collapse_mks": 100000000.0,
+              "lenses": {"variety": {"V": 4.0, "V_env": 2.0},
+                         "requirements": {"energy": 4.0},
+                         "constraint": {"F": 3.0, "F_env": 1.0}}},
+    # §3.2/§4.8 (v0.6): the acting agent, the derived groups and the observed
+    # rates. This is part of the ruler: the declaration carries it, so a ruler
+    # with different units or rates is a different ruler.
+    "resource_layer": {
+        "means": {"credit": 6.0, "energy": 10.0},
+        "groups": [["credit", "energy"]],
+        "rates": {"credit->energy": {"rate": 2.0, "duration_mks": 1000.0}},
+        "resources": [{"id": "credit", "unit": "credit", "scale": 1.0},
+                      {"id": "energy", "unit": "joule", "scale": 1.0}],
+        "mandate": {"external_limit_credit": 100.0, "scope": "household"},
+    },
 }
+
+# The v0.6 reference digest: every port must reproduce this value byte-for-byte
+# on this fixture (§3.4.3, §7).
+REFERENCE_DIGEST_V06 = "bed37c25fd9cb757e9ea4a861c01cd4660fd896a83cd39b7c73b8e0be7489ad4"
 
 orch = DOFOrchestrator(context_switch_cost=0.05)
 state = orch.mapper.poll_environment(obs_fast)
@@ -124,7 +156,9 @@ check("digest is 64 hex chars", len(digest_a) == 64 and all(c in "0123456789abcd
 
 print("=== 7. §5: the viability gate, and both modes ===")
 slow = json.loads(json.dumps(obs_fast))
-for ent in slow.values():
+for key, ent in slow.items():
+    if key == "resource_layer":
+        continue
     ent["time_to_collapse_mks"] = 500.0        # τ = 500 μs < the 1000 μs fallback option
 sel_slow, rep_slow = orch.step_with_report(slow)
 check("τ < option duration → option removed, nothing selected",
@@ -133,7 +167,9 @@ check("removal is visible in the audit", rep_slow.mode == "FAST_PASS")
 check("fixture 1 runs in FAST_PASS", report.mode == "FAST_PASS", f"τ={state.global_time_to_collapse_mks}")
 
 obs_deep = json.loads(json.dumps(obs_fast))
-for ent in obs_deep.values():
+for key, ent in obs_deep.items():
+    if key == "resource_layer":
+        continue
     ent["time_to_collapse_mks"] = 100000000.0   # τ = 100 s ≥ threshold
 _sel_deep, rep_deep = orch.step_with_report(obs_deep)
 check("fixture 2 runs in DEEP_DIVERSIFICATION", rep_deep.mode == "DEEP_DIVERSIFICATION",
@@ -209,6 +245,126 @@ measuring = [ActionOption(option_id="measure_unmapped", description="resolve the
                           is_reversible=True, estimated_duration_mks=1000.0)]
 check("completeness: a candidate that resolves the unknown clears the flag",
       core._is_incomplete(state, measuring) is False)
+
+print("=== 11. §4.6 (v0.6): the blocks are derived, not authored ===")
+orch_v6 = DOFOrchestrator(context_switch_cost=0.05)
+state_v6 = orch_v6.mapper.poll_environment(obs_fast)
+decl_v6 = orch_v6.mapper.last_declaration
+groups_v6, rates_v6 = decl_v6.groups, decl_v6.rates
+drone = state_v6.entities["drone"]
+check("derived: (c_g, C_g) = (4, 16) from requirements + means in one group",
+      drone.measurement.blocks == [(4.0, 16.0)], f"blocks={drone.measurement.blocks}")
+check("derived: the derivation names the procedure and its inputs",
+      drone.measurement.derivation is not None
+      and drone.measurement.derivation["procedure"] == "derive_blocks"
+      and drone.measurement.derivation["requirements"] == {"energy": 4.0}
+      and drone.measurement.derivation["groups"] == [["credit", "energy"]])
+check("derived: ψ_opt equals psi_opt on the derived blocks",
+      abs(drone.measurement.psi["options"] - psi_opt(drone.measurement.blocks)) < 1e-15)
+check("derived: a resource in no declared group forms a singleton block",
+      derive_blocks({"fuel": 2.0}, {"fuel": 4.0}, [["credit", "energy"]]) == [(0.0, 0.0), (2.0, 4.0)]
+      and psi_opt(derive_blocks({"fuel": 2.0}, {"fuel": 4.0}, [["credit", "energy"]])) == psi_opt([(2.0, 4.0)]),
+      f"{derive_blocks({'fuel': 2.0}, {'fuel': 4.0}, [['credit', 'energy']])}")
+check("derived: the declaration names the derivation procedure",
+      decl_v6.procedures["options_blocks"] == "perception-v1:derive_blocks")
+check("ruler: units, groups, rates and mandate are in the hashed content",
+      [r["id"] for r in decl_v6.resources] == ["credit", "energy"]
+      and decl_v6.groups == [["credit", "energy"]]
+      and decl_v6.rates["credit->energy"]["rate"] == 2.0
+      and decl_v6.mandate["external_limit_credit"] == 100.0)
+units_other = [{"id": "credit", "unit": "credit", "scale": 1.0},
+               {"id": "energy", "unit": "kilojoule", "scale": 1000.0}]
+obs_map = {eid: LensObservation(**(obs_fast[eid].get("lenses") or {}))
+           for eid in obs_fast if eid != "resource_layer"}
+decl_other = build_declaration("perception-v1", obs_map, 4000000.0, None,
+                               resources=units_other, groups=decl_v6.groups,
+                               rates=decl_v6.rates, mandate=decl_v6.mandate)
+check("ruler: the same resource at another scale is a different digest",
+      decl_other.digest() != decl_v6.digest())
+check("ruler: time is not a resource (τ is never converted)",
+      "tau" not in [r["id"] for r in decl_v6.resources]
+      and all("tau" not in key for key in decl_v6.rates))
+check("reference digest v0.6 is reproduced", state_v6.psi.digest == REFERENCE_DIGEST_V06,
+      state_v6.psi.digest[:16] + "…")
+
+print("=== 12. §4.8 (v0.6): direct payment, verified conversion, insolvency ===")
+
+
+def draw(option_id, per_entity, duration=1000.0):
+    """A candidate that asks the agent for a declared draw and names the unknown."""
+    return ActionOption(option_id=option_id, description=option_id,
+                        projected_dof_delta={"child": 0.1, "unmapped": 0.0},
+                        is_reversible=True, estimated_duration_mks=duration,
+                        projected_resource_delta=per_entity)
+
+
+direct = draw("direct", {"child": {"energy": -2.0}})
+funded = draw("funded", {"child": {"energy": -12.0}})
+no_time = draw("no_time_for_trade", {"child": {"energy": -12.0}}, duration=4000000.0)
+undeclared = draw("undeclared", {"child": {"fuel": -1.0}})
+offset = draw("offset", {"child": {"energy": -3.0}, "adult": {"energy": 1.0}})
+
+plan_direct = orch_v6.core.plan_funding(state_v6, direct, groups_v6, rates_v6)
+check("step 1: means cover the draw ⇒ payable, nothing converted",
+      plan_direct["covered"] is True and plan_direct["spend"] == {"energy": 2.0}
+      and plan_direct["conversions"] == [], f"spend={plan_direct['spend']}")
+plan_funded = orch_v6.core.plan_funding(state_v6, funded, groups_v6, rates_v6)
+check("step 2: the deficit is bought at the observed rate",
+      plan_funded["covered"] is True
+      and plan_funded["conversions"][0]["from"] == "credit"
+      and abs(plan_funded["conversions"][0]["amount_from"] - 1.0) < 1e-12
+      and abs(plan_funded["conversions"][0]["amount_to"] - 2.0) < 1e-12
+      and plan_funded["conversions"][0]["rate"] == 2.0,
+      f"conversions={plan_funded['conversions']}")
+check("step 2: only the deficit is traded (cash in hand is spent first)",
+      plan_funded["spend"] == {"credit": 1.0, "energy": 10.0},
+      f"spend={plan_funded['spend']}")
+check("step 2: the exchange's own time is charged to τ",
+      plan_funded["total_duration_mks"] == 2000.0, f"{plan_funded['total_duration_mks']}")
+check("step 3: an exchange that does not fit in τ leaves the deficit uncovered ⇒ insolvency",
+      orch_v6.core.plan_funding(state_v6, no_time, groups_v6, rates_v6)["covered"] is False)
+check("step 3: a resource whose balance is not declared cannot be bought ⇒ insolvency",
+      orch_v6.core.plan_funding(state_v6, undeclared, groups_v6, rates_v6)["uncovered"] == {"fuel": 1.0})
+check("production offsets consumption (net draw decides)",
+      orch_v6.core.requirement(offset) == {"energy": 2.0}, f"{orch_v6.core.requirement(offset)}")
+broke = json.loads(json.dumps(obs_fast))
+broke["resource_layer"]["means"] = {"credit": 0.4, "energy": 0.0}
+state_broke = orch_v6.mapper.poll_environment(broke)
+check("step 3: a price the agent cannot pay is not a cheaper price ⇒ insolvency",
+      orch_v6.core.plan_funding(state_broke, funded,
+                                orch_v6.mapper.last_declaration.groups,
+                                orch_v6.mapper.last_declaration.rates)["covered"] is False)
+admissible, removed_resource = orch_v6.core.apply_resource_gate(
+    state_v6, [direct, funded, undeclared, offset], groups_v6, rates_v6)
+check("gate: the unpayable option is removed with gate = insolvency",
+      [o.option_id for o in admissible] == ["direct", "funded", "offset"]
+      and removed_resource == [{"option_id": "undeclared", "gate": "insolvency"}],
+      f"removed={removed_resource}")
+check("gates: §5 → §4.5 → §4.8 compose in order, each recording its own removals",
+      [o.option_id for o in orch_v6._gates(state_v6, [direct, undeclared])[0]] == ["direct"]
+      and orch_v6._gates(state_v6, [direct, undeclared])[1]
+      == [{"option_id": "undeclared", "gate": "insolvency"}])
+
+print("=== 13. §6.2/§6.3 (v0.6): the spend is auditable ===")
+sel_v6, rep_v6 = orch_v6.step_with_report(obs_fast)
+check("report: resources_before is the agent's means at the start of the cycle",
+      rep_v6.resources_before == {"credit": 6.0, "energy": 10.0},
+      f"{rep_v6.resources_before}")
+check("report: the deterministic fallback buys nothing, so the stock is unchanged",
+      rep_v6.resources_after == rep_v6.resources_before
+      and sel_v6 is not None and sel_v6.projected_resource_delta.get("child", {}).get("energy") == 0.0)
+rep_funded = orch_v6.core.report(state_v6, [funded], funded, "FAST_PASS",
+                                 declaration=decl_v6, groups=groups_v6, rates=rates_v6)
+check("report: buying a deficit debits the resource that actually paid",
+      rep_funded.resources_after == {"credit": 5.0, "energy": 0.0},
+      f"after={rep_funded.resources_after}")
+check("report: the per-option row carries the draw and the conversions applied",
+      rep_funded.options[0]["resource_consumption"] == {"child": {"energy": -12.0}}
+      and len(rep_funded.options[0]["conversion_applied"]) == 1)
+rep_undeclared = orch_v6.core.report(state_v6, [undeclared], None, "FAST_PASS",
+                                     declaration=decl_v6, groups=groups_v6, rates=rates_v6)
+check("report: an uncovered deficit is written down per option",
+      rep_undeclared.options[0]["resources_uncovered"] == {"fuel": 1.0})
 
 print()
 print("REPORT (fixture 1):")

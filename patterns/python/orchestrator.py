@@ -17,6 +17,19 @@ class DOFOrchestrator:
     The viability gate of §5 lives here: an option that cannot complete before
     collapse is *removed* from the candidate set — not penalised — and every
     removal is recorded, because a removal is a decision (§6.2).
+
+    Three gates run in a fixed order, each recording its own removals:
+
+      1. viability (§5)      — cannot finish inside τ;
+      2. collapse (§4.5)     — destroys a counted entity while a charge-free
+                               alternative exists;
+      3. insolvency (§4.8)   — the resources it draws are not available even
+                               after full verified conversion.
+
+    Order matters and is normative: the cheap structural filters run before the
+    resource gate, so an option that is both destructive and unaffordable is
+    reported as `collapse` — the reason a reader needs first is the one about
+    the world, not the one about the wallet.
     """
 
     FAST_PASS_THRESHOLD = 5000000.0  # microseconds (DOF-SPEC §5)
@@ -46,12 +59,23 @@ class DOFOrchestrator:
             return self.generator.safe_fallback(state, n_options=1)
         return self.generator.synthesize(state, n_options=5)
 
+    def _gates(self, state: SystemStateMatrix, options: List[ActionOption]
+               ) -> Tuple[List[ActionOption], List[Dict[str, str]]]:
+        """§5 → §4.5 → §4.8, in that order, with every removal recorded."""
+        tau = state.global_time_to_collapse_mks
+        viable, removed_viability = self._apply_viability_gate(options, tau)
+        admissible, removed_structural = self.core.apply_structural_gate(state, viable)
+        declaration = self.mapper.last_declaration
+        affordable, removed_resource = self.core.apply_resource_gate(
+            state, admissible,
+            groups=declaration.groups if declaration else None,
+            rates=declaration.rates if declaration else None)
+        return affordable, removed_viability + removed_structural + removed_resource
+
     def step(self, raw_observations: dict) -> Optional[ActionOption]:
         """Run one decision cycle and return the verified safe vector."""
         state: SystemStateMatrix = self.mapper.poll_environment(raw_observations)
-        tau = state.global_time_to_collapse_mks
-        options, _removed = self._apply_viability_gate(self._generate(state, tau), tau)
-        options, _removed_structural = self.core.apply_structural_gate(state, options)
+        options, _removed = self._gates(state, self._generate(state, state.global_time_to_collapse_mks))
         return self.core.evaluate_and_select(state, options)
 
     def step_with_report(self, raw_observations: dict) -> Tuple[Optional[ActionOption], DofReport]:
@@ -60,10 +84,12 @@ class DOFOrchestrator:
         tau = state.global_time_to_collapse_mks
         mode = "FAST_PASS" if tau < self.FAST_PASS_THRESHOLD else "DEEP_DIVERSIFICATION"
 
-        options, removed = self._apply_viability_gate(self._generate(state, tau), tau)
-        options, removed_structural = self.core.apply_structural_gate(state, options)
+        options, removed = self._gates(state, self._generate(state, tau))
         selected = self.core.evaluate_and_select(state, options)
+        declaration = self.mapper.last_declaration
         report = self.core.report(state, options, selected, mode,
-                                  declaration=self.mapper.last_declaration,
-                                  removed_options=removed + removed_structural)
+                                  declaration=declaration,
+                                  removed_options=removed,
+                                  groups=declaration.groups if declaration else None,
+                                  rates=declaration.rates if declaration else None)
         return selected, report

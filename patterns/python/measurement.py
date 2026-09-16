@@ -1,4 +1,4 @@
-"""Measurement layer of the Python port (DOF-SPEC §3.4, §4.6, §4.7 — v0.4).
+"""Measurement layer of the Python port (DOF-SPEC §3.4, §4.6, §4.7, §4.8 — v0.6).
 
 This module is the **Perception side** of the port: it turns raw lens inputs
 into `current_dof`, produces the frozen measurement declaration and its digest,
@@ -21,6 +21,14 @@ any freedom to choose a convention. A zero lens is not a verdict: it makes
 Unmeasured lenses are not zero and not ideal (§4.7): they enter the product as
 the declared ignorance factor `u(t)`, the entity's `dof_known` becomes false,
 and §4.2 keeps it in the calculation set.
+
+Resource layer (v0.6). The block-level `(c_g, C_g)` the Options lens consumes
+are **derived, not authored** (§4.6): they are computed by the named procedure
+`derive_blocks` from the entity's raw per-resource requirements, the acting
+agent's means and the derived groups. The ruler carries the resource identities
+with their unit name and scale, the groups, the observed rates and the declared
+mandate (§3.4.1, §4.8), so a declaration is comparable only if it declares the
+same resource units.
 """
 
 from __future__ import annotations
@@ -39,6 +47,12 @@ U_RHO = 0.9                        # share of the collapse penalty as a floor
 U_MIN = EPSILON ** (1.0 - U_RHO)   # ≈ 0.2512
 U_MAX = 0.5                        # an unmeasured term is never an ideal
 LENS_ORDER: Tuple[str, ...] = ("variety", "options", "constraint")
+
+# §4.6 (v0.6): the Options blocks come from a named derivation procedure, which
+# is part of the frozen ruler (`procedures["options_blocks"]`).
+DERIVE_BLOCKS_PROCEDURE = "derive_blocks"
+# §3.3: every option that names an entity MUST declare its energy draw.
+MANDATORY_RESOURCE = "energy"
 
 
 def _clamp01(x: float) -> float:
@@ -60,7 +74,7 @@ def psi_con(F: float, F_env: float) -> float:
 
 
 def psi_opt(blocks: Sequence[Tuple[float, float]]) -> float:
-    """Options lens (§4.6, §8.8 of the draft).
+    """Options lens (§4.6).
 
     `blocks` is the requirement/budget pair `(c_g, C_g)` of every resource block.
     An empty repertoire means no reachable transition at all ⇒ 0. A block with
@@ -79,26 +93,86 @@ def psi_opt(blocks: Sequence[Tuple[float, float]]) -> float:
     return _clamp01(value)
 
 
+def canonical_groups(groups: Optional[Sequence[Sequence[str]]],
+                     requirements: Optional[Dict[str, float]] = None,
+                     means: Optional[Dict[str, float]] = None) -> List[List[str]]:
+    """§4.8: the exchange-group partition is analysis-side and canonical.
+
+    Declared groups are normalized (members sorted, group list sorted); every
+    resource that appears in the raw inputs but in no group forms a **singleton
+    group** of its own, so a requirement can never be silently dropped from the
+    derivation. Keeping the normalization here — and not in each caller — is
+    what makes two implementations derive the same blocks from the same inputs.
+    """
+    named: set = set()
+    normalized: List[List[str]] = []
+    for group in (groups or []):
+        members = sorted({str(r) for r in group})
+        if not members:
+            continue
+        normalized.append(members)
+        named.update(members)
+    extra = sorted((set(requirements or {}) | set(means or {})) - named)
+    normalized.extend([[r] for r in extra])
+    return sorted(normalized)
+
+
+def derive_blocks(requirements: Dict[str, float], means: Dict[str, float],
+                  groups: Optional[Sequence[Sequence[str]]] = None
+                  ) -> List[Tuple[float, float]]:
+    """§4.6 (v0.6): the derived `(c_g, C_g)` pair of every resource block.
+
+    Named procedure. For each derived group `g`:
+
+        c_g = Σ_{r ∈ g} requirement_r        (what the transition draws)
+        C_g = Σ_{r ∈ g} means_r              (what the agent can commit)
+
+    Resources inside a group are mutually exchangeable, so they share one block:
+    a deficit in one member is coverable from another member's means (§4.8),
+    which is exactly why the requirement and the budget are summed over the same
+    set. Zero is a legal value on both sides; `psi_opt` then applies the
+    `c_g > 0 ∧ C_g = 0` gate. The derivation is total by construction — every
+    resource of the inputs lands in exactly one group (`canonical_groups`).
+    """
+    blocks: List[Tuple[float, float]] = []
+    for group in canonical_groups(groups, requirements, means):
+        c_g = sum(max(0.0, float(requirements.get(r, 0.0))) for r in group)
+        C_g = sum(max(0.0, float(means.get(r, 0.0))) for r in group)
+        blocks.append((c_g, C_g))
+    return blocks
+
+
 class LensObservation(BaseModel):
     """Raw lens inputs of one entity, as produced by named Perception procedures.
 
     A lens left as `None` is **unmeasured**: it is not zero and not ideal, and
     §4.7 applies `u(t)` to it.
+
+    The Options lens takes exactly one of two inputs. `options` are the blocks
+    themselves (admissible only when they equal what `derive_blocks` computes);
+    `requirements` are the raw per-resource requirements, from which the blocks
+    are derived against the agent's means and the groups. Raw requirements are
+    the honest input of a v0.6 ruler: they cannot be tuned to the agent's own
+    stock.
     """
 
     variety: Optional[Dict[str, float]] = None        # {"V": float, "V_env": float}
     options: Optional[List[Tuple[float, float]]] = None   # [(c_g, C_g), ...]
     constraint: Optional[Dict[str, float]] = None     # {"F": float, "F_env": float}
+    requirements: Optional[Dict[str, float]] = None   # {"energy": 4.0, ...} (§4.6)
 
-    def psi(self, lens: str) -> Optional[float]:
+    def psi(self, lens: str, means: Optional[Dict[str, float]] = None,
+            groups: Optional[Sequence[Sequence[str]]] = None) -> Optional[float]:
         if lens == "variety":
             if self.variety is None:
                 return None
             return psi_var(self.variety.get("V", 0.0), self.variety.get("V_env", 0.0))
         if lens == "options":
-            if self.options is None:
-                return None
-            return psi_opt(self.options)
+            if self.options is not None:
+                return psi_opt(self.options)
+            if self.requirements is not None:
+                return psi_opt(derive_blocks(self.requirements, means or {}, groups))
+            return None
         if lens == "constraint":
             if self.constraint is None:
                 return None
@@ -150,9 +224,14 @@ class EntityMeasurement(BaseModel):
     terms_sum: float                         # Σ of the terms (diagnostics)
     floored: bool                            # the ε-floor was applied at entity level
     binding_lens: Optional[str]              # lowest measured lens; ties → LENS_ORDER
+    blocks: List[Tuple[float, float]] = []   # §4.6: the derived (c_g, C_g) actually used
+    derivation: Optional[Dict[str, object]] = None  # the named procedure and its inputs
 
 
-def measure_entity(entity_id: str, obs: LensObservation, u_value: float) -> EntityMeasurement:
+def measure_entity(entity_id: str, obs: LensObservation, u_value: float,
+                   means: Optional[Dict[str, float]] = None,
+                   groups: Optional[Sequence[Sequence[str]]] = None
+                   ) -> EntityMeasurement:
     """Apply §4.6–§4.7 to one entity."""
     psi: Dict[str, Optional[float]] = {}
     terms: List[Dict[str, object]] = []
@@ -161,7 +240,7 @@ def measure_entity(entity_id: str, obs: LensObservation, u_value: float) -> Enti
     terms_sum = 0.0
 
     for lens in LENS_ORDER:
-        value = obs.psi(lens)
+        value = obs.psi(lens, means, groups)
         psi[lens] = value
         if value is None:
             known_all = False
@@ -182,6 +261,19 @@ def measure_entity(entity_id: str, obs: LensObservation, u_value: float) -> Enti
     measured = [(lens, psi[lens]) for lens in LENS_ORDER if psi[lens] is not None]
     binding = min(measured, key=lambda pair: (pair[1], LENS_ORDER.index(pair[0])))[0] if measured else None
 
+    # §4.6: the derived blocks and the derivation itself are reported, so a
+    # reader can recompute `(c_g, C_g)` from the raw requirements.
+    blocks: List[Tuple[float, float]] = []
+    derivation: Optional[Dict[str, object]] = None
+    if obs.requirements is not None:
+        blocks = derive_blocks(obs.requirements, means or {}, groups)
+        derivation = {
+            "procedure": DERIVE_BLOCKS_PROCEDURE,
+            "requirements": dict(obs.requirements),
+            "means": dict(means or {}),
+            "groups": canonical_groups(groups, obs.requirements, means),
+        }
+
     return EntityMeasurement(
         entity_id=entity_id,
         psi=psi,
@@ -192,6 +284,8 @@ def measure_entity(entity_id: str, obs: LensObservation, u_value: float) -> Enti
         terms_sum=terms_sum,
         floored=product < EPSILON,
         binding_lens=binding,
+        blocks=blocks,
+        derivation=derivation,
     )
 
 
@@ -208,6 +302,15 @@ class MeasurementDeclaration(BaseModel):
     u0_prior_q: Optional[float] = None                    # declared prior quantile
     entities: Dict[str, Dict[str, object]] = {}           # entity_id -> raw lens inputs
     freeze: Dict[str, object] = {}                        # τ, budgets, rates, blocks
+    # §3.4.1 hashed content (v0.6) — the ruler now includes the resource layer:
+    # unit names and scales, the derived groups, the observed rates and the
+    # declared mandate. Two implementations that declare the same resource name
+    # with different scales are measurably different rulers and produce
+    # different digests (§4.8).
+    resources: List[Dict[str, object]] = []               # [{"id","unit","scale"}] sorted
+    groups: List[List[str]] = []                          # derived exchange groups
+    rates: Dict[str, Dict[str, float]] = {}               # "from->to" -> {rate, duration_mks}
+    mandate: Dict[str, object] = {}                       # declared mandate + limits
 
     def u0(self) -> float:
         return u0_from_prior(self.u0_prior_q)
@@ -239,12 +342,28 @@ class MeasurementDeclaration(BaseModel):
 def build_declaration(psi_id: str, lens_observations: Dict[str, LensObservation],
                       tau_mks: float, u0_prior_q: Optional[float] = None,
                       procedures: Optional[Dict[str, str]] = None,
-                      freeze: Optional[Dict[str, object]] = None) -> MeasurementDeclaration:
-    """Assemble the frozen declaration for one state (§3.4.1)."""
+                      freeze: Optional[Dict[str, object]] = None,
+                      resources: Optional[Sequence[Dict[str, object]]] = None,
+                      groups: Optional[Sequence[Sequence[str]]] = None,
+                      rates: Optional[Dict[str, Dict[str, float]]] = None,
+                      mandate: Optional[Dict[str, object]] = None) -> MeasurementDeclaration:
+    """Assemble the frozen declaration for one state (§3.4.1).
+
+    The resource layer is normalized before hashing: units sorted by resource
+    id, groups canonicalized, so two implementations that declare the same layer
+    in a different order produce the same digest.
+    """
+    units = sorted((dict(r) for r in (resources or [])), key=lambda r: str(r.get("id", "")))
+    procs = dict(procedures) if procedures else {lens: f"{psi_id}:{lens}" for lens in LENS_ORDER}
+    procs.setdefault("options_blocks", f"{psi_id}:{DERIVE_BLOCKS_PROCEDURE}")
     return MeasurementDeclaration(
         psi_id=psi_id,
-        procedures=procedures or {lens: f"{psi_id}:{lens}" for lens in LENS_ORDER},
+        procedures=procs,
         u0_prior_q=u0_prior_q,
         entities={eid: obs.model_dump() for eid, obs in lens_observations.items()},
         freeze={"tau_mks": tau_mks, **(freeze or {})},
+        resources=units,
+        groups=canonical_groups(groups),
+        rates={str(k): dict(v) for k, v in (rates or {}).items()},
+        mandate=dict(mandate or {}),
     )

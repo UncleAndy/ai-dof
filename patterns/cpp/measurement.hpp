@@ -21,6 +21,7 @@
 #include <iomanip>
 #include <map>
 #include <optional>
+#include <set>
 #include <sstream>
 #include <string>
 #include <utility>
@@ -31,6 +32,12 @@ namespace dof {
 constexpr double kEpsilon = 1e-6;
 constexpr double kUAlpha = 0.25;
 constexpr double kUMax = 0.5;
+
+// §4.6 (v0.6): the Options blocks are produced by a named derivation procedure,
+// which is part of the frozen ruler (`procedures["options_blocks"]`), and every
+// option that names an entity must declare its energy draw (§3.3).
+inline const std::string kDeriveBlocksProcedure = "derive_blocks";
+inline const std::string kMandatoryResource = "energy";
 
 // ε^(1−ρ) with ρ = 0.9 (§4.7).
 inline double u_min() { return std::pow(kEpsilon, 1.0 - 0.9); }
@@ -69,20 +76,90 @@ inline double psi_opt(const std::vector<std::pair<double, double>>& blocks) {
     return clamp01(value);
 }
 
+// §4.8 (v0.6): the exchange-group partition is analysis-side and canonical.
+// Declared groups are normalized (members sorted, group list sorted); every
+// resource that appears in the raw inputs but in no group forms a **singleton
+// group** of its own, so a requirement can never be silently dropped from the
+// derivation.
+inline std::vector<std::vector<std::string>> canonical_groups(
+    const std::vector<std::vector<std::string>>& groups,
+    const std::map<std::string, double>& requirements = {},
+    const std::map<std::string, double>& means = {})
+{
+    std::set<std::string> named;
+    std::vector<std::vector<std::string>> normalized;
+    for (const auto& group : groups) {
+        std::set<std::string> members(group.begin(), group.end());
+        if (members.empty()) continue;
+        std::vector<std::string> row(members.begin(), members.end());
+        for (const auto& r : row) named.insert(r);
+        normalized.push_back(row);
+    }
+    std::set<std::string> extra;
+    for (const auto& kv : requirements) {
+        if (named.find(kv.first) == named.end()) extra.insert(kv.first);
+    }
+    for (const auto& kv : means) {
+        if (named.find(kv.first) == named.end()) extra.insert(kv.first);
+    }
+    for (const auto& r : extra) normalized.push_back({r});
+    std::sort(normalized.begin(), normalized.end());
+    return normalized;
+}
+
+// §4.6 (v0.6): the derived (c_g, C_g) pair of every resource block. Named
+// procedure: resources inside a group are mutually exchangeable, so they share
+// one block — c_g is what the transition draws from the group, C_g is what the
+// agent can commit to it. Zero is legal on both sides; psi_opt then applies the
+// c_g > 0 ∧ C_g = 0 gate. The derivation is total: every resource of the inputs
+// lands in exactly one group.
+inline std::vector<std::pair<double, double>> derive_blocks(
+    const std::map<std::string, double>& requirements,
+    const std::map<std::string, double>& means,
+    const std::vector<std::vector<std::string>>& groups)
+{
+    std::vector<std::pair<double, double>> blocks;
+    for (const auto& group : canonical_groups(groups, requirements, means)) {
+        double c_g = 0.0;
+        double C_g = 0.0;
+        for (const auto& r : group) {
+            auto rit = requirements.find(r);
+            if (rit != requirements.end()) c_g += std::max(0.0, rit->second);
+            auto mit = means.find(r);
+            if (mit != means.end()) C_g += std::max(0.0, mit->second);
+        }
+        blocks.emplace_back(c_g, C_g);
+    }
+    return blocks;
+}
+
 // Raw lens inputs of one entity. `std::nullopt` = the lens was never measured.
+// The Options lens takes exactly one of two inputs: `options` (the blocks
+// themselves) or `requirements` (raw per-resource demands, from which the
+// blocks are derived against the agent's means and the groups).
 struct LensObservation {
     std::optional<std::pair<double, double>> variety;     // (V, V_env)
     std::optional<std::vector<std::pair<double, double>>> options;  // [(c_g, C_g)]
     std::optional<std::pair<double, double>> constraint;  // (F, F_env)
+    std::optional<std::map<std::string, double>> requirements;  // {"energy": 4.0} (§4.6)
 
-    std::optional<double> psi(const std::string& lens) const {
+    std::optional<double> psi(const std::string& lens,
+                              const std::map<std::string, double>* means = nullptr,
+                              const std::vector<std::vector<std::string>>* groups = nullptr) const {
         if (lens == "variety") {
             if (!variety) return std::nullopt;
             return psi_var(variety->first, variety->second);
         }
         if (lens == "options") {
-            if (!options) return std::nullopt;
-            return psi_opt(*options);
+            if (options) return psi_opt(*options);
+            if (requirements) {
+                const std::map<std::string, double> no_means;
+                const std::vector<std::vector<std::string>> no_groups;
+                return psi_opt(derive_blocks(*requirements,
+                                             means ? *means : no_means,
+                                             groups ? *groups : no_groups));
+            }
+            return std::nullopt;
         }
         if (lens == "constraint") {
             if (!constraint) return std::nullopt;
@@ -100,6 +177,15 @@ struct LensTerm {
     double contribution = 0.0;
 };
 
+// The named derivation behind an entity's blocks (§4.6), kept so the audit can
+// show the raw inputs a reader needs to recompute (c_g, C_g).
+struct DerivationInfo {
+    std::string procedure;
+    std::map<std::string, double> requirements;
+    std::map<std::string, double> means;
+    std::vector<std::vector<std::string>> groups;
+};
+
 // Result of measuring one entity.
 struct EntityMeasurement {
     std::string entity_id;
@@ -111,19 +197,24 @@ struct EntityMeasurement {
     double terms_sum = 0.0;
     bool floored = false;
     std::optional<std::string> binding_lens;
+    // §4.6 (v0.6): the derived blocks actually used, and the derivation itself.
+    std::vector<std::pair<double, double>> blocks;
+    std::optional<DerivationInfo> derivation;
 };
 
 // Apply §4.6–§4.7 to one entity.
 inline EntityMeasurement measure_entity(const std::string& entity_id,
                                         const LensObservation& obs,
-                                        double u) {
+                                        double u,
+                                        const std::map<std::string, double>* means = nullptr,
+                                        const std::vector<std::vector<std::string>>* groups = nullptr) {
     EntityMeasurement m;
     m.entity_id = entity_id;
     double product = 1.0;
     double binding_value = std::numeric_limits<double>::infinity();
 
     for (const auto& lens : lens_order()) {
-        std::optional<double> value = obs.psi(lens);
+        std::optional<double> value = obs.psi(lens, means, groups);
         m.psi_by_lens[lens] = value;
         double contribution = 0.0;
         if (!value) {
@@ -140,6 +231,20 @@ inline EntityMeasurement measure_entity(const std::string& entity_id,
         }
         m.terms_sum += contribution;
         m.terms.push_back(LensTerm{lens, value, value.has_value(), contribution});
+    }
+
+    if (obs.requirements) {
+        const std::map<std::string, double> no_means;
+        const std::vector<std::vector<std::string>> no_groups;
+        const std::map<std::string, double>& effective_means = means ? *means : no_means;
+        const std::vector<std::vector<std::string>>& effective_groups = groups ? *groups : no_groups;
+        m.blocks = derive_blocks(*obs.requirements, effective_means, effective_groups);
+        DerivationInfo info;
+        info.procedure = kDeriveBlocksProcedure;
+        info.requirements = *obs.requirements;
+        info.means = effective_means;
+        info.groups = canonical_groups(effective_groups, *obs.requirements, effective_means);
+        m.derivation = info;
     }
 
     m.current_dof = clamp01(product);
@@ -229,6 +334,34 @@ inline std::string sha256_hex(const std::string& data) {
     return os.str();
 }
 
+// §3.4.1 (v0.6): the resource layer of the ruler — identities with unit name
+// and scale, the observed rates, and the declared mandate. Two implementations
+// that declare the same resource name with different scales are measurably
+// different rulers and will produce different digests (§4.8).
+struct ResourceUnit {
+    std::string id;
+    std::string unit;
+    double scale = 1.0;
+};
+
+// An observed exchange rate: `key` is "from->to" (one unit of `from` yields
+// `rate` units of `to`), plus the exchange's own duration, which the gate of
+// §4.8 charges to the same τ as the option itself.
+struct Rate {
+    double rate = 0.0;
+    double duration_mks = 0.0;
+};
+
+// Mandate entries are either numbers (rendered like every other number, as a
+// fixed six-decimal string) or free text.
+struct MandateValue {
+    bool is_string = false;
+    double number = 0.0;
+    std::string text;
+    static MandateValue num(double v) { MandateValue m; m.number = v; return m; }
+    static MandateValue str(const std::string& s) { MandateValue m; m.is_string = true; m.text = s; return m; }
+};
+
 // The frozen ruler (§3.4). `std::map` keeps entity keys sorted, which the
 // canonical form requires.
 struct MeasurementDeclaration {
@@ -236,6 +369,11 @@ struct MeasurementDeclaration {
     std::optional<double> u0_prior_q;
     std::map<std::string, LensObservation> entities;
     double tau_mks = 0.0;
+    // §3.4.1 hashed content (v0.6): the ruler now includes the resource layer.
+    std::vector<ResourceUnit> resources;                    // sorted by id when hashed
+    std::vector<std::vector<std::string>> groups;           // derived exchange groups
+    std::map<std::string, Rate> rates;                      // "from->to" -> {rate, duration_mks}
+    std::map<std::string, MandateValue> mandate;            // declared mandate + limits
 
     double u0() const { return u0_from_prior(u0_prior_q); }
 
@@ -245,6 +383,77 @@ struct MeasurementDeclaration {
         return os.str();
     }
     static std::string quote(const std::string& s) { return "\"" + s + "\""; }
+
+    // JSON for the resource layer. std::map keeps keys sorted; resources are
+    // sorted by id here, so the order they were declared in cannot matter.
+    std::string groups_json() const {
+        std::ostringstream os;
+        os << "[";
+        bool gfirst = true;
+        for (const auto& group : groups) {
+            if (!gfirst) os << ",";
+            gfirst = false;
+            os << "[";
+            bool mfirst = true;
+            for (const auto& member : group) {
+                if (!mfirst) os << ",";
+                mfirst = false;
+                os << quote(member);
+            }
+            os << "]";
+        }
+        os << "]";
+        return os.str();
+    }
+
+    std::string mandate_json() const {
+        std::ostringstream os;
+        os << "{";
+        bool first = true;
+        for (const auto& kv : mandate) {
+            if (!first) os << ",";
+            first = false;
+            os << quote(kv.first) << ":";
+            if (kv.second.is_string) {
+                os << quote(kv.second.text);
+            } else {
+                os << quote(f6(kv.second.number));
+            }
+        }
+        os << "}";
+        return os.str();
+    }
+
+    std::string rates_json() const {
+        std::ostringstream os;
+        os << "{";
+        bool first = true;
+        for (const auto& kv : rates) {
+            if (!first) os << ",";
+            first = false;
+            os << quote(kv.first) << ":{\"duration_mks\":" << quote(f6(kv.second.duration_mks))
+               << ",\"rate\":" << quote(f6(kv.second.rate)) << "}";
+        }
+        os << "}";
+        return os.str();
+    }
+
+    std::string resources_json() const {
+        std::vector<ResourceUnit> sorted = resources;
+        std::sort(sorted.begin(), sorted.end(),
+                  [](const ResourceUnit& a, const ResourceUnit& b) { return a.id < b.id; });
+        std::ostringstream os;
+        os << "[";
+        bool first = true;
+        for (const auto& r : sorted) {
+            if (!first) os << ",";
+            first = false;
+            os << "{\"id\":" << quote(r.id) << ",\"scale\":" << quote(f6(r.scale))
+               << ",\"unit\":" << quote(r.unit) << "}";
+        }
+        os << "]";
+        return os.str();
+    }
 
     // Canonical form (§3.4.3): UTF-8 JSON, keys sorted, no insignificant
     // whitespace, non-integer numbers as fixed six-decimal strings.
@@ -276,6 +485,19 @@ struct MeasurementDeclaration {
             } else {
                 os << "null";
             }
+            os << ",\"requirements\":";
+            if (obs.requirements) {
+                os << "{";
+                bool rfirst = true;
+                for (const auto& rv : *obs.requirements) {
+                    if (!rfirst) os << ",";
+                    rfirst = false;
+                    os << quote(rv.first) << ":" << quote(f6(rv.second));
+                }
+                os << "}";
+            } else {
+                os << "null";
+            }
             os << ",\"variety\":";
             if (obs.variety) {
                 os << "{\"V\":" << quote(f6(obs.variety->first))
@@ -286,11 +508,17 @@ struct MeasurementDeclaration {
             os << "}";
         }
         os << "},\"freeze\":{\"tau_mks\":" << quote(f6(tau_mks)) << "}"
-           << ",\"lens_order\":[\"variety\",\"options\",\"constraint\"],\"procedures\":{"
-           << "\"constraint\":" << quote(psi_id + ":constraint")
+           << ",\"groups\":" << groups_json()
+           << ",\"lens_order\":[\"variety\",\"options\",\"constraint\"]"
+           << ",\"mandate\":" << mandate_json()
+           << ",\"procedures\":{\"constraint\":" << quote(psi_id + ":constraint")
            << ",\"options\":" << quote(psi_id + ":options")
+           << ",\"options_blocks\":" << quote(psi_id + ":" + kDeriveBlocksProcedure)
            << ",\"variety\":" << quote(psi_id + ":variety") << "}"
-           << ",\"psi_id\":" << quote(psi_id) << ",\"u0_prior_q\":";
+           << ",\"psi_id\":" << quote(psi_id)
+           << ",\"rates\":" << rates_json()
+           << ",\"resources\":" << resources_json()
+           << ",\"u0_prior_q\":";
         if (u0_prior_q) {
             os << quote(f6(*u0_prior_q));
         } else {

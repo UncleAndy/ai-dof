@@ -3,6 +3,7 @@
 
 use std::collections::HashMap;
 use crate::dof_core::{ActionOption, EntityState, SystemStateMatrix};
+use crate::measurement::MANDATORY_RESOURCE;
 
 pub struct Generator;
 
@@ -46,14 +47,26 @@ impl Generator {
                     .unwrap();
                 delta.insert(target.entity_id.clone(), 0.2);
             }
-            opts.push(ActionOption::new(
-                format!("fallback_{}", i),
-                format!("Safe diversification path #{}", i),
-                delta,
-                true,
-                // Deployment: the duration comes from the Perception layer (DOF-SPEC §3.3).
-                1000.0,
-            ));
+            // §3.3 (v0.6): what the option draws from the agent. The deterministic
+            // fallback is a local step that buys nothing, so its draw is an
+            // explicit zero for every entity it names — written, not omitted.
+            let mut draws: HashMap<String, HashMap<String, f64>> = HashMap::new();
+            for eid in delta.keys() {
+                let mut per_entity: HashMap<String, f64> = HashMap::new();
+                per_entity.insert(MANDATORY_RESOURCE.to_string(), 0.0);
+                draws.insert(eid.clone(), per_entity);
+            }
+            opts.push(
+                ActionOption::new(
+                    format!("fallback_{}", i),
+                    format!("Safe diversification path #{}", i),
+                    delta,
+                    true,
+                    // Deployment: the duration comes from the Perception layer (DOF-SPEC §3.3).
+                    1000.0,
+                )
+                .with_draw(draws),
+            );
         }
         opts
     }

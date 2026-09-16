@@ -14,7 +14,7 @@
 namespace {
 
 const std::string kExpectedDigest =
-    "e6f58a7e9dc0ac5814f58b392c19d28a30be1be3baad1d83471382b5bdf5e7c5";
+    "bed37c25fd9cb757e9ea4a861c01cd4660fd896a83cd39b7c73b8e0be7489ad4";
 
 std::vector<std::string> g_failures;
 
@@ -75,6 +75,28 @@ std::unordered_map<std::string, RawObservation> fixture() {
     unmapped.constraint = std::make_pair(1.0, 1.0);
     m["unmapped"] = obs(0.4, false, 100000000.0, unmapped);
 
+    // v0.6: this entity declares what its transitions *require*, not the blocks
+    // themselves — the blocks are derived against the agent's means (§4.6).
+    dof::LensObservation drone;
+    drone.variety = std::make_pair(4.0, 2.0);
+    drone.requirements = std::map<std::string, double>{{"energy", 4.0}};
+    drone.constraint = std::make_pair(3.0, 1.0);
+    m["drone"] = obs(0.6, false, 100000000.0, drone);
+
+    // §3.2/§4.8 (v0.6): the acting agent, the derived groups, the observed rates,
+    // the declared units and the mandate. Part of the ruler: the declaration
+    // carries it, so a ruler with different units is a different ruler.
+    ResourceLayer layer;
+    layer.means = {{"credit", 6.0}, {"energy", 10.0}};
+    layer.groups = {{"credit", "energy"}};
+    layer.rates["credit->energy"] = dof::Rate{2.0, 1000.0};
+    layer.resources = {{"credit", "credit", 1.0}, {"energy", "joule", 1.0}};
+    layer.mandate["external_limit_credit"] = dof::MandateValue::num(100.0);
+    layer.mandate["scope"] = dof::MandateValue::str("household");
+    RawObservation layer_obs;
+    layer_obs.resource_layer = layer;
+    m[kResourceLayerKey] = layer_obs;
+
     return m;
 }
 
@@ -82,7 +104,10 @@ std::unordered_map<std::string, RawObservation> with_deadline(
     const std::unordered_map<std::string, RawObservation>& src, double ttc)
 {
     std::unordered_map<std::string, RawObservation> copy = src;
-    for (auto& kv : copy) kv.second.time_to_collapse_mks = ttc;
+    for (auto& kv : copy) {
+        if (kv.first == kResourceLayerKey) continue;
+        kv.second.time_to_collapse_mks = ttc;
+    }
     return copy;
 }
 
@@ -105,6 +130,7 @@ int main() {
         {"adult", {0.417864270382, -0.872598611192}},
         {"aggressor", {0.684883822565, -0.378506057199}},
         {"child", {0.020833333333, -3.871201010908}},
+        {"drone", {0.353553390593, -1.03972077084}},
         {"stone", {0.000000000000, -13.815510557964}},
         {"unmapped", {0.125000000000, -2.079441541680}},
     };
@@ -248,6 +274,115 @@ int main() {
           after / before < 0.01, "×" + num(after / before, 5));
     check("a sum would mask it", sum_after / sum_before > 0.6,
           "×" + num(sum_after / sum_before, 3));
+
+    std::cout << "=== 9. §4.6/§4.8 (v0.6): derived blocks, the ruler, the resource gate ===\n";
+    const EntityState& drone = state.entities.at("drone");
+    check("drone: the blocks are derived from requirements + means in one group",
+          drone.measurement->blocks.size() == 1 &&
+              drone.measurement->blocks[0].first == 4.0 &&
+              drone.measurement->blocks[0].second == 16.0,
+          "blocks=[(" + num(drone.measurement->blocks[0].first, 0) + "," +
+              num(drone.measurement->blocks[0].second, 0) + ")]");
+    check("drone: the derivation names the procedure and its raw inputs",
+          drone.measurement->derivation.has_value() &&
+              drone.measurement->derivation->procedure == "derive_blocks" &&
+              drone.measurement->derivation->requirements.at("energy") == 4.0 &&
+              drone.measurement->derivation->means.at("energy") == 10.0);
+    check("drone: ψ_opt equals psi_opt on the derived blocks",
+          std::fabs(drone.measurement->psi_by_lens.at("options").value_or(-1.0) -
+                    dof::psi_opt(drone.measurement->blocks)) < 1e-15);
+    auto singleton = dof::derive_blocks({{"fuel", 2.0}}, {{"fuel", 4.0}}, {{"credit", "energy"}});
+    check("derived: a resource in no declared group forms a singleton block",
+          singleton.size() == 2 && singleton[0].first == 0.0 && singleton[0].second == 0.0 &&
+              singleton[1].first == 2.0 && singleton[1].second == 4.0);
+    const std::string decl = report.declaration;
+    check("ruler: units, groups, rates, mandate and the derivation are hashed",
+          decl.find("\"groups\":[[\"credit\",\"energy\"]]") != std::string::npos &&
+              decl.find("\"credit->energy\":{\"duration_mks\":\"1000.000000\",\"rate\":\"2.000000\"}") != std::string::npos &&
+              decl.find("{\"id\":\"energy\",\"scale\":\"1.000000\",\"unit\":\"joule\"}") != std::string::npos &&
+              decl.find("\"external_limit_credit\":\"100.000000\"") != std::string::npos &&
+              decl.find("\"options_blocks\":\"perception-v1:derive_blocks\"") != std::string::npos &&
+              decl.find("\"requirements\":{\"energy\":\"4.000000\"}") != std::string::npos,
+          "declaration " + std::to_string(decl.size()) + " chars");
+    check("ruler: time is not a resource (τ is never converted)",
+          decl.find("\"id\":\"tau\"") == std::string::npos);
+    auto other = fixture();
+    for (auto& r : other[kResourceLayerKey].resource_layer->resources) {
+        if (r.id == "energy") { r.unit = "kilojoule"; r.scale = 1000.0; }
+    }
+    SystemStateMatrix state_other = orch.measure(other);
+    check("ruler: the same resource at another scale is a different digest",
+          state_other.psi && state.psi && state_other.psi->digest != state.psi->digest);
+
+    const std::vector<std::vector<std::string>> groups{{"credit", "energy"}};
+    const std::map<std::string, dof::Rate> rates{{"credit->energy", dof::Rate{2.0, 1000.0}}};
+    auto draw = [](const std::string& id, const std::string& res, double amount, double duration = 1000.0) {
+        ActionOption o;
+        o.option_id = id;
+        o.description = id;
+        o.projected_dof_delta = {{"child", 0.1}, {"unmapped", 0.0}};
+        o.is_reversible = true;
+        o.estimated_duration_mks = duration;
+        o.projected_resource_delta = {{"child", {{res, -amount}}}};
+        return o;
+    };
+    ActionOption direct = draw("direct", "energy", 2.0);
+    ActionOption funded = draw("funded", "energy", 12.0);
+    ActionOption no_time = draw("no_time_for_trade", "energy", 12.0, 4000000.0);
+    ActionOption undeclared = draw("undeclared", "fuel", 1.0);
+    ActionOption offset = draw("offset", "energy", 3.0);
+    offset.projected_resource_delta["adult"] = {{"energy", 1.0}};
+
+    FundingPlan plan_direct = core.plan_funding(state, direct, &groups, &rates);
+    check("step 1: means cover the draw ⇒ payable, nothing converted",
+          plan_direct.covered && plan_direct.spend.at("energy") == 2.0 &&
+              plan_direct.conversions.empty());
+    FundingPlan plan_funded = core.plan_funding(state, funded, &groups, &rates);
+    check("step 2: the deficit is bought at the observed rate",
+          plan_funded.covered && plan_funded.conversions.size() == 1 &&
+              plan_funded.conversions[0].from == "credit" &&
+              std::fabs(plan_funded.conversions[0].amount_from - 1.0) < 1e-12 &&
+              std::fabs(plan_funded.conversions[0].amount_to - 2.0) < 1e-12 &&
+              plan_funded.conversions[0].rate == 2.0);
+    check("step 2: only the deficit is traded (cash in hand is spent first)",
+          plan_funded.spend.at("credit") == 1.0 && plan_funded.spend.at("energy") == 10.0);
+    check("step 2: the exchange's own time is charged to τ",
+          plan_funded.total_duration_mks == 2000.0);
+    check("step 3: an exchange that does not fit in τ leaves the deficit uncovered",
+          !core.plan_funding(state, no_time, &groups, &rates).covered);
+    check("step 3: a resource whose balance is not declared cannot be bought",
+          core.plan_funding(state, undeclared, &groups, &rates).uncovered.at("fuel") == 1.0);
+    check("production offsets consumption (the net draw decides)",
+          core.requirement(offset).at("energy") == 2.0);
+    auto broke = fixture();
+    broke[kResourceLayerKey].resource_layer->means = {{"credit", 0.4}, {"energy", 0.0}};
+    SystemStateMatrix state_broke = orch.measure(broke);
+    check("step 3: a price the agent cannot pay is not a cheaper price",
+          !core.plan_funding(state_broke, funded, &groups, &rates).covered);
+    auto gated_res = core.apply_resource_gate(state, {direct, funded, undeclared, offset}, &groups, &rates);
+    check("gate: the unpayable option is removed with gate = insolvency",
+          gated_res.first.size() == 3 && gated_res.second.size() == 1 &&
+              gated_res.second[0].option_id == "undeclared" && gated_res.second[0].gate == "insolvency");
+
+    std::cout << "=== 10. §6.2/§6.3 (v0.6): the spend is auditable ===\n";
+    check("report: resources_before is the agent's means at the start of the cycle",
+          report.resources_before.size() == 2 && report.resources_before.at("credit") == 6.0 &&
+              report.resources_before.at("energy") == 10.0);
+    check("report: the deterministic fallback buys nothing, so the stock is unchanged",
+          report.resources_after == report.resources_before);
+    DofReport rep_funded = core.report(state, {funded}, funded, "FAST_PASS",
+                                       std::nullopt, {}, &groups, &rates);
+    check("report: buying a deficit debits the resource that actually paid",
+          rep_funded.resources_after.at("credit") == 5.0 &&
+              rep_funded.resources_after.at("energy") == 0.0);
+    check("report: the per-option row carries the draw and the conversions applied",
+          rep_funded.options.size() == 1 &&
+              rep_funded.options[0].conversion_applied.size() == 1 &&
+              rep_funded.options[0].resource_consumption.at("child").at("energy") == -12.0);
+    DofReport rep_undeclared = core.report(state, {undeclared}, std::nullopt, "FAST_PASS",
+                                           std::nullopt, {}, &groups, &rates);
+    check("report: an uncovered deficit is written down per option",
+          rep_undeclared.options[0].resources_uncovered.at("fuel") == 1.0);
 
     std::cout << "\nREPORT (fixture 1): mode=" << report.mode
               << " total_dof=" << num(report.total_system_dof)

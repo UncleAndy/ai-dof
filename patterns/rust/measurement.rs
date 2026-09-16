@@ -25,6 +25,12 @@ pub fn u_min() -> f64 {
 
 pub const LENS_ORDER: [&str; 3] = ["variety", "options", "constraint"];
 
+/// §4.6 (v0.6): the Options blocks come from a named derivation procedure, which
+/// is part of the frozen ruler (`procedures["options_blocks"]`), and every
+/// option that names an entity must declare its energy draw (§3.3).
+pub const DERIVE_BLOCKS_PROCEDURE: &str = "derive_blocks";
+pub const MANDATORY_RESOURCE: &str = "energy";
+
 fn clamp01(x: f64) -> f64 {
     x.max(0.0).min(1.0)
 }
@@ -65,19 +71,111 @@ pub fn psi_opt(blocks: &[(f64, f64)]) -> f64 {
     clamp01(value)
 }
 
-/// Raw lens inputs of one entity. `None` = the lens was never measured.
+/// §4.8 (v0.6): the exchange-group partition is analysis-side and canonical.
+/// Declared groups are normalized (members sorted, group list sorted); every
+/// resource that appears in the raw inputs but in no group forms a **singleton
+/// group** of its own, so a requirement can never be silently dropped from the
+/// derivation.
+pub fn canonical_groups(
+    groups: &[Vec<String>],
+    requirements: Option<&BTreeMap<String, f64>>,
+    means: Option<&BTreeMap<String, f64>>,
+) -> Vec<Vec<String>> {
+    let mut named: BTreeMap<String, ()> = BTreeMap::new();
+    let mut normalized: Vec<Vec<String>> = Vec::new();
+    for group in groups {
+        let mut members: Vec<String> = group.clone();
+        members.sort();
+        members.dedup();
+        if members.is_empty() {
+            continue;
+        }
+        for member in members.iter() {
+            named.insert(member.clone(), ());
+        }
+        normalized.push(members);
+    }
+    let mut extra: BTreeMap<String, ()> = BTreeMap::new();
+    for source in [requirements, means].iter() {
+        if let Some(map) = source {
+            for key in map.keys() {
+                if !named.contains_key(key) {
+                    extra.insert(key.clone(), ());
+                }
+            }
+        }
+    }
+    for key in extra.keys() {
+        normalized.push(vec![key.clone()]);
+    }
+    normalized.sort();
+    normalized
+}
+
+/// §4.6 (v0.6): the derived `(c_g, C_g)` pair of every resource block. Named
+/// procedure: resources inside a group are mutually exchangeable, so they share
+/// one block — `c_g` is what the transition draws from the group, `C_g` is what
+/// the agent can commit to it. Zero is legal on both sides; `psi_opt` then
+/// applies the `c_g > 0 ∧ C_g = 0` gate. The derivation is total: every resource
+/// of the inputs lands in exactly one group.
+pub fn derive_blocks(
+    requirements: &BTreeMap<String, f64>,
+    means: &BTreeMap<String, f64>,
+    groups: &[Vec<String>],
+) -> Vec<(f64, f64)> {
+    let mut blocks = Vec::new();
+    for group in canonical_groups(groups, Some(requirements), Some(means)) {
+        let mut c_g = 0.0;
+        let mut cap_g = 0.0;
+        for resource in group.iter() {
+            if let Some(v) = requirements.get(resource) {
+                c_g += v.max(0.0);
+            }
+            if let Some(v) = means.get(resource) {
+                cap_g += v.max(0.0);
+            }
+        }
+        blocks.push((c_g, cap_g));
+    }
+    blocks
+}
+
+/// Raw lens inputs of one entity. `None` = the lens was never measured. The
+/// Options lens takes exactly one of two inputs: `options` (the blocks
+/// themselves) or `requirements` (raw per-resource demands, from which the
+/// blocks are derived against the agent's means and the groups).
 #[derive(Clone, Debug, Default)]
 pub struct LensObservation {
     pub variety: Option<(f64, f64)>,          // (V, V_env)
     pub options: Option<Vec<(f64, f64)>>,     // [(c_g, C_g)]
     pub constraint: Option<(f64, f64)>,       // (F, F_env)
+    pub requirements: Option<BTreeMap<String, f64>>,  // {"energy": 4.0} (§4.6)
 }
 
 impl LensObservation {
-    pub fn psi(&self, lens: &str) -> Option<f64> {
+    pub fn psi(
+        &self,
+        lens: &str,
+        means: Option<&BTreeMap<String, f64>>,
+        groups: Option<&Vec<Vec<String>>>,
+    ) -> Option<f64> {
         match lens {
             "variety" => self.variety.map(|(v, ve)| psi_var(v, ve)),
-            "options" => self.options.as_ref().map(|b| psi_opt(b)),
+            "options" => {
+                if let Some(blocks) = self.options.as_ref() {
+                    return Some(psi_opt(blocks));
+                }
+                if let Some(reqs) = self.requirements.as_ref() {
+                    let no_means: BTreeMap<String, f64> = BTreeMap::new();
+                    let no_groups: Vec<Vec<String>> = Vec::new();
+                    return Some(psi_opt(&derive_blocks(
+                        reqs,
+                        means.unwrap_or(&no_means),
+                        groups.unwrap_or(&no_groups),
+                    )));
+                }
+                None
+            }
             "constraint" => self.constraint.map(|(f, fe)| psi_con(f, fe)),
             _ => None,
         }
@@ -115,6 +213,16 @@ pub struct LensTerm {
     pub contribution: f64,
 }
 
+/// The named derivation behind an entity's blocks (§4.6), kept so the audit can
+/// show the raw inputs a reader needs to recompute `(c_g, C_g)`.
+#[derive(Clone, Debug)]
+pub struct DerivationInfo {
+    pub procedure: String,
+    pub requirements: BTreeMap<String, f64>,
+    pub means: BTreeMap<String, f64>,
+    pub groups: Vec<Vec<String>>,
+}
+
 /// Result of measuring one entity.
 #[derive(Clone, Debug)]
 pub struct EntityMeasurement {
@@ -127,10 +235,19 @@ pub struct EntityMeasurement {
     pub terms_sum: f64,
     pub floored: bool,
     pub binding_lens: Option<String>,
+    /// §4.6 (v0.6): the derived blocks actually used, and the derivation itself.
+    pub blocks: Vec<(f64, f64)>,
+    pub derivation: Option<DerivationInfo>,
 }
 
 /// Apply §4.6–§4.7 to one entity.
-pub fn measure_entity(entity_id: &str, obs: &LensObservation, u: f64) -> EntityMeasurement {
+pub fn measure_entity(
+    entity_id: &str,
+    obs: &LensObservation,
+    u: f64,
+    means: Option<&BTreeMap<String, f64>>,
+    groups: Option<&Vec<Vec<String>>>,
+) -> EntityMeasurement {
     let mut psi: BTreeMap<String, Option<f64>> = BTreeMap::new();
     let mut terms: Vec<LensTerm> = Vec::new();
     let mut product = 1.0;
@@ -140,7 +257,7 @@ pub fn measure_entity(entity_id: &str, obs: &LensObservation, u: f64) -> EntityM
     let mut binding_value = f64::INFINITY;
 
     for lens in LENS_ORDER.iter() {
-        let value = obs.psi(lens);
+        let value = obs.psi(lens, means, groups);
         psi.insert((*lens).to_string(), value);
         let contribution = match value {
             None => {
@@ -166,6 +283,23 @@ pub fn measure_entity(entity_id: &str, obs: &LensObservation, u: f64) -> EntityM
         });
     }
 
+    let no_means: BTreeMap<String, f64> = BTreeMap::new();
+    let no_groups: Vec<Vec<String>> = Vec::new();
+    let effective_means = means.unwrap_or(&no_means);
+    let effective_groups = groups.unwrap_or(&no_groups);
+    let (blocks, derivation) = match obs.requirements.as_ref() {
+        Some(reqs) => (
+            derive_blocks(reqs, effective_means, effective_groups),
+            Some(DerivationInfo {
+                procedure: DERIVE_BLOCKS_PROCEDURE.to_string(),
+                requirements: reqs.clone(),
+                means: effective_means.clone(),
+                groups: canonical_groups(effective_groups, Some(reqs), Some(effective_means)),
+            }),
+        ),
+        None => (Vec::new(), None),
+    };
+
     EntityMeasurement {
         entity_id: entity_id.to_string(),
         psi,
@@ -176,7 +310,37 @@ pub fn measure_entity(entity_id: &str, obs: &LensObservation, u: f64) -> EntityM
         terms_sum,
         floored: product < EPSILON,
         binding_lens: binding,
+        blocks,
+        derivation,
     }
+}
+
+/// §3.4.1 (v0.6): the resource layer of the ruler — identities with unit name
+/// and scale, the observed rates, and the declared mandate. Two implementations
+/// that declare the same resource name with different scales are measurably
+/// different rulers and will produce different digests (§4.8).
+#[derive(Clone, Debug)]
+pub struct ResourceUnit {
+    pub id: String,
+    pub unit: String,
+    pub scale: f64,
+}
+
+/// An observed exchange rate: the key is `"from->to"` (one unit of `from` yields
+/// `rate` units of `to`), plus the exchange's own duration, which the gate of
+/// §4.8 charges to the same τ as the option itself.
+#[derive(Clone, Debug)]
+pub struct Rate {
+    pub rate: f64,
+    pub duration_mks: f64,
+}
+
+/// Mandate entries are either numbers (rendered like every other number, as a
+/// fixed six-decimal string) or free text.
+#[derive(Clone, Debug)]
+pub enum MandateValue {
+    Number(f64),
+    Text(String),
 }
 
 /// The frozen ruler (§3.4). `BTreeMap` keeps entity keys sorted, which the
@@ -187,6 +351,11 @@ pub struct MeasurementDeclaration {
     pub u0_prior_q: Option<f64>,
     pub entities: BTreeMap<String, LensObservation>,
     pub tau_mks: f64,
+    // §3.4.1 hashed content (v0.6): the ruler now includes the resource layer.
+    pub resources: Vec<ResourceUnit>,
+    pub groups: Vec<Vec<String>>,
+    pub rates: BTreeMap<String, Rate>,
+    pub mandate: BTreeMap<String, MandateValue>,
 }
 
 impl MeasurementDeclaration {
@@ -195,17 +364,100 @@ impl MeasurementDeclaration {
         entities: BTreeMap<String, LensObservation>,
         tau_mks: f64,
         u0_prior_q: Option<f64>,
+        resources: Vec<ResourceUnit>,
+        groups: Vec<Vec<String>>,
+        rates: BTreeMap<String, Rate>,
+        mandate: BTreeMap<String, MandateValue>,
     ) -> Self {
         MeasurementDeclaration {
             psi_id: psi_id.to_string(),
             u0_prior_q,
             entities,
             tau_mks,
+            resources,
+            groups: canonical_groups(&groups, None, None),
+            rates,
+            mandate,
         }
     }
 
     pub fn u0(&self) -> f64 {
         u0_from_prior(self.u0_prior_q)
+    }
+
+    /// JSON for the resource layer. `BTreeMap` keeps keys sorted; resources are
+    /// sorted by id, so the order they were declared in cannot matter.
+    fn groups_json(groups: &[Vec<String>]) -> String {
+        let mut s = String::from("[");
+        for (i, group) in groups.iter().enumerate() {
+            if i > 0 {
+                s.push(',');
+            }
+            s.push('[');
+            for (j, member) in group.iter().enumerate() {
+                if j > 0 {
+                    s.push(',');
+                }
+                let _ = write!(s, "\"{}\"", member);
+            }
+            s.push(']');
+        }
+        s.push(']');
+        s
+    }
+
+    fn mandate_json(mandate: &BTreeMap<String, MandateValue>) -> String {
+        let mut s = String::from("{");
+        for (i, (key, value)) in mandate.iter().enumerate() {
+            if i > 0 {
+                s.push(',');
+            }
+            let _ = write!(s, "\"{}\":", key);
+            match value {
+                MandateValue::Number(n) => {
+                    let _ = write!(s, "\"{:.6}\"", n);
+                }
+                MandateValue::Text(t) => {
+                    let _ = write!(s, "\"{}\"", t);
+                }
+            }
+        }
+        s.push('}');
+        s
+    }
+
+    fn rates_json(rates: &BTreeMap<String, Rate>) -> String {
+        let mut s = String::from("{");
+        for (i, (key, value)) in rates.iter().enumerate() {
+            if i > 0 {
+                s.push(',');
+            }
+            let _ = write!(
+                s,
+                "\"{}\":{{\"duration_mks\":\"{:.6}\",\"rate\":\"{:.6}\"}}",
+                key, value.duration_mks, value.rate
+            );
+        }
+        s.push('}');
+        s
+    }
+
+    fn resources_json(resources: &[ResourceUnit]) -> String {
+        let mut sorted: Vec<&ResourceUnit> = resources.iter().collect();
+        sorted.sort_by(|a, b| a.id.cmp(&b.id));
+        let mut s = String::from("[");
+        for (i, r) in sorted.iter().enumerate() {
+            if i > 0 {
+                s.push(',');
+            }
+            let _ = write!(
+                s,
+                "{{\"id\":\"{}\",\"scale\":\"{:.6}\",\"unit\":\"{}\"}}",
+                r.id, r.scale, r.unit
+            );
+        }
+        s.push(']');
+        s
     }
 
     /// Canonical form (§3.4.3): UTF-8 JSON, keys sorted, no insignificant
@@ -242,6 +494,20 @@ impl MeasurementDeclaration {
                 }
                 None => s.push_str("null"),
             }
+            s.push_str(",\"requirements\":");
+            match &obs.requirements {
+                Some(reqs) => {
+                    s.push('{');
+                    for (i, (key, value)) in reqs.iter().enumerate() {
+                        if i > 0 {
+                            s.push(',');
+                        }
+                        let _ = write!(s, "\"{}\":\"{:.6}\"", key, value);
+                    }
+                    s.push('}');
+                }
+                None => s.push_str("null"),
+            }
             s.push_str(",\"variety\":");
             match obs.variety {
                 Some((v, ve)) => {
@@ -252,13 +518,22 @@ impl MeasurementDeclaration {
             s.push('}');
         }
         let _ = write!(s, "}},\"freeze\":{{\"tau_mks\":\"{:.6}\"}}", self.tau_mks);
-        s.push_str(",\"lens_order\":[\"variety\",\"options\",\"constraint\"],\"procedures\":{");
+        s.push_str(",\"groups\":");
+        s.push_str(&Self::groups_json(&self.groups));
+        s.push_str(",\"lens_order\":[\"variety\",\"options\",\"constraint\"],\"mandate\":");
+        s.push_str(&Self::mandate_json(&self.mandate));
+        s.push_str(",\"procedures\":{");
         let _ = write!(
             s,
-            "\"constraint\":\"{}:constraint\",\"options\":\"{}:options\",\"variety\":\"{}:variety\"",
-            self.psi_id, self.psi_id, self.psi_id
+            "\"constraint\":\"{}:constraint\",\"options\":\"{}:options\",\"options_blocks\":\"{}:{}\",\"variety\":\"{}:variety\"",
+            self.psi_id, self.psi_id, self.psi_id, DERIVE_BLOCKS_PROCEDURE, self.psi_id
         );
-        let _ = write!(s, "}},\"psi_id\":\"{}\",\"u0_prior_q\":", self.psi_id);
+        let _ = write!(s, "}},\"psi_id\":\"{}\"", self.psi_id);
+        s.push_str(",\"rates\":");
+        s.push_str(&Self::rates_json(&self.rates));
+        s.push_str(",\"resources\":");
+        s.push_str(&Self::resources_json(&self.resources));
+        s.push_str(",\"u0_prior_q\":");
         match self.u0_prior_q {
             Some(q) => {
                 let _ = write!(s, "\"{:.6}\"", q);

@@ -1,11 +1,12 @@
 // DOF-Core Reactive Circuit with Interruption (Rust port).
 // Ties the three layers; switches FAST PASS / DEEP by τ.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 use crate::dof_core::{ActionOption, DofCalculusCore, DofReport, RemovedOption, SystemStateMatrix};
 use crate::generator::Generator;
 use crate::graph_mapper::{GraphMapper, RawObservation};
+use crate::measurement::Rate;
 
 pub struct DofOrchestrator {
     mapper: GraphMapper,
@@ -64,12 +65,25 @@ impl DofOrchestrator {
         self.generator.safe_fallback(state, n_options)
     }
 
+    /// The derived groups and observed rates of the ruler frozen on this cycle.
+    /// They live in the declaration, so the gate and the report see exactly the
+    /// exchange layer the digest covers.
+    fn gate_context(&self) -> (Option<&Vec<Vec<String>>>, Option<&BTreeMap<String, Rate>>) {
+        match self.mapper.last_declaration.as_ref() {
+            Some(d) => (Some(&d.groups), Some(&d.rates)),
+            None => (None, None),
+        }
+    }
+
     pub fn step(&mut self, raw: &HashMap<String, RawObservation>) -> Option<ActionOption> {
         let state = self.mapper.poll_environment(raw);
         let tau = state.global_time_to_collapse_mks;
         let options = self.generate(&state, tau);
         let (options, _removed) = Self::viability_gate(options, tau);
         let (options, _removed_structural) = self.core.apply_structural_gate(&state, &options);
+        let (groups, rates) = self.gate_context();
+        let (options, _removed_resource) =
+            self.core.apply_resource_gate(&state, &options, groups, rates);
         self.core.evaluate_and_select(&state, &options)
     }
 
@@ -99,8 +113,13 @@ impl DofOrchestrator {
         let options = self.generate(state, state.global_time_to_collapse_mks);
         let (options, removed) = Self::viability_gate(options, state.global_time_to_collapse_mks);
         let (options, removed_structural) = self.core.apply_structural_gate(state, &options);
+        // Gate order is normative (§5 → §4.5 → §4.8): the reason a reader needs
+        // first is the one about the world, not the one about the wallet.
+        let (groups, rates) = self.gate_context();
+        let (options, removed_resource) = self.core.apply_resource_gate(state, &options, groups, rates);
         let mut all_removed = removed;
         all_removed.extend(removed_structural);
+        all_removed.extend(removed_resource);
         let selected = self.core.evaluate_and_select(state, &options);
         let report = self.core.report(
             state,
@@ -109,6 +128,8 @@ impl DofOrchestrator {
             mode,
             self.mapper.last_declaration.as_ref(),
             all_removed,
+            groups,
+            rates,
         );
         (selected, report)
     }

@@ -7,9 +7,9 @@
 // entity's collapse for another's gain); Axiom 5 (prefer reversible actions; never
 // assume unknown possibilities have zero DoF).
 
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
-use crate::measurement::{EntityMeasurement, LensTerm, MeasurementDeclaration, PsiReference};
+use crate::measurement::{EntityMeasurement, LensTerm, MeasurementDeclaration, PsiReference, Rate};
 
 #[derive(Clone, Debug)]
 pub struct EntityState {
@@ -55,6 +55,10 @@ pub struct SystemStateMatrix {
     pub entities: HashMap<String, EntityState>,
     /// The frozen measurement ruler (§3.4). `S'` keeps the ruler of `S`.
     pub psi: Option<PsiReference>,
+    /// §3.2 (v0.6): the acting agent's means per resource, in the unit declared
+    /// for that resource in the ruler. An absent balance is never "unlimited":
+    /// an option drawing an undeclared resource is unpayable (§4.8).
+    pub resources: HashMap<String, f64>,
 }
 
 #[derive(Clone, Debug)]
@@ -65,6 +69,11 @@ pub struct ActionOption {
     pub is_reversible: bool,
     /// Estimated execution time in microseconds (DOF-SPEC §3.3).
     pub estimated_duration_mks: f64,
+    /// §3.3 (v0.6): what the option draws from the acting agent, attributed to
+    /// the entity whose transitions consume it. Negative = consumption, positive
+    /// = production; `energy` must be present (as 0.0) for every entity named in
+    /// `projected_dof_delta`.
+    pub projected_resource_delta: HashMap<String, HashMap<String, f64>>,
 }
 
 impl ActionOption {
@@ -81,7 +90,19 @@ impl ActionOption {
             projected_dof_delta,
             is_reversible,
             estimated_duration_mks,
+            projected_resource_delta: HashMap::new(),
         }
+    }
+
+    /// Declare what the option draws (§3.3). Kept separate so existing callers
+    /// of `new` stay valid and an option without a declared draw is an explicit
+    /// empty map rather than a missing field.
+    pub fn with_draw(
+        mut self,
+        projected_resource_delta: HashMap<String, HashMap<String, f64>>,
+    ) -> Self {
+        self.projected_resource_delta = projected_resource_delta;
+        self
     }
 }
 
@@ -101,6 +122,36 @@ pub struct EntityReportRow {
     pub binding_lens: Option<String>,
     /// The ε-floor of §4.1 was applied at the entity level, not to one term.
     pub floored: bool,
+    /// §4.6 (v0.6): the derived blocks and the derivation behind them, so a
+    /// reader can recompute `(c_g, C_g)` from the raw requirements.
+    pub blocks: Vec<(f64, f64)>,
+    pub derivation: Option<crate::measurement::DerivationInfo>,
+}
+
+/// A deficit covered by an exchange (§4.8): the audit line that shows the price
+/// was paid by trade, at an observed rate, and how long the trade itself took.
+#[derive(Clone, Debug)]
+pub struct Conversion {
+    pub from: String,
+    pub to: String,
+    pub amount_from: f64,
+    pub amount_to: f64,
+    pub rate: f64,
+    pub duration_mks: f64,
+}
+
+/// The result of §4.8's funding decision: what the option needs, what actually
+/// leaves the agent's stock (the spend ledger — a deficit bought from another
+/// resource spends *that* resource), the trades performed, and the deficit that
+/// survived full verified conversion.
+#[derive(Clone, Debug)]
+pub struct FundingPlan {
+    pub covered: bool,
+    pub need: BTreeMap<String, f64>,
+    pub spend: BTreeMap<String, f64>,
+    pub conversions: Vec<Conversion>,
+    pub uncovered: BTreeMap<String, f64>,
+    pub total_duration_mks: f64,
 }
 
 /// A candidate removed before evaluation (§6.2).
@@ -129,6 +180,11 @@ pub struct OptionReportRow {
     pub estimated_duration_mks: f64,
     /// §6.3: every collapse this option causes, as an auditable line of the ledger.
     pub collapse_charges: Vec<CollapseCharge>,
+    /// §6.3 (v0.6): what the option draws, and how "affordable" was established —
+    /// by cash in hand or by an observed trade — plus whatever stayed uncovered.
+    pub resource_consumption: HashMap<String, HashMap<String, f64>>,
+    pub conversion_applied: Vec<Conversion>,
+    pub resources_uncovered: BTreeMap<String, f64>,
 }
 
 /// Full Proof-of-Implementation audit (DOF-SPEC §6).
@@ -147,6 +203,11 @@ pub struct DofReport {
     /// §6.2: a resolvable unknown was left unmeasured in every candidate, so the
     /// decision is declared incomplete rather than presented as informed.
     pub incomplete: bool,
+    /// §6.2 (v0.6): the acting agent's means at the start of the cycle and after
+    /// the selected option's consumption. Multi-step accumulation is auditable
+    /// only if the spend is written where the next cycle can see it (§4.8).
+    pub resources_before: BTreeMap<String, f64>,
+    pub resources_after: BTreeMap<String, f64>,
 }
 
 pub struct DofCalculusCore {
@@ -245,6 +306,9 @@ impl DofCalculusCore {
                 context_switch_cost: current.context_switch_cost,
                 entities: simulated,
                 psi: current.psi.clone(),
+                // The agent's means travel unchanged: `simulate` scores the DoF
+                // consequences, and the resource side is decided by §4.8.
+                resources: current.resources.clone(),
             },
             members,
         )
@@ -305,6 +369,148 @@ impl DofCalculusCore {
                 removed.push(RemovedOption {
                     option_id: option.option_id.clone(),
                     gate: "collapse".to_string(),
+                });
+            }
+        }
+        (admissible, removed)
+    }
+
+    // --- §4.8 resource gate ---------------------------------------------------
+
+    fn means_of(state: &SystemStateMatrix, resource: &str) -> f64 {
+        state.resources.get(resource).copied().unwrap_or(0.0)
+    }
+
+    /// §4.8: the option's net draw on the agent, per resource. Consumption is the
+    /// negative component of the declared delta summed over the entities the
+    /// option names; a resource produced more than consumed yields no requirement.
+    pub fn requirement(&self, option: &ActionOption) -> BTreeMap<String, f64> {
+        let mut net: BTreeMap<String, f64> = BTreeMap::new();
+        for per_entity in option.projected_resource_delta.values() {
+            for (resource, delta) in per_entity.iter() {
+                *net.entry(resource.clone()).or_insert(0.0) += *delta;
+            }
+        }
+        net.into_iter()
+            .filter(|(_, v)| *v < 0.0)
+            .map(|(k, v)| (k, -v))
+            .collect()
+    }
+
+    /// §4.8: exchange is possible only inside a derived group.
+    fn same_group(a: &str, b: &str, groups: Option<&Vec<Vec<String>>>) -> bool {
+        if a == b {
+            return true;
+        }
+        match groups {
+            Some(gs) => gs.iter().any(|g| g.iter().any(|r| r == a) && g.iter().any(|r| r == b)),
+            None => false,
+        }
+    }
+
+    /// §4.8: decide *how* an option is paid for, and whether it can be. Step 1 is
+    /// a direct comparison against the agent's means. Step 2 is **verified**
+    /// conversion: the exchange path must exist (declared rate), the resources
+    /// must share a group, an offer must satisfy the requirement (deficit /
+    /// rate), the price must be payable from the agent's means, and the
+    /// exchange's **own time** must still fit in τ. Anything that fails is not a
+    /// cheaper conversion — it is a deficit that stays uncovered, and step 3
+    /// turns that into insolvency.
+    pub fn plan_funding(
+        &self,
+        state: &SystemStateMatrix,
+        option: &ActionOption,
+        groups: Option<&Vec<Vec<String>>>,
+        rates: Option<&BTreeMap<String, Rate>>,
+    ) -> FundingPlan {
+        let need = self.requirement(option);
+        let mut spend: BTreeMap<String, f64> = BTreeMap::new();
+        let mut conversions: Vec<Conversion> = Vec::new();
+        let mut uncovered: BTreeMap<String, f64> = BTreeMap::new();
+        let mut total_duration = option.estimated_duration_mks;
+
+        for (resource, needed) in need.iter() {
+            let mut remaining = *needed;
+            let available = (Self::means_of(state, resource) - spend.get(resource).copied().unwrap_or(0.0))
+                .max(0.0);
+            let direct = remaining.min(available);
+            *spend.entry(resource.clone()).or_insert(0.0) += direct;
+            remaining -= direct;
+
+            if let Some(rate_table) = rates {
+                for (key, spec) in rate_table.iter() {
+                    if remaining <= 0.0 {
+                        break;
+                    }
+                    let (source, target) = match key.split_once("->") {
+                        Some((s, t)) => (s, t),
+                        None => continue,
+                    };
+                    if target != resource {
+                        continue;
+                    }
+                    if spec.rate <= 0.0 || !Self::same_group(source, resource, groups) {
+                        continue;
+                    }
+                    let amount_source = remaining / spec.rate;
+                    let source_available =
+                        (Self::means_of(state, source) - spend.get(source).copied().unwrap_or(0.0)).max(0.0);
+                    if amount_source > source_available {
+                        continue; // the price is not payable
+                    }
+                    if total_duration + spec.duration_mks > state.global_time_to_collapse_mks {
+                        continue; // the exchange does not fit in τ
+                    }
+                    *spend.entry(source.to_string()).or_insert(0.0) += amount_source;
+                    total_duration += spec.duration_mks;
+                    conversions.push(Conversion {
+                        from: source.to_string(),
+                        to: resource.clone(),
+                        amount_from: amount_source,
+                        amount_to: remaining,
+                        rate: spec.rate,
+                        duration_mks: spec.duration_mks,
+                    });
+                    remaining = 0.0;
+                }
+            }
+            if remaining > 0.0 {
+                uncovered.insert(resource.clone(), remaining);
+            }
+        }
+
+        FundingPlan {
+            covered: uncovered.is_empty(),
+            need,
+            spend,
+            conversions,
+            uncovered,
+            total_duration_mks: total_duration,
+        }
+    }
+
+    /// §4.8 step 3: an unpayable option is inadmissible, unconditionally. Unlike
+    /// the structural gate of §4.5 there is no "no alternative" escape: a
+    /// shortage that survives full verified conversion is a verdict, not a price.
+    pub fn apply_resource_gate(
+        &self,
+        state: &SystemStateMatrix,
+        options: &[ActionOption],
+        groups: Option<&Vec<Vec<String>>>,
+        rates: Option<&BTreeMap<String, Rate>>,
+    ) -> (Vec<ActionOption>, Vec<RemovedOption>) {
+        if options.is_empty() {
+            return (Vec::new(), Vec::new());
+        }
+        let mut admissible = Vec::new();
+        let mut removed = Vec::new();
+        for option in options {
+            if self.plan_funding(state, option, groups, rates).covered {
+                admissible.push(option.clone());
+            } else {
+                removed.push(RemovedOption {
+                    option_id: option.option_id.clone(),
+                    gate: "insolvency".to_string(),
                 });
             }
         }
@@ -403,6 +609,8 @@ impl DofCalculusCore {
         mode: &str,
         declaration: Option<&MeasurementDeclaration>,
         removed: Vec<RemovedOption>,
+        groups: Option<&Vec<Vec<String>>>,
+        rates: Option<&BTreeMap<String, Rate>>,
     ) -> DofReport {
         let mut entity_rows: Vec<EntityReportRow> = Vec::new();
         for (_eid, ent) in &current_state.entities {
@@ -412,9 +620,15 @@ impl DofCalculusCore {
             } else {
                 0.0
             };
-            let (lens_terms, binding_lens, floored) = match &ent.measurement {
-                Some(m) => (m.terms.clone(), m.binding_lens.clone(), m.floored),
-                None => (Vec::new(), None, false),
+            let (lens_terms, binding_lens, floored, blocks, derivation) = match &ent.measurement {
+                Some(m) => (
+                    m.terms.clone(),
+                    m.binding_lens.clone(),
+                    m.floored,
+                    m.blocks.clone(),
+                    m.derivation.clone(),
+                ),
+                None => (Vec::new(), None, false, Vec::new(), None),
             };
             entity_rows.push(EntityReportRow {
                 entity_id: ent.entity_id.clone(),
@@ -426,9 +640,27 @@ impl DofCalculusCore {
                 lens_terms,
                 binding_lens,
                 floored,
+                blocks,
+                derivation,
             });
         }
         let total = self.calculate_system_dof(current_state, None);
+
+        // §6.2 (v0.6): the means before the cycle and after the selected option's
+        // spend ledger — what actually left the stock, not what was declared.
+        let mut resources_before: BTreeMap<String, f64> = BTreeMap::new();
+        for (resource, amount) in current_state.resources.iter() {
+            resources_before.insert(resource.clone(), *amount);
+        }
+        let mut resources_after = resources_before.clone();
+        if let Some(chosen) = selected {
+            let plan = self.plan_funding(current_state, chosen, groups, rates);
+            for (resource, amount) in plan.spend.iter() {
+                let before = resources_after.get(resource).copied().unwrap_or(0.0);
+                resources_after.insert(resource.clone(), (before - amount).max(0.0));
+            }
+        }
+
         let mut option_rows: Vec<OptionReportRow> = Vec::new();
         for option in options {
             let (simulated, members) = self.simulate(current_state, option);
@@ -438,6 +670,7 @@ impl DofCalculusCore {
                 Some(s) => s.option_id == option.option_id,
                 None => false,
             };
+            let plan = self.plan_funding(current_state, option, groups, rates);
             option_rows.push(OptionReportRow {
                 option_id: option.option_id.clone(),
                 is_reversible: option.is_reversible,
@@ -447,6 +680,10 @@ impl DofCalculusCore {
                 estimated_duration_mks: option.estimated_duration_mks,
                 // §6.3: every collapse this option causes, as an auditable line
                 collapse_charges: self.collapse_charges(current_state, option),
+                // §6.3 (v0.6): what it draws, and how "affordable" was established.
+                resource_consumption: option.projected_resource_delta.clone(),
+                conversion_applied: plan.conversions,
+                resources_uncovered: plan.uncovered,
             });
         }
         let (psi_id, psi_digest, declaration_text) = match declaration {
@@ -468,6 +705,8 @@ impl DofCalculusCore {
             declaration: declaration_text,
             removed_options: removed,
             incomplete: self.is_incomplete(current_state, options),
+            resources_before,
+            resources_after,
         }
     }
 }

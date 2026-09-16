@@ -38,6 +38,10 @@ struct SystemStateMatrix {
     double context_switch_cost = 0.0;
     std::unordered_map<std::string, EntityState> entities;
     std::optional<dof::PsiReference> psi;  // frozen measurement ruler (§3.4)
+    // §3.2 (v0.6): the acting agent's means per resource, in the unit declared
+    // for that resource in the ruler. Absent means are never "unlimited": an
+    // option drawing a resource the agent has not declared is unpayable (§4.8).
+    std::unordered_map<std::string, double> resources;
 };
 
 struct ActionOption {
@@ -46,6 +50,11 @@ struct ActionOption {
     std::unordered_map<std::string, double> projected_dof_delta;
     bool is_reversible = true;
     double estimated_duration_mks = 0.0;  // execution time, microseconds (DOF-SPEC §3.3)
+    // §3.3 (v0.6): what the option draws from the acting agent, attributed to the
+    // entity whose transitions consume it. Negative = consumption, positive =
+    // production. `energy` MUST be present (as 0.0) for every entity named in
+    // projected_dof_delta.
+    std::unordered_map<std::string, std::unordered_map<std::string, double>> projected_resource_delta;
 };
 
 // Audit report rows and container (DOF-SPEC §6)
@@ -60,6 +69,10 @@ struct EntityReportRow {
     std::vector<dof::LensTerm> lens_terms;
     std::optional<std::string> binding_lens;
     bool floored = false;
+    // §4.6 (v0.6): the derived blocks and the derivation behind them, so a
+    // reader can recompute (c_g, C_g) from the raw requirements.
+    std::vector<std::pair<double, double>> blocks;
+    std::optional<dof::DerivationInfo> derivation;
 };
 
 // One entity a candidate drove from a counted state to a known zero (§4.2, §6.3):
@@ -67,6 +80,17 @@ struct EntityReportRow {
 struct CollapseCharge {
     std::string entity_id;
     double dof_before = 0.0;
+};
+
+// A deficit covered by an exchange (§4.8): the audit line that shows the price
+// was paid by trade, at an observed rate, and how long the trade itself took.
+struct Conversion {
+    std::string from;
+    std::string to;
+    double amount_from = 0.0;
+    double amount_to = 0.0;
+    double rate = 0.0;
+    double duration_mks = 0.0;
 };
 
 struct OptionReportRow {
@@ -78,6 +102,24 @@ struct OptionReportRow {
     double estimated_duration_mks = 0.0;
     // §6.3: every collapse this option causes, as an auditable line of the ledger.
     std::vector<CollapseCharge> collapse_charges;
+    // §6.3 (v0.6): what the option draws, and how "affordable" was established —
+    // by cash in hand or by an observed trade — plus whatever stayed uncovered.
+    std::unordered_map<std::string, std::unordered_map<std::string, double>> resource_consumption;
+    std::vector<Conversion> conversion_applied;
+    std::map<std::string, double> resources_uncovered;
+};
+
+// The result of §4.8's funding decision: what the option needs, what actually
+// leaves the agent's stock (the spend ledger — a deficit bought from another
+// resource spends *that* resource), the trades that were performed, and the
+// deficit that survived full verified conversion.
+struct FundingPlan {
+    bool covered = true;
+    std::map<std::string, double> need;
+    std::map<std::string, double> spend;
+    std::vector<Conversion> conversions;
+    std::map<std::string, double> uncovered;
+    double total_duration_mks = 0.0;
 };
 
 // A candidate removed before evaluation (§6.2).
@@ -100,6 +142,11 @@ struct DofReport {
     // §6.2: a resolvable unknown was left unmeasured in every candidate, so the
     // decision is declared incomplete rather than presented as informed.
     bool incomplete = false;
+    // §6.2 (v0.6): the acting agent's means at the start of the cycle and after
+    // the selected option's consumption. Multi-step accumulation is auditable
+    // only if the spend is written where the next cycle can see it (§4.8).
+    std::map<std::string, double> resources_before;
+    std::map<std::string, double> resources_after;
 };
 
 class DOFCalculusCore {
@@ -218,6 +265,120 @@ public:
         return {admissible, removed};
     }
 
+    // --- §4.8 resource gate ---------------------------------------------------
+
+    static double means_of(const SystemStateMatrix& state, const std::string& resource) {
+        auto it = state.resources.find(resource);
+        return it == state.resources.end() ? 0.0 : it->second;
+    }
+
+    // §4.8: the option's net draw on the agent, per resource. Consumption is the
+    // negative component of the declared delta summed over the entities the
+    // option names; a resource produced more than consumed yields no requirement.
+    std::map<std::string, double> requirement(const ActionOption& option) const {
+        std::map<std::string, double> net;
+        for (const auto& per_entity : option.projected_resource_delta) {
+            for (const auto& rv : per_entity.second) net[rv.first] += rv.second;
+        }
+        std::map<std::string, double> need;
+        for (const auto& kv : net) {
+            if (kv.second < 0.0) need[kv.first] = -kv.second;
+        }
+        return need;
+    }
+
+    // §4.8: exchange is possible only inside a derived group.
+    static bool same_group(const std::string& a, const std::string& b,
+                           const std::vector<std::vector<std::string>>* groups) {
+        if (a == b) return true;
+        if (groups == nullptr) return false;
+        for (const auto& group : *groups) {
+            bool has_a = false;
+            bool has_b = false;
+            for (const auto& r : group) {
+                if (r == a) has_a = true;
+                if (r == b) has_b = true;
+            }
+            if (has_a && has_b) return true;
+        }
+        return false;
+    }
+
+    // §4.8: decide *how* an option is paid for, and whether it can be. Step 1 is a
+    // direct comparison against the agent's means. Step 2 is **verified**
+    // conversion: the exchange path must exist (declared rate), the resources must
+    // share a group, an offer must satisfy the requirement (deficit / rate), the
+    // price must be payable from the agent's means, and the exchange's **own
+    // time** must still fit in τ. Anything that fails is not a cheaper conversion
+    // — it is a deficit that stays uncovered, and step 3 turns that into
+    // insolvency.
+    FundingPlan plan_funding(const SystemStateMatrix& state, const ActionOption& option,
+                             const std::vector<std::vector<std::string>>* groups = nullptr,
+                             const std::map<std::string, dof::Rate>* rates = nullptr) const {
+        FundingPlan plan;
+        plan.need = requirement(option);
+        plan.total_duration_mks = option.estimated_duration_mks;
+
+        for (const auto& need_entry : plan.need) {
+            const std::string& resource = need_entry.first;
+            double remaining = need_entry.second;
+            double available = std::max(0.0, means_of(state, resource) - plan.spend[resource]);
+            double direct = std::min(remaining, available);
+            plan.spend[resource] += direct;
+            remaining -= direct;
+
+            if (rates != nullptr) {
+                for (const auto& rate_entry : *rates) {
+                    if (remaining <= 0.0) break;
+                    const std::string& key = rate_entry.first;
+                    std::size_t arrow = key.find("->");
+                    if (arrow == std::string::npos) continue;
+                    const std::string source = key.substr(0, arrow);
+                    const std::string target = key.substr(arrow + 2);
+                    if (target != resource) continue;
+                    double rate = rate_entry.second.rate;
+                    double duration = rate_entry.second.duration_mks;
+                    if (rate <= 0.0 || !same_group(source, resource, groups)) continue;
+                    double amount_source = remaining / rate;
+                    if (amount_source > std::max(0.0, means_of(state, source) - plan.spend[source])) {
+                        continue;  // the price is not payable
+                    }
+                    if (plan.total_duration_mks + duration > state.global_time_to_collapse_mks) {
+                        continue;  // the exchange does not fit in τ
+                    }
+                    plan.spend[source] += amount_source;
+                    plan.total_duration_mks += duration;
+                    plan.conversions.push_back(
+                        Conversion{source, resource, amount_source, remaining, rate, duration});
+                    remaining = 0.0;
+                }
+            }
+            if (remaining > 0.0) plan.uncovered[resource] = remaining;
+        }
+        plan.covered = plan.uncovered.empty();
+        return plan;
+    }
+
+    // §4.8 step 3: an unpayable option is inadmissible, unconditionally. Unlike
+    // the structural gate of §4.5 there is no "no alternative" escape: a shortage
+    // that survives full verified conversion is a verdict, not a price.
+    std::pair<std::vector<ActionOption>, std::vector<RemovedOption>> apply_resource_gate(
+        const SystemStateMatrix& state, const std::vector<ActionOption>& options,
+        const std::vector<std::vector<std::string>>* groups = nullptr,
+        const std::map<std::string, dof::Rate>* rates = nullptr) const {
+        if (options.empty()) return {{}, {}};
+        std::vector<ActionOption> admissible;
+        std::vector<RemovedOption> removed;
+        for (const auto& option : options) {
+            if (plan_funding(state, option, groups, rates).covered) {
+                admissible.push_back(option);
+            } else {
+                removed.push_back(RemovedOption{option.option_id, "insolvency"});
+            }
+        }
+        return {admissible, removed};
+    }
+
     double net_delta(const SystemStateMatrix& current, const ActionOption& option,
                      double projected, double current_dof) const {
         double net = projected - current_dof - current.context_switch_cost;
@@ -284,7 +445,9 @@ public:
                      const std::optional<ActionOption>& selected,
                      const std::string& mode,
                      const std::optional<dof::MeasurementDeclaration>& declaration = std::nullopt,
-                     const std::vector<RemovedOption>& removed = {}) const
+                     const std::vector<RemovedOption>& removed = {},
+                     const std::vector<std::vector<std::string>>* groups = nullptr,
+                     const std::map<std::string, dof::Rate>* rates = nullptr) const
     {
         DofReport rep;
         for (const auto& kv : current_state.entities) {
@@ -297,9 +460,25 @@ public:
                 row.lens_terms = e.measurement->terms;
                 row.binding_lens = e.measurement->binding_lens;
                 row.floored = e.measurement->floored;
+                row.blocks = e.measurement->blocks;
+                row.derivation = e.measurement->derivation;
             }
         }
         double total = calculate_system_dof(current_state, nullptr);
+
+        // §6.2 (v0.6): the means before the cycle and after the selected option's
+        // spend ledger — what actually left the stock, not what was declared.
+        for (const auto& kv : current_state.resources) rep.resources_before[kv.first] = kv.second;
+        rep.resources_after = rep.resources_before;
+        if (selected) {
+            FundingPlan plan = plan_funding(current_state, *selected, groups, rates);
+            for (const auto& kv : plan.spend) {
+                auto it = rep.resources_after.find(kv.first);
+                double before = (it == rep.resources_after.end()) ? 0.0 : it->second;
+                rep.resources_after[kv.first] = std::max(0.0, before - kv.second);
+            }
+        }
+
         for (const auto& option : options) {
             auto sim_result = simulate(current_state, option);
             double projected = calculate_system_dof(sim_result.first, &sim_result.second);
@@ -308,6 +487,11 @@ public:
             rep.options.push_back(OptionReportRow{option.option_id, option.is_reversible, projected, net, is_selected, option.estimated_duration_mks});
             // §6.3: every collapse this option causes, as an auditable line
             rep.options.back().collapse_charges = collapse_charges(current_state, option);
+            // §6.3 (v0.6): what it draws, and how "affordable" was established.
+            FundingPlan plan = plan_funding(current_state, option, groups, rates);
+            rep.options.back().resource_consumption = option.projected_resource_delta;
+            rep.options.back().conversion_applied = plan.conversions;
+            rep.options.back().resources_uncovered = plan.uncovered;
         }
         rep.total_system_dof = total;
         rep.context_switch_cost = current_state.context_switch_cost;

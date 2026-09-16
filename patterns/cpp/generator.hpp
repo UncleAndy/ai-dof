@@ -47,6 +47,12 @@ public:
             opt.is_reversible = true;
             // In a deployment the duration is a Perception-layer value (DOF-SPEC §3.3).
             opt.estimated_duration_mks = 1000.0;
+            // §3.3 (v0.6): what the option draws from the agent. The deterministic
+            // fallback is a local step that buys nothing, so its draw is an
+            // explicit zero for every entity it names — written, not omitted.
+            for (const auto& dv : delta) {
+                opt.projected_resource_delta[dv.first][dof::kMandatoryResource] = 0.0;
+            }
             opts.push_back(std::move(opt));
         }
         return opts;

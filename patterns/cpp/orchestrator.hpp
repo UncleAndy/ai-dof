@@ -62,10 +62,14 @@ public:
         double tau = state.global_time_to_collapse_mks;
         auto gated = viability_gate(generate(state, tau), tau);
         auto structural = core_.apply_structural_gate(state, gated.first);
-        return core_.evaluate_and_select(state, structural.first);
+        auto affordable = core_.apply_resource_gate(state, structural.first,
+                                                    groups_ptr(), rates_ptr());
+        return core_.evaluate_and_select(state, affordable.first);
     }
 
     // Like step(), but also returns the Proof-of-Implementation audit.
+    // Gate order is normative (§5 → §4.5 → §4.8): the reason a reader needs
+    // first is the one about the world, not the one about the wallet.
     std::pair<std::optional<ActionOption>, DofReport> step_with_report(
         const std::unordered_map<std::string, RawObservation>& raw) const
     {
@@ -74,11 +78,26 @@ public:
         std::string mode = (tau < fast_pass_threshold) ? "FAST_PASS" : "DEEP_DIVERSIFICATION";
         auto gated = viability_gate(generate(state, tau), tau);
         auto structural = core_.apply_structural_gate(state, gated.first);
-        auto selected = core_.evaluate_and_select(state, structural.first);
+        auto affordable = core_.apply_resource_gate(state, structural.first,
+                                                    groups_ptr(), rates_ptr());
+        auto selected = core_.evaluate_and_select(state, affordable.first);
         std::vector<RemovedOption> all_removed = gated.second;
         all_removed.insert(all_removed.end(), structural.second.begin(), structural.second.end());
-        DofReport rep = core_.report(state, structural.first, selected, mode,
-                                     mapper_.last_declaration, all_removed);
+        all_removed.insert(all_removed.end(), affordable.second.begin(), affordable.second.end());
+        DofReport rep = core_.report(state, affordable.first, selected, mode,
+                                     mapper_.last_declaration, all_removed,
+                                     groups_ptr(), rates_ptr());
         return {selected, rep};
+    }
+
+private:
+    // The derived groups and observed rates of the ruler frozen on this cycle.
+    // They live in the declaration, so the gate and the report see exactly the
+    // exchange layer the digest covers.
+    const std::vector<std::vector<std::string>>* groups_ptr() const {
+        return mapper_.last_declaration ? &mapper_.last_declaration->groups : nullptr;
+    }
+    const std::map<std::string, dof::Rate>* rates_ptr() const {
+        return mapper_.last_declaration ? &mapper_.last_declaration->rates : nullptr;
     }
 };

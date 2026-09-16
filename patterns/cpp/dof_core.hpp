@@ -137,6 +137,27 @@ struct CollapseCharge {
     double dof_before = 0.0;
 };
 
+// The v0.8 candidate vector (§4.5): three counts of entities — the protected
+// dimensions — plus the index and the reversibility preference.
+struct CandidateVector {
+    int d1 = 0;
+    int d2 = 0;
+    int d3 = 0;
+    double net_delta = 0.0;
+    bool reversible = true;
+    std::string option_id;
+};
+
+// One entity this option drops out of a `reachable` verdict, with the witness it
+// lost (§4.5, §6.3). A path loss counts even where no exclusion follows from it.
+struct LostPathEntry {
+    std::string entity_id;
+    std::string verdict_before;
+    std::string verdict_after;
+    bool critical = false;
+    std::vector<std::string> witness_lost;
+};
+
 // A deficit covered by an exchange (§4.8): the audit line that shows the price
 // was paid by trade, at an observed rate, and how long the trade itself took.
 struct Conversion {
@@ -167,6 +188,11 @@ struct OptionReportRow {
     double mandate_exceeded = 0.0;
     std::vector<dof::ClosedRef> closed;
     std::map<std::string, double> closure_share;
+    // §6.3 (v0.8): the protected dimensions, the dimension that barred the
+    // candidate (empty when nothing did), and the path losses line by line.
+    CandidateVector candidate_vector;
+    std::optional<std::string> barring_key;
+    std::vector<LostPathEntry> lost_paths;
 };
 
 // The result of §4.8's funding decision: what the option needs, what actually
@@ -215,6 +241,10 @@ struct DofReport {
     // balance or an asserted authority.
     std::optional<std::string> observation_digest;
     std::map<std::string, dof::MandateValue> means_provenance;
+    // §6.2 (v0.8): the vector every candidate was compared against, and whether
+    // any candidate beat it. A refusal to act is a decision and must be audible.
+    CandidateVector baseline;
+    bool no_candidate_better = false;
 };
 
 // What a report needs beyond the state, the candidates and the selection. It keeps
@@ -235,6 +265,13 @@ class DOFCalculusCore {
     double epsilon_;
 public:
     DOFCalculusCore(double epsilon = 1e-6) : epsilon_(epsilon) {}
+
+    // v0.8 (§10): the tolerance that decides whether two candidates' NetDelta are
+    // tied. The index is a sum of logarithms over a SET, so two ports that iterate
+    // their container in different orders can disagree in the last bits (~1e-15)
+    // while agreeing on every derivation — and a tie must be resolved identically
+    // everywhere, because §7 requires the same CHOICE, not only the same numbers.
+    static constexpr double net_delta_tolerance = 1e-9;
 
     // Whether an entity belongs to the calculation set `calc` (DOF-SPEC §4.2).
     // Excluded if it is a **witnessed** collapse source, or if its DoF is a known
@@ -457,8 +494,15 @@ public:
         return charges;
     }
 
-    // §4.5: removes options that destroy a counted entity while a charge-free
-    // candidate exists (Axiom 3). Every removal is recorded as gate = "collapse".
+    // RETIRED in v0.8: the live path no longer calls this. A charged candidate is
+    // evaluated, reported in full, and made inadmissible by the candidate-vector
+    // test of §4.5 (`select_candidate`), so `removed_options` carries no structural
+    // removal. Kept because the v0.6 harness asserts the rule that was in force
+    // then, and history must stay reproducible.
+    //
+    // §4.5 (v0.7 rule): removes options that destroy a counted entity while a
+    // charge-free candidate exists (Axiom 3). Every removal is recorded as
+    // gate = "collapse".
     std::pair<std::vector<ActionOption>, std::vector<RemovedOption>> apply_structural_gate(
         const SystemStateMatrix& current, const std::vector<ActionOption>& options,
         const ObservationContext* ctx = nullptr) const {
@@ -644,6 +688,107 @@ public:
         return {admissible, removed};
     }
 
+    // ---------------------------------------------------------------------
+    // §4.5 (v0.8): the candidate vector and the ordered test
+    // ---------------------------------------------------------------------
+
+    // The set of entities of calc(S) whose current_dof is the minimum over calc(S)
+    // (§4.5). A set, not a node: a minimum attained by several known zeros has no
+    // unique "critical node", and a flag would have to invent a tie-break.
+    std::set<std::string> critical_members(const SystemStateMatrix& state,
+                                           const ObservationContext* ctx = nullptr) const {
+        std::set<std::string> out;
+        std::set<std::string> members = calc_members(state, ctx);
+        bool found = false;
+        double lowest = std::numeric_limits<double>::infinity();
+        for (const auto& id : members) {
+            auto it = state.entities.find(id);
+            if (it == state.entities.end()) continue;
+            lowest = std::min(lowest, it->second.current_dof);
+            found = true;
+        }
+        if (!found) return out;
+        for (const auto& id : members) {
+            auto it = state.entities.find(id);
+            if (it != state.entities.end() && it->second.current_dof == lowest) out.insert(id);
+        }
+        return out;
+    }
+
+    // The entities this option drops out of a `reachable` verdict, line by line
+    // (§4.5, §6.3).
+    //
+    // The verdict procedure runs twice over the SAME observation — once as
+    // observed, once with the option's closure applied — so a verdict can only
+    // move away from `reachable`, and the difference is computed rather than
+    // declared. A lost witness is a loss: an entity that leaves `reachable` counts
+    // even where no exclusion follows from it, because §4.2 excludes only on a
+    // proven_unreachable verdict over a complete observation.
+    std::vector<LostPathEntry> lost_paths(const SystemStateMatrix& state,
+                                          const ActionOption& option,
+                                          const ObservationContext* ctx = nullptr) const {
+        std::vector<LostPathEntry> out;
+        if (ctx == nullptr || option.closed.empty()) return out;
+        dof::WorldGraph closed_world = ctx->world.with_closed(option.closed);
+        std::set<std::string> critical = critical_members(state, ctx);
+        for (const auto& kv : state.entities) {
+            const std::string& id = kv.first;
+            dof::Verdict before = ctx->world.verdict(id, ctx->means_class, ctx->horizon(id));
+            if (before.verdict != "reachable") continue;
+            dof::Verdict after = closed_world.verdict(id, ctx->means_class, ctx->horizon(id));
+            if (after.verdict == "reachable") continue;
+            LostPathEntry row;
+            row.entity_id = id;
+            row.verdict_before = before.verdict;
+            row.verdict_after = after.verdict;
+            row.critical = critical.count(id) > 0;
+            row.witness_lost = before.witness;
+            out.push_back(row);
+        }
+        return out;
+    }
+
+    // The keys of one candidate (§4.5): all of them, from quantities the earlier
+    // releases already produce.
+    CandidateVector candidate_vector(const SystemStateMatrix& state, const ActionOption& option,
+                                     const ObservationContext* ctx, double current_index) const {
+        auto sim = simulate(state, option, ctx);
+        double projected = calculate_system_dof(sim.first, &sim.second, ctx);
+        std::vector<LostPathEntry> lost = lost_paths(state, option, ctx);
+        int d3 = 0;
+        for (const auto& row : lost) {
+            if (row.critical) ++d3;
+        }
+        CandidateVector v;
+        v.d1 = static_cast<int>(collapse_charges(state, option, ctx).size());
+        v.d2 = static_cast<int>(lost.size());
+        v.d3 = d3;
+        v.net_delta = net_delta(state, option, projected, current_index);
+        v.reversible = is_reversible(option);
+        v.option_id = option.option_id;
+        return v;
+    }
+
+    // Staying put: the zero vector, NetDelta = 0 by definition.
+    static CandidateVector baseline_vector() { return CandidateVector{}; }
+
+    // The first dimension on which a candidate fails to beat staying put (§4.5,
+    // §6.2). Empty means nothing barred it: it outranks the baseline, or ties it
+    // while staying reversible.
+    static std::optional<std::string> barring_key(const CandidateVector& v) {
+        if (v.d1 > 0) return std::string("d1");
+        if (v.d2 > 0) return std::string("d2");
+        if (v.d3 > 0) return std::string("d3");
+        if (v.net_delta <= 0.0) return std::string("net_delta");
+        return std::nullopt;
+    }
+
+    static int dimension(const CandidateVector& v, const std::string& key) {
+        if (key == "d1") return v.d1;
+        if (key == "d2") return v.d2;
+        return v.d3;
+    }
+
     double net_delta(const SystemStateMatrix& current, const ActionOption& option,
                      double projected, double current_dof) const {
         // §4.4 (v0.7): no flat penalty. An irreversible option's price is already
@@ -654,34 +799,106 @@ public:
         return projected - current_dof - current.context_switch_cost;
     }
 
+    // The v0.8 selection (§4.5): admissibility first, the index second. Returns
+    // the winner, or empty when the system stays — a decision and not an absence
+    // of one.
+    //
+    // Staying put is a candidate LIKE ANY OTHER, so its zero vector enters the set:
+    // that is what makes a protected dimension a BAR instead of a comparison. Any
+    // candidate with d1, d2 or d3 above zero loses to it, and no candidate can ever
+    // be preferred for cutting a path. Comparing against the baseline only at the
+    // NetDelta step would let a positive delta buy a lost path back — exactly the
+    // defect this release removes.
+    std::pair<std::optional<ActionOption>, std::vector<CandidateVector>> select_candidate(
+        const SystemStateMatrix& current_state,
+        const std::vector<ActionOption>& options,
+        const ObservationContext* ctx = nullptr) const
+    {
+        std::vector<CandidateVector> vectors;
+        if (options.empty()) return {std::nullopt, vectors};
+        struct Entry {
+            std::optional<ActionOption> option;
+            CandidateVector vector;
+            bool is_baseline = false;
+        };
+        double current = calculate_system_dof(current_state, nullptr, ctx);
+        std::vector<Entry> survivors;
+        for (const auto& option : options) {
+            CandidateVector v = candidate_vector(current_state, option, ctx, current);
+            vectors.push_back(v);
+            Entry e;
+            e.option = option;
+            e.vector = v;
+            survivors.push_back(e);
+        }
+        Entry baseline;
+        baseline.is_baseline = true;
+        baseline.vector = baseline_vector();
+        survivors.push_back(baseline);
+
+        // 1. Structural admissibility: d1 = d2 = d3 = 0. Inadmissible candidates
+        //    are never compared with one another.
+        const std::vector<std::string> keys{"d1", "d2", "d3"};
+        for (const auto& key : keys) {
+            if (survivors.empty()) break;
+            int best = dimension(survivors.front().vector, key);
+            for (const auto& e : survivors) best = std::min(best, dimension(e.vector, key));
+            std::vector<Entry> kept;
+            for (const auto& e : survivors) {
+                if (dimension(e.vector, key) == best) kept.push_back(e);
+            }
+            survivors = kept;
+        }
+        // 2. The index, ties grouped with the tolerance of §10.
+        if (!survivors.empty()) {
+            double best = survivors.front().vector.net_delta;
+            for (const auto& e : survivors) best = std::max(best, e.vector.net_delta);
+            std::vector<Entry> kept;
+            for (const auto& e : survivors) {
+                if (std::fabs(e.vector.net_delta - best) <= net_delta_tolerance) kept.push_back(e);
+            }
+            survivors = kept;
+        }
+        // 3. Reversibility: a preference among equals, not a penalty (§4.4).
+        if (!survivors.empty()) {
+            bool any_reversible = false;
+            for (const auto& e : survivors) {
+                if (e.vector.reversible) any_reversible = true;
+            }
+            if (any_reversible) {
+                std::vector<Entry> kept;
+                for (const auto& e : survivors) {
+                    if (e.vector.reversible) kept.push_back(e);
+                }
+                survivors = kept;
+            }
+        }
+        // 4. A complete tie goes to staying put, if it is still a candidate.
+        for (const auto& e : survivors) {
+            if (e.is_baseline) return {std::nullopt, vectors};
+        }
+        if (!survivors.empty()) {
+            std::string best_id = survivors.front().vector.option_id;
+            for (const auto& e : survivors) best_id = std::min(best_id, e.vector.option_id);
+            std::vector<Entry> kept;
+            for (const auto& e : survivors) {
+                if (e.vector.option_id == best_id) kept.push_back(e);
+            }
+            survivors = kept;
+        }
+        if (survivors.empty()) return {std::nullopt, vectors};
+        // The survivor is selected only if it beats the baseline. With the baseline
+        // in the set this is already implied; the guard states the rule.
+        if (survivors.front().vector.net_delta <= 0.0) return {std::nullopt, vectors};
+        return {survivors.front().option, vectors};
+    }
+
     std::optional<ActionOption> evaluate_and_select(
         const SystemStateMatrix& current_state,
         const std::vector<ActionOption>& options,
         const ObservationContext* ctx = nullptr) const
     {
-        if (options.empty()) return std::nullopt;
-        double current = calculate_system_dof(current_state, nullptr, ctx);
-        std::optional<ActionOption> best;
-        double best_net = 0.0;
-        std::size_t best_charges = 0;
-
-        for (const auto& option : options) {
-            auto sim_result = simulate(current_state, option, ctx);
-            double projected = calculate_system_dof(sim_result.first, &sim_result.second, ctx);
-            double net = net_delta(current_state, option, projected, current);
-            if (net <= 0.0) continue; // §4.5: staying put wins; acting would degrade the index
-            std::size_t charges = collapse_charges(current_state, option, ctx).size();
-            bool better = !best.has_value() || net > best_net ||
-                          (net == best_net &&
-                           (charges < best_charges ||
-                            (charges == best_charges && option.option_id < best->option_id)));
-            if (better) {
-                best = option;
-                best_net = net;
-                best_charges = charges;
-            }
-        }
-        return best;
+        return select_candidate(current_state, options, ctx).first;
     }
 
     // §4.7: a resolvable unknown left unmeasured in every candidate.
@@ -752,7 +969,8 @@ public:
         for (const auto& option : options) {
             auto sim_result = simulate(current_state, option, ctx);
             double projected = calculate_system_dof(sim_result.first, &sim_result.second, ctx);
-            double net = net_delta(current_state, option, projected, total);
+            CandidateVector vec = candidate_vector(current_state, option, ctx, total);
+            double net = vec.net_delta;
             bool is_selected = selected.has_value() && selected->option_id == option.option_id;
             rep.options.push_back(OptionReportRow{option.option_id, is_reversible(option), projected, net, is_selected, option.estimated_duration_mks});
             // §6.3: every collapse this option causes, as an auditable line
@@ -768,6 +986,11 @@ public:
             rep.options.back().mandate_exceeded = plan.mandate_exceeded;
             rep.options.back().closed = option.closed;
             rep.options.back().closure_share = closure_share(current_state, option, ctx);
+            // §6.3 (v0.8): the protected dimensions, the dimension that barred the
+            // candidate (empty when nothing did), and the path losses line by line.
+            rep.options.back().candidate_vector = vec;
+            rep.options.back().barring_key = barring_key(vec);
+            rep.options.back().lost_paths = lost_paths(current_state, option, ctx);
         }
         rep.total_system_dof = total;
         rep.context_switch_cost = current_state.context_switch_cost;
@@ -776,6 +999,10 @@ public:
         rep.removed_options = in.removed;
         rep.incomplete = is_incomplete(current_state, options);
         rep.means_provenance = in.means_provenance;
+        // §6.2 (v0.8): what the candidates were compared against, and whether any
+        // of them beat it. A silent "no action" is an omission.
+        rep.baseline = baseline_vector();
+        rep.no_candidate_better = !options.empty() && !selected.has_value();
         if (ctx != nullptr && !ctx->observation_digest.empty()) {
             rep.observation_digest = ctx->observation_digest;
         }

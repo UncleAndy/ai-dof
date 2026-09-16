@@ -103,6 +103,28 @@ type CollapseCharge struct {
 	DoFBefore float64 `json:"dof_before"`
 }
 
+// CandidateVector is the v0.8 candidate vector (§4.5): three counts of entities —
+// the protected dimensions — plus the index and the reversibility preference.
+type CandidateVector struct {
+	D1         int     `json:"d1"`
+	D2         int     `json:"d2"`
+	D3         int     `json:"d3"`
+	NetDelta   float64 `json:"net_delta"`
+	Reversible bool    `json:"reversible"`
+	OptionID   string  `json:"option_id"`
+}
+
+// LostPathEntry is one entity this option drops out of a `reachable` verdict,
+// with the witness it lost (§4.5, §6.3). A path loss counts even where no
+// exclusion follows from it.
+type LostPathEntry struct {
+	EntityID      string   `json:"entity_id"`
+	VerdictBefore string   `json:"verdict_before"`
+	VerdictAfter  string   `json:"verdict_after"`
+	Critical      bool     `json:"critical"`
+	WitnessLost   []string `json:"witness_lost"`
+}
+
 type OptionReportRow struct {
 	OptionID             string                         `json:"option_id"`
 	IsReversible         bool                           `json:"is_reversible"`
@@ -118,6 +140,11 @@ type OptionReportRow struct {
 	// §6.3 (v0.7): what the option closes, and how the loss decomposes.
 	Closed       []ClosedRef        `json:"closed"`
 	ClosureShare map[string]float64 `json:"closure_share"`
+	// §6.3 (v0.8): the protected dimensions, the key that barred the candidate
+	// (nil when nothing did), and the path losses line by line.
+	CandidateVector CandidateVector `json:"candidate_vector"`
+	BarringKey      *string         `json:"barring_key"`
+	LostPaths       []LostPathEntry `json:"lost_paths"`
 }
 
 type RemovedOption struct {
@@ -144,6 +171,10 @@ type DofReport struct {
 	// balance or an asserted authority.
 	ObservationDigest *string                `json:"observation_digest"`
 	MeansProvenance   map[string]interface{} `json:"means_provenance"`
+	// §6.2 (v0.8): the vector every candidate was compared against, and whether
+	// any candidate beat it. A refusal to act is a decision and must be audible.
+	Baseline          CandidateVector `json:"baseline"`
+	NoCandidateBetter bool            `json:"no_candidate_better"`
 }
 
 // ReportInput carries what a report needs beyond the state, the candidates and
@@ -167,6 +198,14 @@ type DOFCalculusCore struct {
 func NewDOFCalculusCore() *DOFCalculusCore {
 	return &DOFCalculusCore{epsilon: 1e-6}
 }
+
+// netDeltaTolerance is the v0.8 constant that decides whether two candidates'
+// NetDelta are tied (§10). The index is a sum of logarithms over a SET, so two
+// ports that iterate their container in different orders can disagree in the last
+// bits (~1e-15) while agreeing on every derivation — and a tie must be resolved
+// identically everywhere, because §7 requires the same CHOICE, not only the same
+// numbers.
+const netDeltaTolerance = 1e-9
 
 func (c *DOFCalculusCore) isIncluded(entity *EntityState, ctx *ObservationContext, state *SystemStateMatrix) bool {
 	// Excluded if it is a **witnessed** collapse source, or if its DoF is a known
@@ -396,6 +435,133 @@ func (c *DOFCalculusCore) ApplyStructuralGate(current *SystemStateMatrix, option
 	return admissible, removed
 }
 
+// RETIRED in v0.8: the live path no longer calls this. A charged candidate is
+// evaluated, reported in full, and made inadmissible by the vector test of §4.5
+// (`SelectCandidate`), so `removed_options` carries no structural removal. Kept
+// because the v0.6 harness asserts the rule that was in force then, and history
+// must stay reproducible.
+//
+// ---------------------------------------------------------------------------
+// §4.5 (v0.8): the candidate vector and the ordered test
+// ---------------------------------------------------------------------------
+
+// criticalMembers is the set of entities of calc(S) whose current_dof is the
+// minimum over calc(S) (§4.5). A set, not a node: a minimum attained by several
+// known zeros has no unique "critical node", and a flag would have to invent a
+// tie-break by entity_id.
+func (c *DOFCalculusCore) criticalMembers(state *SystemStateMatrix, ctx *ObservationContext) map[string]bool {
+	out := map[string]bool{}
+	lowest := math.Inf(1)
+	found := false
+	for id := range c.calcMembers(state, ctx) {
+		ent, ok := state.Entities[id]
+		if !ok {
+			continue
+		}
+		if ent.CurrentDoF < lowest {
+			lowest = ent.CurrentDoF
+		}
+		found = true
+	}
+	if !found {
+		return out
+	}
+	for id := range c.calcMembers(state, ctx) {
+		ent, ok := state.Entities[id]
+		if ok && ent.CurrentDoF == lowest {
+			out[id] = true
+		}
+	}
+	return out
+}
+
+// lostPaths is the number of entities this option drops out of a `reachable`
+// verdict, line by line (§4.5, §6.3).
+//
+// The verdict procedure runs twice over the SAME observation — once as observed,
+// once with the option's closure applied — so a verdict can only move away from
+// `reachable`, and the difference is computed rather than declared. A lost
+// witness is a loss: an entity that leaves `reachable` counts even where no
+// exclusion follows from it, because §4.2 excludes only on a proven_unreachable
+// verdict over a complete observation.
+func (c *DOFCalculusCore) lostPaths(state *SystemStateMatrix, option *ActionOption, ctx *ObservationContext) []LostPathEntry {
+	out := []LostPathEntry{}
+	if ctx == nil || ctx.World == nil || len(option.Closed) == 0 {
+		return out
+	}
+	closedWorld := ctx.World.WithClosed(option.Closed)
+	critical := c.criticalMembers(state, ctx)
+	for _, id := range sortedKeys(state.Entities) {
+		before := ctx.World.Verdict(id, ctx.MeansClass, ctx.horizon(id))
+		if before.Verdict != "reachable" {
+			continue
+		}
+		after := closedWorld.Verdict(id, ctx.MeansClass, ctx.horizon(id))
+		if after.Verdict == "reachable" {
+			continue
+		}
+		witness := make([]string, len(before.Witness))
+		copy(witness, before.Witness)
+		out = append(out, LostPathEntry{
+			EntityID: id, VerdictBefore: before.Verdict, VerdictAfter: after.Verdict,
+			Critical: critical[id], WitnessLost: witness,
+		})
+	}
+	return out
+}
+
+// candidateVector computes the keys of one candidate (§4.5): all of them, from
+// quantities the earlier releases already produce.
+func (c *DOFCalculusCore) candidateVector(state *SystemStateMatrix, option *ActionOption, ctx *ObservationContext, currentIndex float64) CandidateVector {
+	simulated, members := c.simulate(state, option, ctx)
+	projected := c.CalculateSystemDoF(simulated, members, ctx)
+	lost := c.lostPaths(state, option, ctx)
+	d3 := 0
+	for _, row := range lost {
+		if row.Critical {
+			d3++
+		}
+	}
+	return CandidateVector{
+		D1: len(c.collapseCharges(state, option, ctx)), D2: len(lost), D3: d3,
+		NetDelta: c.netDelta(state, option, projected, currentIndex),
+		Reversible: c.IsReversible(option), OptionID: option.OptionID,
+	}
+}
+
+// BaselineVector is staying put: the zero vector, NetDelta = 0 by definition.
+func (c *DOFCalculusCore) BaselineVector() CandidateVector {
+	return CandidateVector{D1: 0, D2: 0, D3: 0, NetDelta: 0.0, Reversible: true}
+}
+
+// BarringKey is the first dimension on which a candidate fails to beat staying
+// put (§4.5, §6.2). nil means nothing barred it: it outranks the baseline, or
+// ties it while staying reversible.
+func (c *DOFCalculusCore) BarringKey(vector CandidateVector) *string {
+	for _, key := range []string{"d1", "d2", "d3"} {
+		if dimension(vector, key) > 0 {
+			k := key
+			return &k
+		}
+	}
+	if vector.NetDelta <= 0.0 {
+		k := "net_delta"
+		return &k
+	}
+	return nil
+}
+
+func dimension(v CandidateVector, key string) int {
+	switch key {
+	case "d1":
+		return v.D1
+	case "d2":
+		return v.D2
+	default:
+		return v.D3
+	}
+}
+
 func (c *DOFCalculusCore) requirement(option *ActionOption) map[string]float64 {
 	net := make(map[string]float64)
 	for _, entityDeltas := range option.ProjectedResourceDelta {
@@ -595,32 +761,123 @@ func (c *DOFCalculusCore) netDelta(current *SystemStateMatrix, option *ActionOpt
 	return projected - currentDoF - current.ContextSwitchCost
 }
 
+// EvaluateAndSelect is the v0.8 selection (§4.5): admissibility first, the index
+// second. It returns the winner, or nil when the system stays — a decision and
+// not an absence of one.
 func (c *DOFCalculusCore) EvaluateAndSelect(currentState *SystemStateMatrix, options []*ActionOption, ctx *ObservationContext) *ActionOption {
+	selected, _ := c.SelectCandidate(currentState, options, ctx)
+	return selected
+}
+
+// SelectCandidate returns the winner and every candidate's vector.
+//
+// Staying put is a candidate LIKE ANY OTHER, so its zero vector enters the set:
+// that is what makes a protected dimension a BAR instead of a comparison. Any
+// candidate with d1, d2 or d3 above zero loses to it, and no candidate can ever
+// be preferred for cutting a path. Comparing against the baseline only at the
+// NetDelta step would let a positive delta buy a lost path back — exactly the
+// defect this release removes.
+func (c *DOFCalculusCore) SelectCandidate(currentState *SystemStateMatrix, options []*ActionOption, ctx *ObservationContext) (*ActionOption, []CandidateVector) {
+	vectors := []CandidateVector{}
 	if len(options) == 0 {
-		return nil
+		return nil, vectors
+	}
+	type entry struct {
+		option *ActionOption // nil = staying put
+		vector CandidateVector
 	}
 	current := c.CalculateSystemDoF(currentState, nil, ctx)
-	var best *ActionOption
-	var bestNet float64
-	var bestCharges int
-	var haveBest bool
-
+	survivors := []entry{}
 	for _, option := range options {
-		simulated, members := c.simulate(currentState, option, ctx)
-		projected := c.CalculateSystemDoF(simulated, members, ctx)
-		net := c.netDelta(currentState, option, projected, current)
-		if net <= 0.0 {
-			continue // §4.5: staying put wins; acting would degrade the index
+		vector := c.candidateVector(currentState, option, ctx, current)
+		vectors = append(vectors, vector)
+		survivors = append(survivors, entry{option, vector})
+	}
+	survivors = append(survivors, entry{nil, c.BaselineVector()})
+
+	// 1. Structural admissibility: D1 = D2 = D3 = 0. Inadmissible candidates are
+	//    never compared with one another.
+	for _, key := range []string{"d1", "d2", "d3"} {
+		if len(survivors) == 0 {
+			break
 		}
-		charges := len(c.collapseCharges(currentState, option, ctx))
-		better := !haveBest || net > bestNet ||
-			(net == bestNet && (charges < bestCharges ||
-				(charges == bestCharges && option.OptionID < best.OptionID)))
-		if better {
-			best, bestNet, bestCharges, haveBest = option, net, charges, true
+		best := dimension(survivors[0].vector, key)
+		for _, e := range survivors {
+			if v := dimension(e.vector, key); v < best {
+				best = v
+			}
+		}
+		kept := []entry{}
+		for _, e := range survivors {
+			if dimension(e.vector, key) == best {
+				kept = append(kept, e)
+			}
+		}
+		survivors = kept
+	}
+	// 2. The index, ties grouped with the tolerance of §10.
+	if len(survivors) > 0 {
+		best := survivors[0].vector.NetDelta
+		for _, e := range survivors {
+			if e.vector.NetDelta > best {
+				best = e.vector.NetDelta
+			}
+		}
+		kept := []entry{}
+		for _, e := range survivors {
+			if math.Abs(e.vector.NetDelta-best) <= netDeltaTolerance {
+				kept = append(kept, e)
+			}
+		}
+		survivors = kept
+	}
+	// 3. Reversibility: a preference among equals, not a penalty (§4.4).
+	anyReversible := false
+	for _, e := range survivors {
+		if e.vector.Reversible {
+			anyReversible = true
 		}
 	}
-	return best
+	if anyReversible {
+		kept := []entry{}
+		for _, e := range survivors {
+			if e.vector.Reversible {
+				kept = append(kept, e)
+			}
+		}
+		survivors = kept
+	}
+	// 4. A complete tie goes to staying put, if it is still a candidate.
+	for _, e := range survivors {
+		if e.option == nil {
+			return nil, vectors
+		}
+	}
+	if len(survivors) > 0 {
+		bestID := survivors[0].vector.OptionID
+		for _, e := range survivors {
+			if e.vector.OptionID < bestID {
+				bestID = e.vector.OptionID
+			}
+		}
+		kept := []entry{}
+		for _, e := range survivors {
+			if e.vector.OptionID == bestID {
+				kept = append(kept, e)
+			}
+		}
+		survivors = kept
+	}
+	if len(survivors) == 0 {
+		return nil, vectors
+	}
+	winner := survivors[0]
+	// The survivor is selected only if it beats the baseline. With the baseline in
+	// the set this is already implied; the guard states the rule.
+	if winner.vector.NetDelta <= 0.0 {
+		return nil, vectors
+	}
+	return winner.option, vectors
 }
 
 func (c *DOFCalculusCore) isIncomplete(state *SystemStateMatrix, options []*ActionOption) bool {
@@ -740,7 +997,8 @@ func (c *DOFCalculusCore) Report(currentState *SystemStateMatrix, options []*Act
 	for _, option := range options {
 		simulated, members := c.simulate(currentState, option, ctx)
 		projected := c.CalculateSystemDoF(simulated, members, ctx)
-		net := c.netDelta(currentState, option, projected, total)
+		vector := c.candidateVector(currentState, option, ctx, total)
+		net := vector.NetDelta
 		isSelected := selected != nil && selected.OptionID == option.OptionID
 		plan := c.PlanFunding(currentState, option, in.Groups, in.Rates, in.Weights, in.Cap)
 		optionRows = append(optionRows, OptionReportRow{
@@ -757,6 +1015,11 @@ func (c *DOFCalculusCore) Report(currentState *SystemStateMatrix, options []*Act
 			MandateExceeded:      plan.MandateExceeded,
 			Closed:               option.Closed,
 			ClosureShare:         c.closureShare(currentState, option, ctx),
+			// §6.3 (v0.8): the protected dimensions, the key that barred the
+			// candidate (nil when nothing did), and the path losses line by line.
+			CandidateVector: vector,
+			BarringKey:      c.BarringKey(vector),
+			LostPaths:       c.lostPaths(currentState, option, ctx),
 		})
 	}
 
@@ -787,6 +1050,10 @@ func (c *DOFCalculusCore) Report(currentState *SystemStateMatrix, options []*Act
 		ResourcesBefore:         resBefore,
 		ResourcesAfter:          resAfter,
 		MeansProvenance:         in.MeansProvenance,
+		// §6.2 (v0.8): what the candidates were compared against, and whether any
+		// of them beat it. A silent "no action" is an omission.
+		Baseline:          c.BaselineVector(),
+		NoCandidateBetter: len(options) > 0 && selected == nil,
 	}
 	if report.MeansProvenance == nil {
 		report.MeansProvenance = map[string]interface{}{}

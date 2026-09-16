@@ -37,31 +37,26 @@ func (o *DOFOrchestrator) generate(state *SystemStateMatrix, tau float64) []*Act
 	return o.generator.Synthesize(state, 5)
 }
 
-// gates runs §5 → §4.5 → §4.8 in that order, with every removal recorded. The
-// observation comes from the mapper and is handed to the structural gate: the
-// charge of §4.2 is taken against `calc(S)`, and `calc` is decided by the
-// verdicts of §4.9 — so the gate and the index must be scored against the same
-// set, or the gate would filter a different world than the one the decision was
-// made in.
+// gates runs §5 → §4.8, with every removal recorded.
+//
+// v0.8 RETIRED the structural gate of §4.5: a charged candidate is no longer
+// removed from the set. It is evaluated, reported in full and made inadmissible
+// by the candidate-vector test, so the structural decision is visible per option
+// as `d1` instead of as a deletion here. Two gates remain: viability (§5) and
+// insolvency (§4.8).
 func (o *DOFOrchestrator) gates(state *SystemStateMatrix, options []*ActionOption) ([]*ActionOption, []RemovedOption) {
-	ctx := o.mapper.LastObservation
 	decl := o.mapper.LastDeclaration
 	tau := state.GlobalTimeToCollapseMks
 	viable, removedViability := applyViabilityGate(options, tau)
-	admissible, removedStructural := o.core.ApplyStructuralGate(state, viable, ctx)
 	var groups [][]string
 	var rates map[string]RateInfo
 	var weights map[string]float64
-	var capValue *float64
+	var cap *float64
 	if decl != nil {
-		groups, rates, weights, capValue = decl.Groups, decl.Rates, decl.Weights, decl.MandateCap
+		groups, rates, weights, cap = decl.Groups, decl.Rates, decl.Weights, decl.MandateCap
 	}
-	affordable, removedResource := o.core.ApplyResourceGate(state, admissible, groups, rates,
-		weights, capValue)
-	allRemoved := append([]RemovedOption{}, removedViability...)
-	allRemoved = append(allRemoved, removedStructural...)
-	allRemoved = append(allRemoved, removedResource...)
-	return affordable, allRemoved
+	affordable, removedResource := o.core.ApplyResourceGate(state, viable, groups, rates, weights, cap)
+	return affordable, append(removedViability, removedResource...)
 }
 
 func (o *DOFOrchestrator) Step(raw map[string]interface{}) *ActionOption {

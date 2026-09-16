@@ -386,6 +386,83 @@ func FixtureScene(opts FixtureOptions) map[string]interface{} {
 	return out
 }
 
+// ---------------------------------------------------------------------------
+// §4.5 (v0.8) run variant: the "compensation" fixture
+// ---------------------------------------------------------------------------
+
+// The means of the v0.8 run variant.
+const (
+	SuperviseMeanID = "radio"
+	TraineeMeanID   = "q_trainee_1"
+	MentorMeanID    = "q_mentor_2"
+)
+
+// FixtureT1Scene is the released world plus the two entities D3 exists for
+// (§4.5, T1).
+//
+// `trainee` CAN act (V = 1) but its own act does not raise its own DoF, so its
+// recoverability rests entirely on someone else's act. `mentor` is that someone:
+// it performs `act_supervise` and holds a second vector of its own, so closing
+// the mean behind the act costs the mentor a response vector — a price inside the
+// index — without driving it to a known zero, which would make the option
+// destructive instead of merely path-cutting. Both sit at 0.125 exactly:
+// ψ_var = ½, ψ_opt = 4^(−½) = ½, ψ_con = ½.
+//
+// Built as a POST-PROCESSING of the released scene, not as a branch inside it:
+// the released fixture's own numbers and digests must not move, and threading a
+// flag through fixtureWorld would put that at risk for no gain.
+func FixtureT1Scene() map[string]interface{} {
+	out := FixtureScene(FixtureOptions{})
+	out["mentor"] = map[string]interface{}{
+		"is_autonomous": true, "agency_index": 0.5, "is_collapse_source": false,
+		"time_to_collapse_mks": 1e8,
+		"lenses": map[string]interface{}{
+			"variety":    map[string]interface{}{"V": 2.0, "V_env": 2.0},
+			"options":    []interface{}{[]interface{}{1.0, 2.0}},
+			"constraint": map[string]interface{}{"F": 1.0, "F_env": 1.0},
+		}}
+	out["trainee"] = map[string]interface{}{
+		"is_autonomous": false, "agency_index": 0.2, "is_collapse_source": false,
+		"time_to_collapse_mks": 1e8,
+		"lenses": map[string]interface{}{
+			"variety":    map[string]interface{}{"V": 1.0, "V_env": 1.0},
+			"options":    []interface{}{[]interface{}{1.0, 2.0}},
+			"constraint": map[string]interface{}{"F": 1.0, "F_env": 1.0},
+		}}
+	world := out["world"].(map[string]interface{})
+	entities := world["entities"].(map[string]interface{})
+	entities["mentor"] = map[string]interface{}{
+		"id": "mentor", "observation": "complete", "current_dof": 0.125}
+	entities["trainee"] = map[string]interface{}{
+		"id": "trainee", "observation": "complete", "current_dof": 0.125}
+	means := world["means"].([]interface{})
+	means = append(means, SuperviseMeanID, TraineeMeanID, MentorMeanID)
+	world["means"] = means
+	acts := world["acts"].([]interface{})
+	acts = append(acts,
+		// The trainee's own vector: it acts, on the robot, and never on itself —
+		// which is why losing the mentor's act costs it the path while its V stays
+		// above zero (so there is no collapse charge).
+		map[string]interface{}{
+			"id": "a_trainee_1", "source": "trainee", "target": "robot",
+			"category": "technical", "requires": []interface{}{TraineeMeanID},
+			"effect": map[string]interface{}{"robot": 0.01}, "duration_mks": 1000.0},
+		map[string]interface{}{
+			"id": "act_supervise", "source": "mentor", "target": "trainee",
+			"category": "technical", "requires": []interface{}{SuperviseMeanID},
+			"effect": map[string]interface{}{"trainee": 0.1}, "duration_mks": 1000.0},
+		map[string]interface{}{
+			"id": "a_mentor_2", "source": "mentor", "target": "mentor",
+			"category": "technical", "requires": []interface{}{MentorMeanID},
+			"effect": map[string]interface{}{"mentor": 0.01}, "duration_mks": 1000.0})
+	world["acts"] = acts
+	// A horizon is what makes a verdict a verdict: with no T_rec the trainee's
+	// answer would be `undetermined`, and D2 counts only a LOST `reachable`.
+	tRec := world["t_rec"].(map[string]interface{})
+	tRec["trainee"] = FixtureTRecMks
+	return out
+}
+
 // FixtureArbitrageScene is §11.10 п.3, variant B: an observation that is not
 // arbitrage-free. `credit->energy = 5.0` closes a cycle with product
 // `5.0·0.5·0.5 = 1.25 > 1`, so the rate is not "very favourable", it is

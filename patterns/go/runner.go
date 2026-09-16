@@ -5,11 +5,16 @@ package main
 // Two harnesses live in this directory and both stay runnable, because a release
 // must carry its own evidence and the previous release's:
 //
-//	go run . v07   # the release's conformance suite (harness_v07.go), default
-//	go run . v06   # the v0.6 harness (main.go), historical evidence
+//	runHarnessV08() — the release's conformance suite (harness_v08.go)
+//	runHarnessV07() — the v0.7 suite (harness_v07.go), kept as that release's evidence
+//	runHarnessV06() — the v0.5/v0.6 suite (main.go), historical evidence
 //
-// `v07` is the default so that a bare `go run .` — and any tool that builds and
-// runs the port without arguments — exercises the current release.
+//	runHarnessV08() is the default so that a bare `go run .` — and any tool that
+//	builds and runs the port without arguments — exercises the current release.
+//
+//	`dump` prints the canonical text of the release fixture's declaration and both
+//	digests, which is the tool that makes a cross-port mismatch a diff instead of
+//	a mystery. It mirrors patterns/python/reference_digest.py.
 
 import (
 	"fmt"
@@ -17,11 +22,13 @@ import (
 )
 
 func main() {
-	which := "v07"
+	which := "v08"
 	if len(os.Args) > 1 {
 		which = os.Args[1]
 	}
 	switch which {
+	case "v08":
+		runHarnessV08()
 	case "v07":
 		runHarnessV07()
 	case "v06":

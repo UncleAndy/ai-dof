@@ -67,20 +67,21 @@ public:
         const ObservationContext* ctx = mapper_.last_observation ? &*mapper_.last_observation : nullptr;
         double tau = state.global_time_to_collapse_mks;
         auto gated = viability_gate(generate(state, tau), tau);
-        auto structural = core_.apply_structural_gate(state, gated.first, ctx);
-        auto affordable = core_.apply_resource_gate(state, structural.first,
+        // v0.8 retired the structural gate of §4.5: a charged candidate is no longer
+        // removed from the set — it is evaluated, reported in full and barred by the
+        // candidate-vector test.
+        auto affordable = core_.apply_resource_gate(state, gated.first,
                                                     groups_ptr(), rates_ptr(),
                                                     weights_ptr(), cap_value());
         return core_.evaluate_and_select(state, affordable.first, ctx);
     }
 
     // Like step(), but also returns the Proof-of-Implementation audit.
-    // Gate order is normative (§5 → §4.5 → §4.8): the reason a reader needs
-    // first is the one about the world, not the one about the wallet.
-    //
-    // The observation reaches the structural gate on purpose: the charge of §4.2 is
-    // taken against `calc(S)`, and `calc` is decided by the verdicts of §4.9 — so
-    // the gate and the index must be scored against the same set.
+    // Gate order is normative (§5 → §4.8): the reason a reader needs first is the
+    // one about the world, not the one about the wallet. v0.8 retired the
+    // structural gate of §4.5 — a charged candidate is evaluated, reported in full
+    // and barred by the candidate-vector test of §4.5, so no removal is recorded
+    // for it.
     std::pair<std::optional<ActionOption>, DofReport> step_with_report(
         const std::unordered_map<std::string, RawObservation>& raw) const
     {
@@ -89,13 +90,11 @@ public:
         double tau = state.global_time_to_collapse_mks;
         std::string mode = (tau < fast_pass_threshold) ? "FAST_PASS" : "DEEP_DIVERSIFICATION";
         auto gated = viability_gate(generate(state, tau), tau);
-        auto structural = core_.apply_structural_gate(state, gated.first, ctx);
-        auto affordable = core_.apply_resource_gate(state, structural.first,
+        auto affordable = core_.apply_resource_gate(state, gated.first,
                                                     groups_ptr(), rates_ptr(),
                                                     weights_ptr(), cap_value());
         auto selected = core_.evaluate_and_select(state, affordable.first, ctx);
         std::vector<RemovedOption> all_removed = gated.second;
-        all_removed.insert(all_removed.end(), structural.second.begin(), structural.second.end());
         all_removed.insert(all_removed.end(), affordable.second.begin(), affordable.second.end());
 
         // §6.2 (v0.7): where the amounts a decision rests on came from — a measured

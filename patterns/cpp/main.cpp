@@ -11,6 +11,7 @@
 
 #include "orchestrator.hpp"
 #include "harness_v07.hpp"
+#include "harness_v08.hpp"
 
 // Two harnesses live in this port and both stay runnable, because a release must
 // carry its own evidence and the previous release's:
@@ -430,10 +431,11 @@ int run_harness_v06() {
 }
 
 int main(int argc, char** argv) {
-    const std::string which = (argc > 1) ? argv[1] : "v07";
+    const std::string which = (argc > 1) ? argv[1] : "v08";
+    if (which == "v08") return run_harness_v08();
     if (which == "v07") return run_harness_v07();
     if (which == "v06") return run_harness_v06();
     if (which == "dump") return dump_reference();
-    std::cout << "unknown harness \"" << which << "\": expected v07 (default), v06 or dump\n";
+    std::cout << "unknown harness \"" << which << "\": expected v08 (default), v07, v06 or dump\n";
     return 2;
 }

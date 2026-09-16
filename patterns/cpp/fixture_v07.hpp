@@ -330,4 +330,93 @@ inline std::unordered_map<std::string, RawObservation> scene_other_units() {
     return m;
 }
 
+// ---------------------------------------------------------------------------
+// §4.5 (v0.8) run variant: the "compensation" fixture
+// ---------------------------------------------------------------------------
+
+// The means of the v0.8 run variant.
+inline const std::string kSuperviseMean = "radio";
+inline const std::string kTraineeMean = "q_trainee_1";
+inline const std::string kMentorMean = "q_mentor_2";
+
+// The released world plus the two entities D3 exists for (§4.5, T1).
+//
+// `trainee` CAN act (V = 1) but its own act does not raise its own DoF, so its
+// recoverability rests entirely on someone else's act. `mentor` is that someone:
+// it performs `act_supervise` and holds a second vector of its own, so closing the
+// mean behind the act costs the mentor a response vector — a price inside the
+// index — without driving it to a known zero, which would make the option
+// destructive instead of merely path-cutting. Both sit at 0.125 exactly:
+// ψ_var = ½, ψ_opt = 4^(−½) = ½, ψ_con = ½.
+//
+// Built as a POST-PROCESSING of the released scene, not as a branch inside it:
+// the released fixture's own numbers and digests must not move.
+inline std::unordered_map<std::string, RawObservation> t1_scene() {
+    std::unordered_map<std::string, RawObservation> m = scene();
+
+    dof::LensObservation mentor;
+    mentor.variety = std::make_pair(2.0, 2.0);
+    mentor.options = std::vector<std::pair<double, double>>{{1.0, 2.0}};
+    mentor.constraint = std::make_pair(1.0, 1.0);
+    m["mentor"] = RawObservation{true, 0.5, false, 1e8, mentor, std::nullopt, std::nullopt};
+
+    dof::LensObservation trainee;
+    trainee.variety = std::make_pair(1.0, 1.0);
+    trainee.options = std::vector<std::pair<double, double>>{{1.0, 2.0}};
+    trainee.constraint = std::make_pair(1.0, 1.0);
+    m["trainee"] = RawObservation{false, 0.2, false, 1e8, trainee, std::nullopt, std::nullopt};
+
+    auto world_it = m.find(kWorldKey);
+    if (world_it != m.end() && world_it->second.world) {
+        dof::WorldObservation& w = *world_it->second.world;
+        dof::EntityNode mentor_node;
+        mentor_node.id = "mentor";
+        mentor_node.observation = "complete";
+        mentor_node.current_dof = 0.125;
+        w.graph.entities["mentor"] = mentor_node;
+        dof::EntityNode trainee_node;
+        trainee_node.id = "trainee";
+        trainee_node.observation = "complete";
+        trainee_node.current_dof = 0.125;
+        w.graph.entities["trainee"] = trainee_node;
+        w.graph.means.push_back(kSuperviseMean);
+        w.graph.means.push_back(kTraineeMean);
+        w.graph.means.push_back(kMentorMean);
+        // The trainee's own vector: it acts, on the robot, and never on itself —
+        // which is why losing the mentor's act costs it the path while its V stays
+        // above zero (so there is no collapse charge).
+        dof::ActEdge trainee_act;
+        trainee_act.id = "a_trainee_1";
+        trainee_act.source = "trainee";
+        trainee_act.target = "robot";
+        trainee_act.category = "technical";
+        trainee_act.requires = {kTraineeMean};
+        trainee_act.effect = {{"robot", 0.01}};
+        trainee_act.duration_mks = 1000.0;
+        w.graph.acts.push_back(trainee_act);
+        dof::ActEdge supervise;
+        supervise.id = "act_supervise";
+        supervise.source = "mentor";
+        supervise.target = "trainee";
+        supervise.category = "technical";
+        supervise.requires = {kSuperviseMean};
+        supervise.effect = {{"trainee", 0.1}};
+        supervise.duration_mks = 1000.0;
+        w.graph.acts.push_back(supervise);
+        dof::ActEdge mentor_act;
+        mentor_act.id = "a_mentor_2";
+        mentor_act.source = "mentor";
+        mentor_act.target = "mentor";
+        mentor_act.category = "technical";
+        mentor_act.requires = {kMentorMean};
+        mentor_act.effect = {{"mentor", 0.01}};
+        mentor_act.duration_mks = 1000.0;
+        w.graph.acts.push_back(mentor_act);
+        // A horizon is what makes a verdict a verdict: with no T_rec the trainee's
+        // answer would be `undetermined`, and D2 counts only a LOST `reachable`.
+        w.t_rec["trainee"] = kTRecMks;
+    }
+    return m;
+}
+
 }  // namespace fixture_v07

@@ -130,6 +130,64 @@ inline ActionOption opt_undeclared() {
     return o;
 }
 
+// ---------------------------------------------------------------------------
+// §4.5 (v0.8): the "compensation" candidates
+// ---------------------------------------------------------------------------
+
+// A gain that WOULD have won, and a path that is the price. No collapse charge
+// and NetDelta > 0: every gate of v0.5–v0.7 passes it. `medkit` is the only act
+// lifting `revivable` off a known zero, so closing it drops that entity out of
+// `reachable`: D2 = 1, and D3 = 1 because `revivable` sits at the minimum
+// current_dof of calc(S).
+inline ActionOption t1_compensate() {
+    ActionOption o;
+    o.option_id = "t1_compensate";
+    o.description = "close medkit, gain on the drone";
+    o.projected_dof_delta = {{"drone", 0.1}};
+    o.estimated_duration_mks = 1000.0;
+    o.closed = closures({"medkit"});
+    return o;
+}
+
+// The same gain with a path that is NOT the price: closes one of robot's nine
+// means. robot keeps eight vectors and its verdict stays `reachable`, so the
+// vector is D1 = D2 = D3 = 0 and the option must be selected — the mirror of
+// t1_compensate, and the reason the release ships a test and not a ban.
+inline ActionOption t1_mirror() {
+    ActionOption o;
+    o.option_id = "t1_mirror";
+    o.description = "close m9, gain on the drone";
+    o.projected_dof_delta = {{"drone", 0.1}};
+    o.estimated_duration_mks = 1000.0;
+    o.closed = closures({"m9"});
+    return o;
+}
+
+// Loses a path that is NOT critical: closes the mean behind `act_supervise`, so
+// `trainee` leaves `reachable` (D2 = 1) while standing above the minimum DoF of
+// calc(S) (D3 = 0). Against t1_rival it shows that D2 is a bar and not a
+// comparison, and that the third dimension cannot separate two candidates.
+inline ActionOption t1_help() {
+    ActionOption o;
+    o.option_id = "t1_help";
+    o.description = "close radio, gain on the drone";
+    o.projected_dof_delta = {{"drone", 0.1}};
+    o.estimated_duration_mks = 1000.0;
+    o.closed = closures({fixture_v07::kSuperviseMean});
+    return o;
+}
+
+// t1_help's twin, with a critical path instead of a dependent's.
+inline ActionOption t1_rival() {
+    ActionOption o;
+    o.option_id = "t1_rival";
+    o.description = "close medkit, gain on the drone";
+    o.projected_dof_delta = {{"drone", 0.1}};
+    o.estimated_duration_mks = 1000.0;
+    o.closed = closures({"medkit"});
+    return o;
+}
+
 // The seven options of §11.10 п.5, in a fixed order.
 inline std::vector<ActionOption> standard_set() {
     return {opt_win(), opt_lose(), opt_collapse(), opt_over_mandate(),

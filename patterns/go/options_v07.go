@@ -124,6 +124,62 @@ func optUndeclared() *ActionOption {
 }
 
 // standardSet is the seven options of §11.10 п.5, in a fixed order.
+// ---------------------------------------------------------------------------
+// §4.5 (v0.8): the "compensation" candidates
+// ---------------------------------------------------------------------------
+
+// t1Compensate is a gain that WOULD have won, and a path that is the price.
+//
+// No collapse charge and NetDelta > 0: every gate of v0.5–v0.7 passes it, and the
+// ladder of those releases engaged only when two options tied on the index — so
+// under the old rules this option was selected exactly when it maximized
+// NetDelta. `medkit` is the only act lifting `revivable` off a known zero, so
+// closing it drops that entity out of `reachable`: D2 = 1, and D3 = 1 because
+// `revivable` sits at the minimum current_dof of calc(S).
+func t1Compensate() *ActionOption {
+	return &ActionOption{
+		OptionID: "t1_compensate", Description: "close medkit, gain on the drone",
+		ProjectedDoFDelta:    map[string]float64{"drone": 0.1},
+		EstimatedDurationMks: 1000.0, Closed: closures("medkit"),
+	}
+}
+
+// t1Mirror is the same gain with a path that is NOT the price.
+//
+// Closes one of robot's nine means: robot keeps eight vectors and its verdict
+// stays `reachable`, so the vector is D1 = D2 = D3 = 0 and the option must be
+// selected. The mirror of t1Compensate, and the reason the release ships a test
+// and not a ban.
+func t1Mirror() *ActionOption {
+	return &ActionOption{
+		OptionID: "t1_mirror", Description: "close m9, gain on the drone",
+		ProjectedDoFDelta:    map[string]float64{"drone": 0.1},
+		EstimatedDurationMks: 1000.0, Closed: closures("m9"),
+	}
+}
+
+// t1Help loses a path that is NOT critical: it closes the mean behind
+// `act_supervise`, so `trainee` leaves `reachable` (D2 = 1) while standing above
+// the minimum DoF of calc(S) (D3 = 0). Against t1Rival — the same D1 and the same
+// D2, but a critical path — it shows that D2 is a bar and not a comparison, and
+// that the third dimension cannot separate two candidates.
+func t1Help() *ActionOption {
+	return &ActionOption{
+		OptionID: "t1_help", Description: "close radio, gain on the drone",
+		ProjectedDoFDelta:    map[string]float64{"drone": 0.1},
+		EstimatedDurationMks: 1000.0, Closed: closures(SuperviseMeanID),
+	}
+}
+
+// t1Rival is t1Help's twin, with a critical path instead of a dependent's.
+func t1Rival() *ActionOption {
+	return &ActionOption{
+		OptionID: "t1_rival", Description: "close medkit, gain on the drone",
+		ProjectedDoFDelta:    map[string]float64{"drone": 0.1},
+		EstimatedDurationMks: 1000.0, Closed: closures("medkit"),
+	}
+}
+
 func standardSet() []*ActionOption {
 	return []*ActionOption{optWin(), optLose(), optCollapse(), optOverMandate(),
 		optDroneHeavy(), optBadSelf(), optBadEmpty()}

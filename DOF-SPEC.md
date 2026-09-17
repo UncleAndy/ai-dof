@@ -61,7 +61,27 @@ An entity with `current_dof == 0.0` **and** `dof_known == true` is at collapse (
 | `context_switch_cost`     | float                      | `>= 0.0`   | ΔT — penalty for changing the current process. |
 | `entities`                | map<`entity_id`,`EntityState`> | —     | The full set of observed entities. |
 | `psi`                     | object                        | —     | Frozen measurement declaration reference `{ id, digest }` (§3.4). |
-| `resources`               | map<`resource_id`, float>      | `>= 0.0` | Available means of the **acting agent** per resource, in the unit declared for that resource (§4.8). An empty map means the agent declares no means; then any option with non-zero consumption is inadmissible (§4.8). |
+| `resources`               | map<`resource_id`, `ResourceObservation`> | — | Available means of the **acting agent** per resource, in the unit declared for that resource (§4.8). An empty map means the agent declares no means; then any option with non-zero consumption is inadmissible (§4.8). Each `ResourceObservation` carries its **metadata**: `value` (float or `null`), `unit`, `scale`, `source`, `last_measured_at`, `aging_time`, `estimated` (float or `null`), and `estimation_source`. A resource with `value = null` is **unmeasured**; it MAY be acted upon only with an `estimated` value and a mandatory fallback option (§4.8). |
+
+### 3.2a `ResourceObservation`
+
+| Field | Type | Constraint | Meaning |
+|---|---|---|---|
+| `value` | float \| null | — | Observed amount; `null` = unmeasured (unknown). |
+| `unit` | string | non-empty | Unit name (declared in §3.4.1). |
+| `scale` | float | `> 0.0` | Scale coefficient relative to the base unit of the resource class. |
+| `source` | string | non-empty | Source of information: sensor module, API, ROM, derived, … |
+| `last_measured_at` | float | `>= 0.0` | Time of last direct measurement. |
+| `aging_time` | float | `> 0.0` | Characteristic data obsolescence time; beyond this the value is stale. |
+| `estimated` | float \| null | — | Estimated value used when `value = null`. |
+| `estimation_source` | list<string> | — | Indirect measurements / assumptions the estimate rests on. |
+
+**Staleness.** A resource is **stale** iff `now − last_measured_at > aging_time`. A stale value MUST NOT be used in the resource gate (§4.8) without re-measurement; a stale `estimated` MUST be re-derived.
+
+**Null resource.** When `value = null` and the option requires the resource:
+1. A `measure` action (type `act` with `discover`, §3.5) MAY be performed first to resolve it;
+2. Or the option MAY proceed using `estimated`, but a **mandatory fallback option** MUST be prepared for the case the estimate proves wrong.
+Choice between (1) and (2) depends on measurement duration vs τ (§4.8, §5).
 
 `global_time_to_collapse_mks` is computed by the Perception layer as the **minimum** `time_to_collapse_mks` over all entities where `is_collapse_source == false`. If no such entity exists, it MAY default to a safe large value (e.g. `1e15` μs ≈ 31.7 years), but implementations SHOULD surface this as a degenerate state.
 
@@ -73,6 +93,8 @@ An entity with `current_dof == 0.0` **and** `dof_known == true` is at collapse (
 | `description`          | string                        | —          | Human/agent-readable summary. |
 | `projected_dof_delta`  | map<`entity_id`, float>       | —          | Forecast change of `current_dof` per entity. |
 | `projected_resource_delta` | map<`entity_id`, map<`resource_id`, float>> | — | Forecast change of the agent's resource stock caused by this option, attributed to the entity whose transitions consume it. **Negative = consumption, positive = production.** For every entity named in `projected_dof_delta`, `energy` MUST be present (`0.0` declared explicitly, never omitted); time is carried by `estimated_duration_mks`. Resources are physical quantities in the units declared for them (§4.8). |
+| `requires` | list<`resource_id`> | — | Resources the option needs for its gate checks (§4.8). If any are `value = null`, the option is a measurement candidate (§4.8). |
+| `discovers` | list<`resource_id`> | — | Resources whose `value` becomes known after this option executes (a `measure`-type act; §3, §3.5). |
 | `is_reversible` | bool | — | `false` ⇒ irreversible ⇒ structural penalty (§4.4). |
 | `estimated_duration_mks` | float | `>= 0.0` | Estimated execution time in microseconds. |
 
@@ -92,7 +114,7 @@ An entity with `current_dof == 0.0` **and** `dof_known == true` is at collapse (
 - `psi_id` — identifier **and version** of the declaration;
 - the per-entity lens counters: `V` and `V_env`, the Options **inputs** — the raw per-resource requirements together with the derived `(c_g, C_g)` pairs that the procedure of §4.6 produces from them — and `F` and `F_env`;
 - the frozen scales: `τ` and the declared `u₀` prior level;
-- the resource identities with their **unit name and scale** (plus the currency for money), the **derived groups**, the **observed rates** together with the **numeraire** each group is expressed in, and the **declared mandate** with any external limits (§4.8);
+- the resource identities with their **unit name and scale** (plus the currency for money), the **derived groups**, the **observed rates** together with the **numeraire** each group is expressed in, the **declared mandate** with any external limits, and the **metadata schema** (`source`, `aging_time`, `last_measured_at`, `estimated`, `estimation_source`) that describes how each resource's `ResourceObservation` is produced (§3.2a, §4.8);
 - the **graph-derived values** of §4.9: the Variety counter `V` per entity, the reachability **verdict** per entity, the identifiers of the admissible-means class `M(S)`, the recovery horizon `T_rec(X)` per entity, and the **numeraire** together with the derived weights in which group amounts are expressed (§4.6). An option's closure list is a per-option input like `projected_dof_delta`: it is reported per option (§6.3) and MUST NOT enter the digest — a digest that moved with the candidate set would stop being a ruler.
 
 *Report context* (SHOULD accompany the report; MUST NOT change the digest):
@@ -123,12 +145,13 @@ Reachability is decided over the observed **world graph** `G` (§4.9). `G` is no
 
 ```text
 node := { id, kind: "entity" | "mean" }
-edge := { id, kind: "act" | "exchange", from, to,
+edge := { id, kind: "act" | "exchange" | "measure", from, to,
           requires:     [ mean_id ],                    # act: affordances needed
           effect:       { entity_id -> delta_dof },      # act: what changes
-          resources:    { resource_id -> amount },        # act and exchange: physical draw
-          duration_mks: float,                            # act and exchange: against tau
-          quote:        { gives: {resource_id -> amount},  # exchange: a market quote
+          discovers:    resource_id,                     # measure: resolves a null resource
+          resources:    { resource_id -> amount },        # act/exchange/measure: physical draw
+          duration_mks: float,                            # act/exchange/measure: against tau
+          quote:        { gives: {resource_id -> amount}, # exchange: a market quote
                           wants: {resource_id -> amount} },
           category:     string                             # act: admissible-means category
         }
@@ -141,6 +164,7 @@ node.entity.observation := "complete" | "partial"
 | node `mean` | a **reachable means** — a key, a tool, a paid-for layer, infrastructure (§4.6) |
 | edge `act` | what an entity **can do**: an effect on `DoF`, its resource draw, its duration |
 | edge `exchange` | a market quote: one basket of resources for another, with its own duration |
+| edge `measure` | an act that **resolves an unmeasured resource** (`value = null` → known value); declared by the `discovers` field of `ActionOption` (§3.3) |
 
 Rules that hold throughout:
 
@@ -332,23 +356,29 @@ contribution(e) = Σ_l term(e, l)
 
 ---
 
-### 4.8 Resource gate: insolvency
+### 4.8 Resource gate: insolvency and measurement
 
-An action costs limited resources, and the action declares what it draws from the acting agent (§3.3). Admissibility is therefore decided against the agent's means (§3.2), not against the entity's DoF:
+An action costs limited resources, and the action declares what it draws from the acting agent (§3.3). Admissibility is therefore decided against the agent's means (§3.2), not against the entity's DoF. Each means is a `ResourceObservation` (§3.2a); a resource with `value = null` is unmeasured and requires special handling (see below).
 
-1. **Direct comparison.** If the agent's means cover the option's consumption component-wise, the option is payable and nothing is converted.
+1. **Direct comparison.** If the agent's `value` covers the option's consumption component-wise for every `requires` resource, the option is payable and nothing is converted. A `value = null` fails direct comparison unless `estimated` is used with a fallback (see step 4).
 2. **Verified conversion.** For each deficit, the missing amount MAY be obtained by an exchange inside a group of mutually exchangeable resources, at the **observed** rate — but conversion is an operation, not a substitution: the exchange path must exist, an offer must satisfy the requirement, the price must be payable from the agent's means, the payment channel must work, and the exchange itself **takes time**, which is charged to the same `τ` and passes the same gates (§5). If no such path exists, is not affordable, or does not fit in time, the deficit is simply **not covered**.
-3. **Insolvency.** After full verified conversion, if the requirement of any group still exceeds the agent's means in that group, the option is **inadmissible**: it is removed from the candidate set before selection and recorded as `{ option_id, gate: "insolvency" }` (§6.2). Not affordable is not the same as expensive, exactly as unreachable is not the same as distant — a shortage that survives full trading is a verdict, not a price.
+3. **Insolvency.** After full verified conversion, if the requirement of any group still exceeds the agent's means in that group (using `value`, never `estimated`), the option is **inadmissible**: it is removed from the candidate set before selection and recorded as `{ option_id, gate: "insolvency" }` (§6.2). Not affordable is not the same as expensive, exactly as unreachable is not the same as distant — a shortage that survives full trading is a verdict, not a price.
+4. **Unknown resource (measurement or estimate).** When a required resource has `value = null`:
+   - **Measurement**: the option MAY be replaced by a `measure`-type act (§3.5) that resolves the resource's value, with its own `estimated_duration_mks`. Measurement takes time charged to τ (§5) and is subject to the stricter `t* > 0` gate of §4.7/§5.
+   - **Blind action with estimate**: the option MAY proceed using `estimated` instead of `value`, but **a mandatory fallback option** MUST be prepared for the case the estimate proves wrong. The fallback is itself an option and is subject to the same gates.
+   - Choice between measurement and blind action depends on `estimated_duration_mks` of the measurement vs τ, and on the availability of a fallback. The `estimated` value MUST NOT satisfy the `insolvency` gate (only `value` counts there).
 
 Rules that hold throughout:
 
 - **τ is not a resource.** Time-to-collapse is frozen on `S` (§4.6, R7) and is **never** obtainable by exchange; a postponement is granted only by an action that changes `τ` itself. Time appears twice and the two roles MUST NOT be conflated: `estimated_duration_mks` is the duration measured against `τ`, while working time / machine-hours is an ordinary resource in `projected_resource_delta`, purchasable at the observed rate.
 - **Every resource has a declared unit.** Name and scale (and, for money, the currency) are part of the hashed declaration content (§3.4.1); amounts are expressed in that unit. Two implementations that declare the same resource name with different scales are measurably different rulers and will produce different digests.
 - **Zero is declared, never omitted.** An absent resource key is indistinguishable from "nobody thought about it", so a resource the option does not consume is written as `0.0`.
-- **The agent's own means MUST be measured.** An unknown balance is an **invalid input**, not an evaluation mode — unlike an unmapped world-side counter, which is priced by `u(t)` (§4.7). The agent's own means are self-measurable (balance, charge, remaining time), so "unknown" means "measure it first"; otherwise the decision is incomplete (§6.2).
+- **The agent's own means MUST be measured.** An unknown balance (`value = null` without a usable `estimated`) is an **invalid input** for the `insolvency` gate, not an evaluation mode. The agent's own means are self-measurable (balance, charge, remaining time), so "unknown" means "measure it first"; otherwise the decision is incomplete (§6.2).
 - **Groups are derived, not declared by the option.** The option names resources only; the grouping of exchangeable resources is analysis-side, derived from observed exchange paths (§4.6) and recorded in the declaration.
-- **The mandate caps the means; it never raises them.** A group's spending power is `C_g = min(measured means in the group, external limits, declared mandate)`. The mandate is *permission* and the balance is *possibility*: the gate respects both, so a narrower mandate removes an option a large balance would have paid for, and a mandate MUST NOT make payable what the measured means cannot cover.
-- **Declared means are auditable, not verified.** Every amount of the acting agent's means MUST be reported with its **provenance** — a measured balance or an asserted authority — together with the measuring procedure (§6.2). This specification cannot check a self-measurement, and pretending otherwise would be the same class of lie as a false witness; the guard is visibility. A declared endowment that cannot be an endowment (zero or below any possible price while the option consumes) MUST be surfaced as a defect rather than priced.
+- **The mandate caps the means; it never raises them.** A group's spending power is `C_g = min(measured means in the group, external limits, declared mandate)`.
+- **Declared means are auditable, not verified.** Every amount of the acting agent's means MUST be reported with its **provenance** — a measured balance or an asserted authority — together with the measuring procedure (§6.2).
+- **No measurement recursion.** A `measure` act for resource R MAY consume R directly (e.g., reading a battery's level draws a tiny charge); it MUST NOT require measuring R again to complete its own measurement.
+- **Stale values.** A `ResourceObservation` whose `aging_time` has passed MUST be re-measured before use in the `insolvency` gate; a stale `estimated` MUST be re-derived.
 
 ---
 
@@ -426,7 +456,9 @@ For each entity in `S`:
 - `no_candidate_better` (bool) — `true` iff no candidate beat staying put on a protected dimension of §4.5. The report MUST then list those candidates and, for each, the key that barred it (§6.3): a refusal to act is a decision and is audible in the report, not a silence.
 - `resources_before` / `resources_after` — the acting agent's means at the start of the cycle and after the selected option's consumption. Multi-step accumulation is only auditable if the spend is written down where the next cycle can see it (§4.8).
 - `means_provenance` — per resource, whether the amount was measured or asserted, and the procedure that measured it (§4.8).
-- `observation_digest` — the digest of the full observation a reported subgraph was taken from, so that a selective report cannot be passed off as a different observation (§4.9).
+- `observation_digest` — the digest of the full observation a reported subgraph was taken from.
+- `unknown_resources` — resources with `value = null` that were NOT resolved by any candidate; listed as `{ resource_id, used_estimated, has_fallback }`.
+- `measurement_time_spent` — total time spent on `measure`-type acts this cycle (relevant for `incomplete` decision reporting).
 - `incomplete` (bool, default `false`) — `true` iff a resolvable unknown (`t* > 0`, §4.7) was left unmeasured in **every** candidate, so the decision is declared incomplete instead of being presented as informed.
 
 ### 6.3 Per-option evaluation
@@ -444,6 +476,8 @@ For each candidate `o`:
 - `collapse_charges` — the entities this option drove from a counted state to a known zero, as `{ entity_id, dof_before }` (§4.2). Empty for a charge-free option. Its length **is** `d1` of the candidate vector: a non-empty list is what makes the option inadmissible under §4.5, so the collapse penalty stops being an implicit consequence and becomes an auditable line of the ledger *and* the recorded reason the option was refused.
 - `resource_consumption` — what the option draws from the acting agent, as declared in §3.3, in the units declared for each resource, attributed per entity.
 - `conversion_applied` — the deficits this option covers by exchange, with the observed rate used for each (empty when the option is payable directly). A reader must be able to see whether "affordable" was established by trade or by cash in hand (§4.8).
+- `discovers` — resources whose `value` becomes known after this option executes (a `measure`-type act; §3, §3.5).
+- `fallback_for` — resources for which `estimated` was used instead of `value`; MUST list the fallback option's `option_id` for each.
 
 This report is the enforceable license condition: a deployment that cannot produce it is not a compliant DOF-Core implementation and must not be represented as one.
 
@@ -462,6 +496,7 @@ A software component is **DOF-Core conformant** iff it:
 7. Computes `current_dof` as the lens product of §4.6 — with every unmeasured lens entering as `u(t)` per §4.7 — and reports the per-lens terms and the binding lens (§6.1). The lens set and its canonical order are frozen: a state measured with a different set is a different ruler (§3.4).
 8. Emits `psi.id`, `psi.digest` and the declaration text (§6.2), and refuses to compare two states whose digests differ — numbers produced under different rulers are not comparable outputs.
 9. Removes options that fail the viability gate (§5) before selection and lists them in `removed_options` (§6.2).
+10. Supports the `measure` act type in the world graph (§3.5) and correctly handles `ResourceObservation` metadata (§3.2a) in the resource gate (§4.8), including `value = null`, `estimated`, `aging_time`, and staleness.
 10. Applies the **frozen calculation set** of §4.2 — `calc` is computed on `S` and the same entities are summed in every `S'`, so a counted entity driven to a known zero is charged the floor `ln ε` instead of disappearing — computes the **candidate vector** of §4.5 (with `d2`/`d3` recomputed by its own verdict procedure on `with_closed(closed)`, never asserted), applies the **structural admissibility test** so that a protected dimension outranks the index, treats staying put as a candidate with the zero vector, and reports the vector of every option plus the baseline. No candidate is removed for structural reasons: destruction is inadmissible instead of being deleted from the set. Viability and insolvency removals are listed in `removed_options`.
 11. Selects an option only if its `NetDelta > 0` (staying put is the baseline with the zero vector, `NetDelta = 0`); otherwise it returns `none` and reports that the system stayed — and when no candidate beat staying put on a protected dimension, it MUST say so and list them with the barring key (§4.5, §6.2).
 12. Covers every entity with `dof_known == false` in every candidate's `projected_dof_delta` (§4.7), and sets `incomplete = true` when a resolvable unknown was left unmeasured in every candidate.
@@ -542,7 +577,9 @@ The Generator's role is to produce `ActionOption` candidates. This spec does not
   - **Go** — `patterns/go/harness_v08.go` (36 checks), reached by `go run . v08` (the default).
   - **C++** — `patterns/cpp/harness_v08.hpp` (36 checks), reached by `./dof_cpp v08` (the default).
   - **Rust** — `patterns/rust/harness_v08.rs` (36 checks), at `-O` **and** `-C opt-level=0`.
-  All four produce the ruler digest `5126fd99641ffdc9c338d3d288fcf3cb6dcf093ca0a423f1cd265b3fcae4152a` and the observation digest `f3891c6ab622325fd6668893dd9f7450d39aa2d0a7ad2849634a4f59219f6a1c` — **unchanged from `v0.7`**, which is the release's own claim checked by running it rather than by asserting it — and the released fixture's index (`-35.314438370902`). `patterns/tools/verify_ports.sh` reports **VERIFIED** only when every `v0.8` run shows both digests; it re-runs the `v0.7` row alongside, so both releases must agree on the fingerprints. What the fixture asserts, beyond the numbers: `t1_compensate` — no collapse charge, `NetDelta = +0.104`, i.e. every gate of `v0.5`–`v0.7` passes it — is **refused**; its mirror `t1_mirror`, the same gain with a closure that is a price rather than a path loss, is **selected**; `t1_help`, which cuts a *non-critical* path, is refused just the same, which is the proof that `D2` is a bar and not a comparison; and `D3 ≤ D2` holds for every candidate, which is the proof that the third dimension cannot separate two candidates.
+  All four produce the ruler digest `5126fd99641ffdc9c338d3d288fcf3cb6dcf093ca0a423f1cd265b3fcae4152a` and the observation digest `f3891c6ab622325fd6668893dd9f7450d39aa2d0a7ad2849634a4f59219f6a1c` — **unchanged from `v0.7`**, which is the release's own claim checked by running it rather than by asserting it — and the released fixture's index (`-35.314438370902`).
+- `v0.9` — **budget accounting: observable resources.** Resources are concrete observable quantities (battery charge, PROM parameters, bank balance, account access), not abstract units. §3.2a introduces `ResourceObservation` with metadata (`value` nullable, `unit`, `scale`, `source`, `last_measured_at`, `aging_time`, `estimated`, `estimation_source`). §3.3 adds `requires` and `discovers` to `ActionOption`. §3.5 introduces the `measure` act type that resolves a `value = null` resource. §4.8 extends the resource gate: `value = null` with `estimated` and a mandatory fallback is admissible (the estimate never satisfies insolvency — only `value` does), staleness is checked via `aging_time`, and measurement recursion is forbidden. §6.2/§6.3 add `unknown_resources`, `measurement_time_spent`, `discovers`, `fallback_for` to the audit. `τ` remains a rigid, non-convertible deadline; working time remains a convertible resource. Deliberately **not** in this revision: the `unknown_required` gate (separate discussion).
+- **Conformance evidence for `v0.9`:** pending — all four reference ports are to be extended with `ResourceObservation`, `measure`, the null-resource branch of §4.8, and the corresponding audit fields, then re-verified with a new fixture carrying at least one `value = null` resource with `estimated` and a fallback option. `patterns/tools/verify_ports.sh` reports **VERIFIED** only when every `v0.8` run shows both digests; it re-runs the `v0.7` row alongside, so both releases must agree on the fingerprints. What the fixture asserts, beyond the numbers: `t1_compensate` — no collapse charge, `NetDelta = +0.104`, i.e. every gate of `v0.5`–`v0.7` passes it — is **refused**; its mirror `t1_mirror`, the same gain with a closure that is a price rather than a path loss, is **selected**; `t1_help`, which cuts a *non-critical* path, is refused just the same, which is the proof that `D2` is a bar and not a comparison; and `D3 ≤ D2` holds for every candidate, which is the proof that the third dimension cannot separate two candidates.
   - Portability observations of this release: **(1)** the same struct is spelled differently per port — `CandidateVector` is at file scope in the C++ and Rust cores, which use no `dof::` namespace for these types — and what enforces the right spelling is the port's own convention, not the neighbouring port's: copying a name across ports is the error, and the compiler is what catches it. **(2)** `NetDelta` for the same candidate can differ in the last bits across ports (Go `0.10415067982725361`, Python `0.10415067982726071`), which is exactly why the selection groups ties with `NET_DELTA_TOLERANCE`: without it two ports could resolve the same tie differently, and §7's equivalence of *choice* would be unsatisfiable. **(3)** a rule a release retires must be **marked as retired where it lives** — `apply_structural_gate` in all four ports — or the next reader cannot tell which path is live. **(4)** a harness must **print** the fingerprints it asserts against, in full: the first `v0.8` harnesses compared the digests correctly but printed only their first sixteen characters, and passed every check while `verify_ports.sh` — rightly — refused to call the release verified. An assertion the log cannot show is not evidence.
 - Normative constants (ε = 1e-6, `FAST_PASS_THRESHOLD = 5000000.0` μs, the ignorance constants `α = 0.25`, `ρ = 0.9`, `U_MIN = ε^(1−ρ) ≈ 0.251`, `U_MAX = 0.5`, and the frozen three-lens set with its canonical order) are part of the versioned contract. `v0.7` **removes** the `0.5` rigidity coefficient — a closure is priced by §4.4 from the counters, so no constant remains there — and adds to the contract the canonical serialization of graph-derived values (§3.4.3) and the closed three-valued verdict dictionary of §4.9. `v0.8` adds the **structural admissibility test** of §4.5 (`D1 = D2 = D3 = 0`), the definition of `critical(S)`, and `NET_DELTA_TOLERANCE = 1e-9` — the tolerance that decides whether two candidates with different `NetDelta` are tied, which must be the same number in every port or §7's equivalence of *choice* is unsatisfiable. A test decides *which* of the measured numbers may win, so two implementations that test differently select differently on identical numbers. It belongs to the versioned contract even though it is not a measurement input and does not enter the digest — the hash carries what determines the numbers, the admissibility test determines the choice among the measured numbers. Changing any of them requires a new minor/major spec version and a re-verification of all conforming ports.
 - SHA-256 of this file SHOULD be published alongside releases to detect silent modification (consistent with the de-centralized publication plan).

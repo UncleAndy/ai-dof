@@ -75,7 +75,19 @@ class GraphMapper:
     def poll_environment(self, raw_observations: Dict[str, dict]) -> SystemStateMatrix:
         """Build a SystemStateMatrix from raw observations."""
         layer = raw_observations.get("resource_layer") or {}
-        means = {str(k): float(v) for k, v in (layer.get("means") or {}).items()}
+        means_raw = layer.get("means") or {}
+        # v0.9: means can be a dict of floats or a dict of ResourceObservation dicts.
+        # We normalize to ResourceObservation dicts here.
+        means_obs: Dict[str, dict] = {}
+        for k, v in means_raw.items():
+            if isinstance(v, (int, float)):
+                means_obs[k] = {
+                    "value": float(v), "unit": "unknown", "scale": 1.0,
+                    "source": "sensor", "last_measured_at": 0.0, "aging_time": 3600.0,
+                    "estimated": None, "estimation_source": []
+                }
+            else:
+                means_obs[k] = v
         groups = layer.get("groups") or []
         rates = layer.get("rates") or {}
         units = layer.get("resources") or []
@@ -194,7 +206,7 @@ class GraphMapper:
             if eid in self.RESERVED_KEYS:
                 continue
             measurement = measure_entity(eid, observations[eid], u0,
-                                         means=means, groups=groups,
+                                         means=means_obs, groups=groups,
                                          weights=weights, cap=cap)
             entities[eid] = EntityState(
                 entity_id=eid,
@@ -226,5 +238,5 @@ class GraphMapper:
             context_switch_cost=self.context_switch_cost,
             entities=entities,
             psi=PsiReference(id=declaration.psi_id, digest=declaration.digest()),
-            resources=means,
+            resources=means_obs,
         )

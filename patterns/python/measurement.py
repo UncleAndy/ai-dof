@@ -129,26 +129,20 @@ def derive_blocks(requirements: Dict[str, float], means: Dict[str, float],
         c_g = Σ_{r ∈ g} w_r · requirement_r
         C_g = min( Σ_{r ∈ g} w_r · means_r , cap )
 
-    `w_r` is the observed rate of resource `r` to the group's **numeraire**
-    (§3.5/§4.8). Without it the sum adds credits to joules, and the value of the
-    lens starts to depend on the unit a resource happens to be declared in: the
-    lens would measure notation instead of the world. A resource with no path to
-    the numeraire is its own singleton group and carries weight `1.0` — with no
-    exchange available, its own unit *is* its nominal.
-
-    `cap` is the **mandate**: permission, never possibility. It can only lower
-    `C_g`, so a narrow mandate removes an option a large balance would have paid
-    for, and no mandate can make payable what the measured means cannot cover.
-
-    Zero stays a legal value on both sides; `psi_opt` then applies the
-    `c_g > 0 ∧ C_g = 0` gate. The derivation is total by construction — every
-    resource of the inputs lands in exactly one group (`canonical_groups`).
+    v0.9: ``means`` may be a dict of floats (legacy) or a dict of
+    ResourceObservation dicts. We normalize to floats here.
     """
+    means_flat: Dict[str, float] = {}
+    for k, v in means.items():
+        if isinstance(v, dict):
+            means_flat[k] = float(v.get("value") or 0.0)
+        else:
+            means_flat[k] = float(v)
     w = {str(k): float(v) for k, v in (weights or {}).items()}
     blocks: List[Tuple[float, float]] = []
-    for group in canonical_groups(groups, requirements, means):
+    for group in canonical_groups(groups, requirements, means_flat):
         c_g = sum(w.get(r, 1.0) * max(0.0, float(requirements.get(r, 0.0))) for r in group)
-        C_g = sum(w.get(r, 1.0) * max(0.0, float(means.get(r, 0.0))) for r in group)
+        C_g = sum(w.get(r, 1.0) * max(0.0, float(means_flat.get(r, 0.0))) for r in group)
         if cap is not None:
             C_g = min(C_g, max(0.0, float(cap)))
         blocks.append((c_g, C_g))

@@ -72,6 +72,8 @@ class ActEdge(BaseModel):
     effect: Dict[str, float] = Field(default_factory=dict)   # entity_id -> delta_dof
     resources: Dict[str, float] = Field(default_factory=dict)
     duration_mks: float = 0.0
+    # §3.5 (v0.9): measure-type act resolves an unmeasured resource.
+    discovers: Optional[str] = None        # resource_id whose value becomes known
 
 
 class ExchangeEdge(BaseModel):

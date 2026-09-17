@@ -54,6 +54,26 @@ MANDATE_CAP = 4.0                      # the ceiling, expressed in the numeraire
 EXTERNAL_LIMIT_CREDIT = 100.0
 GROUP = ["credit", "energy", "machine_hour", "parts"]
 MEANS: Dict[str, float] = {"credit": 6.0, "energy": 10.0, "machine_hour": 2.0, "parts": 0.0}
+
+# --- v0.9: ResourceObservation builder ----------------------------------------
+def _make_resource_obs(resource_id: str, value: float) -> dict:
+    """Build a ResourceObservation dict for a known resource (v0.9)."""
+    unit_map = {r["id"]: r for r in RESOURCES}
+    spec = unit_map.get(resource_id, {"id": resource_id, "unit": "unknown", "scale": 1.0})
+    return {
+        "value": value,
+        "unit": spec["unit"],
+        "scale": float(spec["scale"]),
+        "source": "sensor",
+        "last_measured_at": 0.0,
+        "aging_time": 3600.0,
+        "estimated": None,
+        "estimation_source": [],
+    }
+
+def make_means_resource_obs(means: Dict[str, float]) -> Dict[str, dict]:
+    """Convert a {resource_id: float} means map to {resource_id: ResourceObservation dict}."""
+    return {rid: _make_resource_obs(rid, v) for rid, v in means.items()}
 RESOURCES: List[dict] = [
     {"id": "credit", "unit": "RUB", "scale": 1.0},
     {"id": "energy", "unit": "joule", "scale": 1.0},
@@ -213,13 +233,11 @@ def layer(means: Optional[Dict[str, float]] = None,
           declare_rates: bool = False) -> dict:
     """The resource layer (§3.2/§4.8).
 
-    `rates` is deliberately **not** declared: in v0.7 the rate is the output of a
-    procedure over the observation (§3.5), so the fixture proves the derivation
-    instead of restating it. `declare_rates=True` reproduces the v0.6-shaped
-    layer, which is what the ports' older checks still read.
+    v0.9: ``means`` is converted to ResourceObservation dicts via
+    ``make_means_resource_obs``; the mapper also accepts plain floats.
     """
     out: dict = {
-        "means": dict(means if means is not None else MEANS),
+        "means": make_means_resource_obs(dict(means if means is not None else MEANS)),
         "groups": [list(g) for g in (groups if groups is not None else [GROUP])],
         "resources": copy.deepcopy(RESOURCES),
     }

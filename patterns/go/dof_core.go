@@ -23,7 +23,9 @@ type SystemStateMatrix struct {
 	ContextSwitchCost       float64                 `json:"context_switch_cost"`
 	Entities                map[string]*EntityState `json:"entities"`
 	Psi                     *PsiReference           `json:"psi"`
-	Resources               map[string]float64      `json:"resources"`
+	Resources               map[string]*ResourceObservation `json:"resources"`
+	Requires                []string                        `json:"requires"`
+	Discovers               []string                        `json:"discovers"`
 }
 
 type ActionOption struct {
@@ -101,6 +103,26 @@ type EntityReportRow struct {
 type CollapseCharge struct {
 	EntityID  string  `json:"entity_id"`
 	DoFBefore float64 `json:"dof_before"`
+}
+
+// ResourceObservation is the v0.9 observable-resource record (§3.2a): a concrete
+// quantity with metadata, not an abstract unit.
+type ResourceObservation struct {
+	Value             *float64  `json:"value"`              // null = unmeasured
+	Unit              string    `json:"unit"`
+	Scale             float64   `json:"scale"`
+	Source            string    `json:"source"`             // sensor / API / ROM / derived
+	LastMeasuredAt    float64   `json:"last_measured_at"`
+	AgingTime         float64   `json:"aging_time"`
+	Estimated         *float64  `json:"estimated"`          // used when value is nil
+	EstimationSource  []string  `json:"estimation_source"`
+}
+
+// ResourceValue resolves a resource's usable value for the gate (§4.8). When the
+// value is nil and useEstimated is true, it falls back to estimated.
+// IsUsable reports whether a resource has a known positive value (§4.8).
+func (obs *ResourceObservation) IsUsable() bool {
+	return obs != nil && obs.Value != nil && *obs.Value > 0.0
 }
 
 // CandidateVector is the v0.8 candidate vector (§4.5): three counts of entities —

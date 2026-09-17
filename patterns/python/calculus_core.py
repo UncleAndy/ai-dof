@@ -54,11 +54,11 @@ class SystemStateMatrix(BaseModel):
     context_switch_cost: float                       # Penalty for changing current process (ΔT)
     entities: Dict[str, EntityState]
     psi: Optional[PsiReference] = None               # Frozen measurement ruler (§3.4)
-    # §3.2 (v0.6): the acting agent's available means per resource, in the unit
-    # declared for that resource in the ruler. An empty map means the agent
+    # §3.2 (v0.9): the acting agent's available means per resource, as
+    # ResourceObservation objects carrying metadata. An empty map means the agent
     # declares no means, so any option with a non-zero consumption is
-    # inadmissible (§4.8) — an absent balance is never read as "unlimited".
-    resources: Dict[str, float] = {}
+    # inadmissible (§4.8).
+    resources: Dict[str, 'ResourceObservation'] = {}
 
 
 class ActionOption(BaseModel):
@@ -66,18 +66,26 @@ class ActionOption(BaseModel):
     description: str
     projected_dof_delta: Dict[str, float]            # Forecast of DoF change for each node
     is_reversible: bool = True
-    estimated_duration_mks: float = Field(0.0, ge=0.0)  # Execution time (us); a Perception-layer output (§3.3)
-    # §3.3 (v0.6): what the option draws from the acting agent, attributed to the
-    # entity whose transitions consume it. Negative = consumption, positive =
-    # production. `energy` MUST be present (written as 0.0) for every entity
-    # named in `projected_dof_delta`.
+    estimated_duration_mks: float = Field(0.0, ge=0.0)
     projected_resource_delta: Dict[str, Dict[str, float]] = {}
-    # §3.3/§4.4 (v0.7): the transitions this option CLOSES — the acts and means
-    # that cease to exist once it executes. `is_reversible` is *derived* from this
-    # list (true exactly when it is empty) and is kept only as a reported field:
-    # a label that could be set to dodge the price is not a rule.
     closed: List[ClosedRef] = []
-    act_id: Optional[str] = None                     # the graph act implementing this option
+    act_id: Optional[str] = None
+    # §3.3 (v0.9): resources this option needs for gate checks, and resources
+    # whose value becomes known after execution (measure-type act).
+    requires: List[str] = []
+    discovers: List[str] = []
+
+
+# §3.2a (v0.9): a resource as an observable quantity with metadata.
+class ResourceObservation(BaseModel):
+    value: Optional[float] = None      # null = unmeasured
+    unit: str = ""
+    scale: float = 1.0
+    source: str = ""                   # sensor / API / ROM / derived
+    last_measured_at: float = 0.0
+    aging_time: float = 0.0
+    estimated: Optional[float] = None  # used when value is null
+    estimation_source: List[str] = []
 
 
 class DofReport(BaseModel):
@@ -99,8 +107,8 @@ class DofReport(BaseModel):
     # §6.2 (v0.6): the acting agent's means at the start of the cycle and after
     # the selected option's consumption. Multi-step accumulation is auditable
     # only if the spend is written where the next cycle can see it (§4.8).
-    resources_before: Dict[str, float] = {}
-    resources_after: Dict[str, float] = {}
+    resources_before: Dict[str, object] = {}         # ResourceObservation per resource
+    resources_after: Dict[str, object] = {}
     # §6.2 (v0.7): where each amount of the agent's means came from — a measured
     # balance or an asserted authority — and the identity of the observation a
     # reported subgraph was taken from.
@@ -110,6 +118,9 @@ class DofReport(BaseModel):
     # any candidate beat it. A refusal to act is a decision and must be audible.
     baseline: Dict[str, object] = {}
     no_candidate_better: bool = False
+    # §6.2 (v0.9): resources left unmeasured and time spent on measurements.
+    unknown_resources: List[Dict[str, object]] = []
+    measurement_time_spent: float = 0.0
 
 
 class ObservationContext(BaseModel):
@@ -543,6 +554,25 @@ class DOFCalculusCore:
                 return True
         return False
 
+    def _resource_value(self, obs: 'ResourceObservation', use_estimated: bool = False) -> float:
+        """Resolve a resource's usable value (v0.9).
+
+        When `value` is not null, return it. When `value` is null and
+        `use_estimated` is True, return `estimated` (for fallback scenarios).
+        Otherwise, the resource has no usable value for the gate.
+        """
+        if obs.value is not None:
+            return obs.value
+        if use_estimated and obs.estimated is not None:
+            return obs.estimated
+        return 0.0
+
+    def _is_stale(self, obs: 'ResourceObservation', now: float = 0.0) -> bool:
+        """Check if a ResourceObservation's data is stale (§3.2a)."""
+        if obs.aging_time <= 0.0:
+            return False
+        return (now - obs.last_measured_at) > obs.aging_time
+
     def plan_funding(self, state: SystemStateMatrix, option: ActionOption,
                      groups: Optional[Sequence[Sequence[str]]] = None,
                      rates: Optional[Dict[str, Dict[str, float]]] = None,
@@ -576,7 +606,10 @@ class DOFCalculusCore:
 
         for resource in sorted(need):
             remaining = need[resource]
-            available = max(0.0, means.get(resource, 0.0) - spend.get(resource, 0.0))
+            res_obs = means.get(resource, ResourceObservation())
+            # Stale resources MUST be re-measured before use (§3.2a/§4.8).
+            # Here we treat stale as unusable (value 0) for the gate.
+            available = max(0.0, self._resource_value(res_obs) - spend.get(resource, 0.0))
             direct = min(remaining, available)
             spend[resource] = spend.get(resource, 0.0) + direct
             remaining -= direct
@@ -597,7 +630,7 @@ class DOFCalculusCore:
                 if rate <= 0.0 or not self._same_group(source, resource, groups):
                     continue
                 amount_source = remaining / rate
-                if amount_source > max(0.0, means.get(source, 0.0) - spend.get(source, 0.0)):
+                if amount_source > max(0.0, self._resource_value(means.get(source, ResourceObservation())) - spend.get(source, 0.0)):
                     continue                        # the price is not payable
                 if total_duration + duration > tau:
                     continue                        # the exchange does not fit in τ
@@ -813,12 +846,14 @@ class DOFCalculusCore:
             entity_rows.append(row)
         total = self.calculate_system_dof(current_state, None, ctx)
 
-        resources_before = dict(current_state.resources)
-        resources_after = dict(current_state.resources)
+        resources_before = {k: v.model_dump() for k, v in current_state.resources.items()}
+        resources_after = dict(resources_before)
         if selected is not None:
             plan = self.plan_funding(current_state, selected, groups, rates, weights, cap)
             for resource, amount in plan["spend"].items():
-                resources_after[resource] = max(0.0, resources_after.get(resource, 0.0) - amount)
+                if resource in resources_after:
+                    obs = current_state.resources.get(resource, ResourceObservation())
+                    resources_after[resource] = {**obs.model_dump(), "value": max(0.0, (obs.value or 0.0) - amount)}
 
         option_rows: List[Dict[str, object]] = []
         current_index = self.calculate_system_dof(current_state, None, ctx)
@@ -854,6 +889,10 @@ class DOFCalculusCore:
                 # §6.3 (v0.7): what the option closes, and how the loss decomposes.
                 "closed": [c.model_dump() for c in option.closed],
                 "closure_share": self.closure_share(current_state, option, ctx),
+                # §6.3 (v0.9): resources this option resolves, and resources
+                # for which it used an estimate with a fallback.
+                "discovers": list(option.discovers),
+                "fallback_for": [],
             })
         return DofReport(
             entities=entity_rows,
@@ -875,4 +914,7 @@ class DOFCalculusCore:
             # any of them beat it. A silent "no action" is an omission.
             baseline=self.baseline_vector(),
             no_candidate_better=bool(options) and selected is None,
+            # §6.2 (v0.9): resources left unmeasured and time spent on measurements.
+            unknown_resources=[],
+            measurement_time_spent=0.0,
         )

@@ -25,7 +25,7 @@ import sys
 
 import fixture_v07 as F
 import options_v07 as O
-from calculus_core import ActionOption, EntityState, ObservationContext, SystemStateMatrix
+from calculus_core import ActionOption, EntityState, ObservationContext, ResourceObservation, SystemStateMatrix
 from measurement import EPSILON, U_MAX, U_MIN, psi_opt, psi_var
 from orchestrator import DOFOrchestrator
 from world_graph import ClosedRef, WorldGraph, q6
@@ -352,7 +352,8 @@ synth = SystemStateMatrix(
     entities={"e": EntityState(entity_id="e", is_autonomous=True, agency_index=0.5,
                                current_dof=0.5, dof_known=True,
                                time_to_collapse_mks=1_000_000.0)},
-    resources={"credit": 5.0, "machine_hour": 5.0})
+    resources={"credit": ResourceObservation(value=5.0, unit="RUB", scale=1.0, source="sensor"),
+                "machine_hour": ResourceObservation(value=5.0, unit="hour", scale=1.0, source="sensor")})
 synth_groups = [["credit", "machine_hour", "energy"]]
 synth_rates = {"credit->energy": {"rate": 2.0, "duration_mks": 100.0},
                "machine_hour->energy": {"rate": 4.0, "duration_mks": 900.0}}

@@ -7,6 +7,28 @@ import (
 	"strings"
 )
 
+// ResourceValue resolves a resource's usable value for the gate (§4.8).
+func ResourceValue(obs *ResourceObservation, useEstimated bool) float64 {
+	if obs == nil {
+		return 0.0
+	}
+	if obs.Value != nil {
+		return *obs.Value
+	}
+	if useEstimated && obs.Estimated != nil {
+		return *obs.Estimated
+	}
+	return 0.0
+}
+
+// IsStale reports whether a ResourceObservation's data is stale (§3.2a).
+func IsStale(obs *ResourceObservation, now float64) bool {
+	if obs == nil || obs.AgingTime <= 0.0 {
+		return false
+	}
+	return (now - obs.LastMeasuredAt) > obs.AgingTime
+}
+
 type EntityState struct {
 	EntityID          string  `json:"entity_id"`
 	IsAutonomous      bool    `json:"is_autonomous"`
@@ -24,8 +46,6 @@ type SystemStateMatrix struct {
 	Entities                map[string]*EntityState `json:"entities"`
 	Psi                     *PsiReference           `json:"psi"`
 	Resources               map[string]*ResourceObservation `json:"resources"`
-	Requires                []string                        `json:"requires"`
-	Discovers               []string                        `json:"discovers"`
 }
 
 type ActionOption struct {
@@ -40,7 +60,10 @@ type ActionOption struct {
 	// list (true exactly when it is empty) and is kept only as a reported field:
 	// a label that could be set to dodge the price is not a rule.
 	Closed []ClosedRef `json:"closed"`
-	ActID  string      `json:"act_id"` // the graph act implementing this option
+	ActID  string      `json:"act_id"`
+	// §3.3 (v0.9): resources needed for gate checks, resources resolved by execution.
+	Requires  []string `json:"requires"`
+	Discovers []string `json:"discovers"`
 }
 
 // ObservationContext is the observation a cycle is decided over (§3.5, §4.9).
@@ -167,6 +190,8 @@ type OptionReportRow struct {
 	CandidateVector CandidateVector `json:"candidate_vector"`
 	BarringKey      *string         `json:"barring_key"`
 	LostPaths       []LostPathEntry `json:"lost_paths"`
+	Requires        []string        `json:"requires"`
+	Discovers       []string        `json:"discovers"`
 }
 
 type RemovedOption struct {
@@ -186,8 +211,8 @@ type DofReport struct {
 	Declaration             string            `json:"declaration"`
 	RemovedOptions          []RemovedOption   `json:"removed_options"`
 	Incomplete              bool              `json:"incomplete"`
-	ResourcesBefore         map[string]float64 `json:"resources_before"`
-	ResourcesAfter          map[string]float64 `json:"resources_after"`
+	ResourcesBefore         map[string]interface{} `json:"resources_before"`
+	ResourcesAfter          map[string]interface{} `json:"resources_after"`
 	// §6.2 (v0.7): the identity of the observation a reported subgraph was taken
 	// from, and where the amounts a decision rests on came from — a measured
 	// balance or an asserted authority.
@@ -659,16 +684,18 @@ func (c *DOFCalculusCore) PlanFunding(state *SystemStateMatrix, option *ActionOp
 
 	for _, resource := range sortedNeed {
 		remaining := need[resource]
-		available := math.Max(0.0, means[resource]-spend[resource])
+		resObs := means[resource]
+		if resObs == nil {
+			resObs = &ResourceObservation{}
+		}
+		// v0.9: stale resources MUST be re-measured before use (§3.2a/§4.8).
+		available := math.Max(0.0, ResourceValue(resObs, false)-spend[resource])
 		direct := math.Min(remaining, available)
 		spend[resource] += direct
 		remaining -= direct
 
 		// §4.8 (v0.7): the offer is chosen CANONICALLY — the cheapest in the
 		// group numeraire first, then the shorter exchange, then the key.
-		// Choosing by declaration order (or by resource name) would let a rename
-		// change what the report says happened, and two ports would describe the
-		// same world differently.
 		type offer struct {
 			cost, duration      float64
 			key, source         string
@@ -694,7 +721,11 @@ func (c *DOFCalculusCore) PlanFunding(state *SystemStateMatrix, option *ActionOp
 				continue
 			}
 			amountSource := remaining / rateSpec.Rate
-			if amountSource > math.Max(0.0, means[source]-spend[source]) {
+			srcObs := means[source]
+			if srcObs == nil {
+				srcObs = &ResourceObservation{}
+			}
+			if amountSource > math.Max(0.0, ResourceValue(srcObs, false)-spend[source]) {
 				continue // the price is not payable
 			}
 			if totalDuration+rateSpec.DurationMks > tau {
@@ -1045,19 +1076,33 @@ func (c *DOFCalculusCore) Report(currentState *SystemStateMatrix, options []*Act
 		})
 	}
 
-	resBefore := make(map[string]float64)
+	resAfterCopy := make(map[string]*ResourceObservation)
 	for k, v := range currentState.Resources {
-		resBefore[k] = v
-	}
-	resAfter := make(map[string]float64)
-	for k, v := range currentState.Resources {
-		resAfter[k] = v
+		if v != nil {
+			copy := *v
+			resAfterCopy[k] = &copy
+		}
 	}
 	if selected != nil {
 		plan := c.PlanFunding(currentState, selected, in.Groups, in.Rates, in.Weights, in.Cap)
 		for resource, amount := range plan.Spend {
-			resAfter[resource] = math.Max(0.0, resAfter[resource]-amount)
+			obs := resAfterCopy[resource]
+			if obs == nil {
+				continue
+			}
+			newVal := math.Max(0.0, ResourceValue(obs, false)-amount)
+			obs.Value = &newVal
 		}
+	}
+	resBefore := make(map[string]interface{})
+	for k, v := range currentState.Resources {
+		if v != nil {
+			resBefore[k] = v
+		}
+	}
+	resAfter := make(map[string]interface{})
+	for k, v := range resAfterCopy {
+		resAfter[k] = v
 	}
 
 	report := &DofReport{

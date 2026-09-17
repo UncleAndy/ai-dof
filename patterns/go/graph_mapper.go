@@ -196,7 +196,7 @@ func verifyGraphDerived(declaration *MeasurementDeclaration, graph *WorldGraph, 
 }
 
 func (m *GraphMapper) PollEnvironment(raw map[string]interface{}) *SystemStateMatrix {
-	var means map[string]float64
+	var means_obs map[string]*ResourceObservation
 	var groups [][]string
 	var rates map[string]RateInfo
 	var units []ResourceInfo
@@ -204,9 +204,41 @@ func (m *GraphMapper) PollEnvironment(raw map[string]interface{}) *SystemStateMa
 
 	if layer, ok := raw["resource_layer"].(map[string]interface{}); ok {
 		if m_raw, ok := layer["means"].(map[string]interface{}); ok {
-			means = make(map[string]float64)
+			means_obs = make(map[string]*ResourceObservation)
 			for k, v := range m_raw {
-				means[k] = v.(float64)
+				switch val := v.(type) {
+				case float64:
+					means_obs[k] = &ResourceObservation{
+						Value: &val, Unit: "unknown", Scale: 1.0,
+						Source: "sensor", LastMeasuredAt: 0.0, AgingTime: 3600.0,
+					}
+				case map[string]interface{}:
+					obs := &ResourceObservation{Unit: "unknown", Scale: 1.0}
+					if vv, ok := val["value"]; ok {
+						if f, ok := vv.(float64); ok {
+							obs.Value = &f
+						}
+					}
+					if u, ok := val["unit"].(string); ok {
+						obs.Unit = u
+					}
+					if s, ok := val["scale"].(float64); ok {
+						obs.Scale = s
+					}
+					if src, ok := val["source"].(string); ok {
+						obs.Source = src
+					}
+					if l, ok := val["last_measured_at"].(float64); ok {
+						obs.LastMeasuredAt = l
+					}
+					if a, ok := val["aging_time"].(float64); ok {
+						obs.AgingTime = a
+					}
+					if e, ok := val["estimated"].(float64); ok {
+						obs.Estimated = &e
+					}
+					means_obs[k] = obs
+				}
 			}
 		}
 		if g_raw, ok := layer["groups"].([]interface{}); ok {
@@ -421,7 +453,14 @@ func (m *GraphMapper) PollEnvironment(raw map[string]interface{}) *SystemStateMa
 			continue
 		}
 		obs := obsRaw.(map[string]interface{})
-		mz := MeasureEntity(eid, observations[eid], u0, means, groups, weights, capValue)
+		// v0.9: MeasureEntity expects map[string]float64, so we flatten ResourceObservation to floats.
+		meansFlat := make(map[string]float64)
+		for k, v := range means_obs {
+			if v != nil && v.Value != nil {
+				meansFlat[k] = *v.Value
+			}
+		}
+		mz := MeasureEntity(eid, observations[eid], u0, meansFlat, groups, weights, capValue)
 		entities[eid] = &EntityState{
 			EntityID:          eid,
 			IsAutonomous:      obs["is_autonomous"].(bool),
@@ -455,6 +494,6 @@ func (m *GraphMapper) PollEnvironment(raw map[string]interface{}) *SystemStateMa
 		ContextSwitchCost:       m.ContextSwitchCost,
 		Entities:                entities,
 		Psi:                     &PsiReference{ID: declaration.PsiID, Digest: declaration.Digest()},
-		Resources:               means,
+		Resources:               means_obs,
 	}
 }

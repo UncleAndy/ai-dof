@@ -371,7 +371,7 @@ func runHarnessV07() {
 		GlobalTimeToCollapseMks: 1000000.0, ContextSwitchCost: 0.05,
 		Entities: map[string]*EntityState{"e": {EntityID: "e", IsAutonomous: true,
 			AgencyIndex: 0.5, CurrentDoF: 0.5, DoFKnown: true, TimeToCollapseMks: 1000000.0}},
-		Resources: map[string]float64{"credit": 5.0, "machine_hour": 5.0}}
+		Resources: map[string]*ResourceObservation{"credit": {Value: ptr(5.0), Unit: "RUB", Scale: 1.0, Source: "sensor"}, "machine_hour": {Value: ptr(5.0), Unit: "hour", Scale: 1.0, Source: "sensor"}}}
 	synthGroups := [][]string{{"credit", "machine_hour", "energy"}}
 	synthRates := map[string]RateInfo{
 		"credit->energy":       {Rate: 2.0, DurationMks: 100.0},

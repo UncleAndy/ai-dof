@@ -286,7 +286,8 @@ func runHarnessV06() {
 	check("net draw energy=2", needOffset["energy"] == 2.0)
 
 	brokeState := *state
-	brokeState.Resources = map[string]float64{"credit": 0.4, "energy": 0.0}
+	credit := 0.4
+	brokeState.Resources = map[string]*ResourceObservation{"credit": {Value: &credit, Unit: "credit", Scale: 1.0, Source: "sensor"}}
 	planBroke := core.PlanFunding(&brokeState, optFunded, decl.Groups, decl.Rates, nil, nil)
 	check("broke agent insolvency", !planBroke.Covered)
 

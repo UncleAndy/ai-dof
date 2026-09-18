@@ -169,10 +169,10 @@ impl DofOrchestrator {
             "source".to_string(),
             MandateValue::Text("measured balance (§4.8)".to_string()),
         );
-        for (resource, amount) in state.resources.iter() {
+        for (resource, obs) in state.resources.iter() {
             means_provenance.insert(
                 format!("measured:{}", resource),
-                MandateValue::Number(*amount),
+                MandateValue::Number(obs.resource_value(false)),
             );
         }
         if let Some(d) = self.mapper.last_declaration.as_ref() {

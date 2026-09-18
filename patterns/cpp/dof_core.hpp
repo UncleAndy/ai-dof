@@ -21,6 +21,46 @@
 #include "measurement.hpp"
 #include "world_graph.hpp"
 
+// §3.2a (v0.9.1): a resource as an observable quantity with metadata.
+struct ResourceObservation {
+    std::optional<double> value;
+    std::string unit;
+    double scale = 1.0;
+    std::string source;
+    double last_measured_at = 0.0;
+    double aging_time = 0.0;
+    std::optional<double> estimated;
+    std::vector<std::string> estimation_source;
+};
+
+// §4.8 (v0.9.1): resolve a resource's usable value for the gate.
+inline double resource_value(const ResourceObservation& obs, bool use_estimated = false) {
+    if (obs.value) return *obs.value;
+    if (use_estimated && obs.estimated) return *obs.estimated;
+    return 0.0;
+}
+
+// §4.8 (v0.9.1): equality for ResourceObservation (used in report comparison).
+inline bool resource_obs_equal(const ResourceObservation& a, const ResourceObservation& b) {
+    if (a.value.has_value() != b.value.has_value()) return false;
+    if (a.value.has_value() && *a.value != *b.value) return false;
+    return a.unit == b.unit && a.scale == b.scale && a.source == b.source &&
+           a.last_measured_at == b.last_measured_at && a.aging_time == b.aging_time &&
+           a.estimated == b.estimated && a.estimation_source == b.estimation_source;
+}
+
+// Compare two resource maps (used in reports).
+inline bool resource_map_equal(
+    const std::map<std::string, ResourceObservation>& a,
+    const std::map<std::string, ResourceObservation>& b) {
+    if (a.size() != b.size()) return false;
+    for (const auto& [key, val] : a) {
+        auto it = b.find(key);
+        if (it == b.end() || !resource_obs_equal(val, it->second)) return false;
+    }
+    return true;
+}
+
 struct EntityState {
     std::string entity_id;
     bool is_autonomous = true;
@@ -39,10 +79,7 @@ struct SystemStateMatrix {
     double context_switch_cost = 0.0;
     std::unordered_map<std::string, EntityState> entities;
     std::optional<dof::PsiReference> psi;  // frozen measurement ruler (§3.4)
-    // §3.2 (v0.6): the acting agent's means per resource, in the unit declared
-    // for that resource in the ruler. Absent means are never "unlimited": an
-    // option drawing a resource the agent has not declared is unpayable (§4.8).
-    std::unordered_map<std::string, double> resources;
+    std::unordered_map<std::string, ResourceObservation> resources;
 };
 
 struct ActionOption {
@@ -62,6 +99,12 @@ struct ActionOption {
     // a label that could be set to dodge the price is not a rule.
     std::vector<dof::ClosedRef> closed;
     std::string act_id;  // the graph act implementing this option
+    // §3.3 (v0.9.1): projected change of τ (time-to-collapse) caused by this option.
+    double projected_tau_delta = 0.0;
+    // §3.3 (v0.9.1): resources whose value becomes known after this option executes.
+    std::vector<std::string> discovers;
+    // §3.3 (v0.9.1): resources needed for gate checks.
+    std::vector<std::string> requires;
 };
 
 // The observation a cycle is decided over (§3.5, §4.9).
@@ -234,8 +277,8 @@ struct DofReport {
     // §6.2 (v0.6): the acting agent's means at the start of the cycle and after
     // the selected option's consumption. Multi-step accumulation is auditable
     // only if the spend is written where the next cycle can see it (§4.8).
-    std::map<std::string, double> resources_before;
-    std::map<std::string, double> resources_after;
+    std::map<std::string, ResourceObservation> resources_before;
+    std::map<std::string, ResourceObservation> resources_after;
     // §6.2 (v0.7): the identity of the observation a reported subgraph was taken
     // from, and where the amounts a decision rests on came from — a measured
     // balance or an asserted authority.
@@ -534,7 +577,7 @@ public:
 
     static double means_of(const SystemStateMatrix& state, const std::string& resource) {
         auto it = state.resources.find(resource);
-        return it == state.resources.end() ? 0.0 : it->second;
+        return it == state.resources.end() ? 0.0 : resource_value(it->second);
     }
 
     // §4.8: the option's net draw on the agent, per resource. Consumption is the
@@ -961,8 +1004,10 @@ public:
                                             in.weights, in.cap);
             for (const auto& kv : plan.spend) {
                 auto it = rep.resources_after.find(kv.first);
-                double before = (it == rep.resources_after.end()) ? 0.0 : it->second;
-                rep.resources_after[kv.first] = std::max(0.0, before - kv.second);
+                ResourceObservation before = (it == rep.resources_after.end()) ? ResourceObservation{} : it->second;
+                ResourceObservation after = before;
+                after.value = std::max(0.0, resource_value(before) - kv.second);
+                rep.resources_after[kv.first] = after;
             }
         }
 

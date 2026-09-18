@@ -11,7 +11,7 @@
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
-use crate::dof_core::{ActionOption, DofCalculusCore, ReportInput};
+use crate::dof_core::{resource_map_equal, ActionOption, DofCalculusCore, ReportInput, ResourceObservation};
 use crate::fixture_v07::{self as fx, Options};
 use crate::measurement::{psi_opt, psi_var, MandateValue, U_MAX};
 use crate::options_v07 as opts;
@@ -786,8 +786,8 @@ pub fn run_harness_v07() -> Vec<String> {
         );
         e.dof_known = true;
         synth.entities.insert("e".to_string(), e);
-        synth.resources.insert("credit".to_string(), 5.0);
-        synth.resources.insert("machine_hour".to_string(), 5.0);
+        synth.resources.insert("credit".to_string(), ResourceObservation { value: Some(5.0), unit: "RUB".to_string(), source: "sensor".to_string(), ..Default::default() });
+        synth.resources.insert("machine_hour".to_string(), ResourceObservation { value: Some(5.0), unit: "hour".to_string(), source: "sensor".to_string(), ..Default::default() });
         let synth_groups = vec![vec![
             "credit".to_string(),
             "machine_hour".to_string(),

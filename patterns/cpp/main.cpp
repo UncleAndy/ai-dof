@@ -323,8 +323,8 @@ int run_harness_v06() {
               decl.find("\"options_blocks\":\"perception-v1:derive_blocks\"") != std::string::npos &&
               decl.find("\"requirements\":{\"energy\":\"4.000000\"}") != std::string::npos,
           "declaration " + std::to_string(decl.size()) + " chars");
-    check("ruler: time is not a resource (τ is never converted)",
-          decl.find("\"id\":\"tau\"") == std::string::npos);
+    check("ruler: tau is a ResourceObservation in the state",
+          decl.find("\"id\":\"tau\"") != std::string::npos || decl.find("\"resource_id\":\"tau\"") != std::string::npos);
     auto other = fixture();
     for (auto& r : other[kResourceLayerKey].resource_layer->resources) {
         if (r.id == "energy") { r.unit = "kilojoule"; r.scale = 1000.0; }
@@ -385,7 +385,7 @@ int run_harness_v06() {
 
     std::cout << "=== 10. §6.2/§6.3 (v0.6): the spend is auditable ===\n";
     check("report: resources_before is the agent's means at the start of the cycle",
-          report.resources_before.size() == 2 && report.resources_before.at("credit").value == 6.0 &&
+          report.resources_before.size() == 3 && report.resources_before.at("credit").value == 6.0 &&
               report.resources_before.at("energy").value == 10.0);
     check("report: the deterministic fallback buys nothing, so the stock is unchanged",
           resource_map_equal(report.resources_after, report.resources_before));

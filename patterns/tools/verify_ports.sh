@@ -1,9 +1,13 @@
 #!/usr/bin/env bash
 # Verify the DOF-Core reference ports against the frozen digests of the CURRENT
-# release, v0.8, and report the v0.7 and v0.6 harnesses separately as historical
+# release, v0.9.1, and report the v0.8/v0.7/v0.6 harnesses separately as historical
 # evidence.
 #
 # Usage:  bash patterns/tools/verify_ports.sh [REPO_DIR]   # defaults to this repo root
+#
+# v0.9.1 does NOT change the ruler or observation digests (it adds ResourceObservation
+# and τ-as-resource, but canonical serialization of existing fields is unchanged), so
+# the decisive row is v0.9.1 and it must show the SAME digests v0.7/v0.8 shipped.
 #
 # This is the repo copy of the script that ships with the Hermes skill
 # `normative-standard-port` (see its Verification checklist). The only
@@ -22,11 +26,13 @@
 # wrong is not conformant; so they are grepped for by exact value and counted
 # per port rather than "the first 64-hex we happen to see".
 #
-# v0.8 does NOT change the ruler, so the decisive row is v0.8 and it must show
-# the SAME two digests v0.7 shipped: the candidate vector and the admissibility
-# test of §4.5 are not measurement inputs. A moved digest here is an error to be
-# fixed, not a new version — which is exactly why the v0.7 row is re-run
-# alongside: both releases must agree on the fingerprints.
+# v0.9.1 does NOT change the ruler or observation digests (ResourceObservation
+# and τ-as-resource were added, but canonical serialization of existing fields is
+# unchanged), so the decisive row is v0.9.1 and it must show the SAME two digests
+# v0.7/v0.8 shipped: the candidate vector, the admissibility test, and the new
+# ResourceObservation fields are not measurement inputs. A moved digest here is
+# an error to be fixed, not a new version — which is exactly why the v0.7 row
+# is re-run alongside: all releases must agree on the fingerprints.
 #
 # Expectations:
 #   * ports live at patterns/{python,go,cpp,rust};
@@ -63,7 +69,7 @@ V06_DIGEST="bed37c25fd9cb757e9ea4a861c01cd4660fd896a83cd39b7c73b8e0be7489ad4"
 printf 'repo: %s\nout:  %s\n' "$REPO" "$OUT_DIR"
 printf 'ruler digest:       %s\nobservation digest: %s\n\n' "$RULER_DIGEST" "$OBS_DIGEST"
 
-# --- current-release row (v0.8): both digests, no failures, checks ran --------
+# --- current-release row (v0.9.1): both digests, no failures, checks ran --------
 report_current() {
     local name="$1" file="$2"
     local ok fail ruler obs
@@ -85,7 +91,7 @@ report_current() {
         status=1
     fi
     if [ "$ruler" -eq 0 ] || [ "$obs" -eq 0 ]; then
-        printf '  the v0.8 run does not show both frozen digests — that is a failure, not a warning\n'
+        printf '  the v0.9.1 run does not show both frozen digests — that is a failure, not a warning\n'
         status=1
     else
         current_ports_ok=$((current_ports_ok + 1))

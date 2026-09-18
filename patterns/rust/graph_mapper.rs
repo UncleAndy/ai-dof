@@ -6,7 +6,7 @@
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
-use crate::dof_core::{EntityState, ObservationContext, SystemStateMatrix};
+use crate::dof_core::{EntityState, ObservationContext, ResourceObservation, SystemStateMatrix};
 use crate::measurement::{
     measure_entity, LensObservation, MandateValue, MeasurementDeclaration, PsiReference, Rate,
     ResourceUnit, VerdictRecord,
@@ -291,6 +291,48 @@ impl GraphMapper {
             id: declaration.psi_id.clone(),
             digest: declaration.digest(),
         };
+        // v0.9.1: convert flat means to ResourceObservation with metadata.
+        let mut resources: HashMap<String, ResourceObservation> = HashMap::new();
+        for (rid, val) in means.iter() {
+            let mut obs = ResourceObservation {
+                value: Some(*val),
+                ..Default::default()
+            };
+            // Find the declared unit for this resource.
+            if let Some(layer) = layer.as_ref() {
+                for ru in layer.resources.iter() {
+                    if ru.id == *rid {
+                        obs.unit = ru.unit.clone();
+                        obs.scale = ru.scale;
+                        break;
+                    }
+                }
+            }
+            obs.source = "sensor".to_string();
+            obs.aging_time = 3600.0;
+            resources.insert(rid.clone(), obs);
+        }
+        // v0.9.1: τ is stored as ResourceObservation under "tau".
+        resources.insert(
+            "tau".to_string(),
+            ResourceObservation {
+                value: Some(global_ttc),
+                unit: "us".to_string(),
+                scale: 1.0,
+                source: "entity_min".to_string(),
+                aging_time: 0.0,
+                ..Default::default()
+            },
+        );
+
+        let state = SystemStateMatrix {
+            global_time_to_collapse_mks: global_ttc,
+            context_switch_cost: self.context_switch_cost,
+            entities,
+            psi: Some(reference),
+            resources,
+        };
+
         // §3.5/§4.9: the observation itself, pinned by its own digest (§6.2), and the
         // self-check that the declared derived numbers are the ones the named
         // procedures actually return over it.
@@ -311,12 +353,6 @@ impl GraphMapper {
         }
         self.last_declaration = Some(declaration);
 
-        SystemStateMatrix {
-            global_time_to_collapse_mks: global_ttc,
-            context_switch_cost: self.context_switch_cost,
-            entities,
-            psi: Some(reference),
-            resources: means.iter().map(|(k, v)| (k.clone(), *v)).collect(),
-        }
+        state
     }
 }

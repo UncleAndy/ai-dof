@@ -19,9 +19,88 @@ use crate::world_graph::{q6, ClosedRef, Verdict, WorldGraph};
 /// Deliberately NOT a state field: the world graph is a Perception artifact supplied
 /// to the cycle, exactly as the derived groups and the observed rates are (§4.8).
 /// Without it every verdict is `undetermined`, which means no entity at a known zero
-/// is excluded and no collapse-source label is honoured — the fail-safe direction:
-/// nothing is proven, so nothing is removed.
-#[derive(Clone, Debug, Default)]
+/// §3.2a (v0.9.1): a resource as an observable quantity with metadata.
+#[derive(Clone, Debug)]
+pub struct ResourceObservation {
+    pub value: Option<f64>,
+    pub unit: String,
+    pub scale: f64,
+    pub source: String,
+    pub last_measured_at: f64,
+    pub aging_time: f64,
+    pub estimated: Option<f64>,
+    pub estimation_source: Vec<String>,
+}
+
+impl Default for ResourceObservation {
+    fn default() -> Self {
+        ResourceObservation {
+            value: None,
+            unit: String::new(),
+            scale: 1.0,
+            source: String::new(),
+            last_measured_at: 0.0,
+            aging_time: 0.0,
+            estimated: None,
+            estimation_source: Vec::new(),
+        }
+    }
+}
+
+impl PartialEq for ResourceObservation {
+    fn eq(&self, other: &Self) -> bool {
+        const EPS: f64 = 1e-12;
+        self.value == other.value
+            && self.unit == other.unit
+            && (self.scale - other.scale).abs() < EPS
+            && self.source == other.source
+            && (self.last_measured_at - other.last_measured_at).abs() < EPS
+            && (self.aging_time - other.aging_time).abs() < EPS
+            && self.estimated == other.estimated
+            && self.estimation_source == other.estimation_source
+    }
+}
+
+impl ResourceObservation {
+    /// §4.8 (v0.9.1): resolve a resource's usable value for the gate.
+    pub fn resource_value(&self, use_estimated: bool) -> f64 {
+        if let Some(v) = self.value {
+            v
+        } else if use_estimated {
+            self.estimated.unwrap_or(0.0)
+        } else {
+            0.0
+        }
+    }
+
+    /// Check if the observation is stale.
+    pub fn is_stale(&self, now: f64) -> bool {
+        if self.aging_time <= 0.0 {
+            return false;
+        }
+        (now - self.last_measured_at) > self.aging_time
+    }
+}
+
+/// Compare two resource maps (used in reports).
+pub fn resource_map_equal(a: &BTreeMap<String, ResourceObservation>, b: &BTreeMap<String, ResourceObservation>) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    for (key, val) in a {
+        match b.get(key) {
+            Some(other) => {
+                if val != other {
+                    return false;
+                }
+            }
+            None => return false,
+        }
+    }
+    true
+}
+
+#[derive(Clone, Debug)]
 pub struct ObservationContext {
     pub world: WorldGraph,
     pub means_class: Vec<String>,
@@ -96,10 +175,9 @@ pub struct SystemStateMatrix {
     pub entities: HashMap<String, EntityState>,
     /// The frozen measurement ruler (§3.4). `S'` keeps the ruler of `S`.
     pub psi: Option<PsiReference>,
-    /// §3.2 (v0.6): the acting agent's means per resource, in the unit declared
-    /// for that resource in the ruler. An absent balance is never "unlimited":
-    /// an option drawing an undeclared resource is unpayable (§4.8).
-    pub resources: HashMap<String, f64>,
+    /// §3.2 (v0.9.1): the acting agent's means per resource, as
+    /// ResourceObservation objects carrying metadata.
+    pub resources: HashMap<String, ResourceObservation>,
 }
 
 #[derive(Clone, Debug)]
@@ -122,6 +200,12 @@ pub struct ActionOption {
     pub closed: Vec<ClosedRef>,
     /// The graph act implementing this option.
     pub act_id: String,
+    /// §3.3 (v0.9.1): projected change of τ (time-to-collapse) caused by this option.
+    pub projected_tau_delta: f64,
+    /// §3.3 (v0.9.1): resources whose value becomes known after this option executes.
+    pub discovers: Vec<String>,
+    /// §3.3 (v0.9.1): resources needed for gate checks.
+    pub requires: Vec<String>,
 }
 
 impl ActionOption {
@@ -141,6 +225,9 @@ impl ActionOption {
             projected_resource_delta: HashMap::new(),
             closed: Vec::new(),
             act_id: String::new(),
+            projected_tau_delta: 0.0,
+            discovers: Vec::new(),
+            requires: Vec::new(),
         }
     }
 
@@ -318,8 +405,8 @@ pub struct DofReport {
     /// §6.2 (v0.6): the acting agent's means at the start of the cycle and after
     /// the selected option's consumption. Multi-step accumulation is auditable
     /// only if the spend is written where the next cycle can see it (§4.8).
-    pub resources_before: BTreeMap<String, f64>,
-    pub resources_after: BTreeMap<String, f64>,
+    pub resources_before: BTreeMap<String, ResourceObservation>,
+    pub resources_after: BTreeMap<String, ResourceObservation>,
     /// §6.2 (v0.7): the identity of the observation a reported subgraph was taken
     /// from, and where the amounts a decision rests on came from — a measured
     /// balance or an asserted authority.
@@ -742,7 +829,7 @@ impl DofCalculusCore {
     // --- §4.8 resource gate ---------------------------------------------------
 
     fn means_of(state: &SystemStateMatrix, resource: &str) -> f64 {
-        state.resources.get(resource).copied().unwrap_or(0.0)
+        state.resources.get(resource).map(|o| o.resource_value(false)).unwrap_or(0.0)
     }
 
     // ---------------------------------------------------------------------
@@ -1275,9 +1362,9 @@ impl DofCalculusCore {
 
         // §6.2 (v0.6): the means before the cycle and after the selected option's
         // spend ledger — what actually left the stock, not what was declared.
-        let mut resources_before: BTreeMap<String, f64> = BTreeMap::new();
-        for (resource, amount) in current_state.resources.iter() {
-            resources_before.insert(resource.clone(), *amount);
+        let mut resources_before: BTreeMap<String, ResourceObservation> = BTreeMap::new();
+        for (resource, obs) in current_state.resources.iter() {
+            resources_before.insert(resource.clone(), obs.clone());
         }
         let mut resources_after = resources_before.clone();
         if let Some(chosen) = selected {
@@ -1290,8 +1377,11 @@ impl DofCalculusCore {
                 input.cap,
             );
             for (resource, amount) in plan.spend.iter() {
-                let before = resources_after.get(resource).copied().unwrap_or(0.0);
-                resources_after.insert(resource.clone(), (before - amount).max(0.0));
+                let before = resources_after.get(resource);
+                let before_val = before.map(|o| o.resource_value(false)).unwrap_or(0.0);
+                let mut after = before.cloned().unwrap_or_default();
+                after.value = Some((before_val - amount).max(0.0));
+                resources_after.insert(resource.clone(), after);
             }
         }
 

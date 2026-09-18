@@ -370,7 +370,9 @@ inline int run_harness_v07() {
         e.current_dof = 0.5;
         e.time_to_collapse_mks = 1000000.0;
         synth.entities["e"] = e;
-        synth.resources = {{"credit", 5.0}, {"machine_hour", 5.0}};
+        ResourceObservation credit_ro; credit_ro.value = 5.0; credit_ro.unit = "RUB"; credit_ro.source = "sensor";
+        ResourceObservation mh_ro; mh_ro.value = 5.0; mh_ro.unit = "hour"; mh_ro.source = "sensor";
+        synth.resources = {{"credit", credit_ro}, {"machine_hour", mh_ro}};
         std::vector<std::vector<std::string>> synth_groups{{"credit", "machine_hour", "energy"}};
         std::map<std::string, dof::Rate> synth_rates{
             {"credit->energy", {2.0, 100.0}}, {"machine_hour->energy", {4.0, 900.0}}};

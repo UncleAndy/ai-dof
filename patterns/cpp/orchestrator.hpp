@@ -110,7 +110,7 @@ public:
         in.ctx = ctx;
         in.means_provenance["source"] = dof::MandateValue::str("measured balance (§4.8)");
         for (const auto& kv : state.resources) {
-            in.means_provenance["measured:" + kv.first] = dof::MandateValue::num(kv.second);
+            in.means_provenance["measured:" + kv.first] = dof::MandateValue::num(resource_value(kv.second));
         }
         if (mapper_.last_declaration && mapper_.last_declaration->numeraire) {
             in.means_provenance["numeraire"] = dof::MandateValue::str(*mapper_.last_declaration->numeraire);

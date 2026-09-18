@@ -247,12 +247,40 @@ public:
             entities[kv.first] = ent;
         }
 
+        // v0.9.1: convert flat means to ResourceObservation with metadata.
+        std::unordered_map<std::string, ResourceObservation> resources;
+        for (const auto& [rid, val] : means) {
+            ResourceObservation obs;
+            obs.value = val;
+            // Find the declared unit for this resource.
+            for (const auto& ru : layer->resources) {
+                if (ru.id == rid) {
+                    obs.unit = ru.unit;
+                    obs.scale = ru.scale;
+                    break;
+                }
+            }
+            obs.source = "sensor";
+            obs.aging_time = 3600.0;
+            resources[rid] = obs;
+        }
+        // v0.9.1: τ is stored as ResourceObservation under "tau".
+        {
+            ResourceObservation tau_obs;
+            tau_obs.value = global_ttc;
+            tau_obs.unit = "us";
+            tau_obs.scale = 1.0;
+            tau_obs.source = "entity_min";
+            tau_obs.aging_time = 0.0;
+            resources["tau"] = tau_obs;
+        }
+
         SystemStateMatrix state;
         state.global_time_to_collapse_mks = global_ttc;
         state.context_switch_cost = context_switch_cost_;
         state.entities = std::move(entities);
         state.psi = dof::PsiReference{declaration.psi_id, declaration.digest()};
-        for (const auto& kv : means) state.resources[kv.first] = kv.second;
+        state.resources = std::move(resources);
         last_declaration = declaration;
 
         // §3.5/§4.9: the observation itself, pinned by its own digest (§6.2), and

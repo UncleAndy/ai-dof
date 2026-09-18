@@ -15,7 +15,7 @@ mod world_graph;
 
 use std::collections::{BTreeMap, HashMap};
 
-use dof_core::{ActionOption, DofCalculusCore, ReportInput};
+use dof_core::{resource_map_equal, ActionOption, DofCalculusCore, ReportInput};
 use graph_mapper::{RawObservation, ResourceLayer, RESOURCE_LAYER_KEY};
 use measurement::{
     derive_blocks, psi_con, psi_opt, psi_var, LensObservation, MandateValue, Rate, ResourceUnit,
@@ -523,8 +523,8 @@ fn run_harness_v06() -> Vec<String> {
     );
     check(
         &mut failures,
-        "ruler: time is not a resource (τ is never converted)",
-        !decl.contains("\"id\":\"tau\""),
+        "ruler: tau is a ResourceObservation in the state",
+        decl.contains("\"id\":\"tau\"") || decl.contains("\"resource_id\":\"tau\""),
         "",
     );
     let mut other = fixture();
@@ -665,15 +665,15 @@ fn run_harness_v06() -> Vec<String> {
     check(
         &mut failures,
         "report: resources_before is the agent's means at the start of the cycle",
-        report.resources_before.len() == 2
-            && report.resources_before.get("credit").copied() == Some(6.0)
-            && report.resources_before.get("energy").copied() == Some(10.0),
+        report.resources_before.len() == 3
+            && report.resources_before.get("credit").and_then(|o| o.value) == Some(6.0)
+            && report.resources_before.get("energy").and_then(|o| o.value) == Some(10.0),
         "",
     );
     check(
         &mut failures,
         "report: the deterministic fallback buys nothing, so the stock is unchanged",
-        report.resources_after == report.resources_before,
+        resource_map_equal(&report.resources_after, &report.resources_before),
         "",
     );
     let rep_funded = core.report(
@@ -690,8 +690,8 @@ fn run_harness_v06() -> Vec<String> {
     check(
         &mut failures,
         "report: buying a deficit debits the resource that actually paid",
-        rep_funded.resources_after.get("credit").copied() == Some(5.0)
-            && rep_funded.resources_after.get("energy").copied() == Some(0.0),
+        rep_funded.resources_after.get("credit").and_then(|o| o.value) == Some(5.0)
+            && rep_funded.resources_after.get("energy").and_then(|o| o.value) == Some(0.0),
         &format!("after={:?}", rep_funded.resources_after),
     );
     check(

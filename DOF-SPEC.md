@@ -1,6 +1,6 @@
 # DOF-Core — Formal Specification (DOF-SPEC)
 
-**Status:** DRAFT v0.8 (normative text and conformance evidence complete — see §10)
+**Status:** DRAFT v0.9.1 (normative text complete — see §10)
 **Part of:** The DOF open standard (see `SKILL.md`, `references/`, `patterns/PATTERNS.md`).
 **License:** CC BY-SA 4.0 — see `references/license.md`. Implementations MUST satisfy §6 (Proof of Implementation).
 
@@ -57,13 +57,35 @@ An entity with `current_dof == 0.0` **and** `dof_known == true` is at collapse (
 
 | Field                     | Type                       | Constraint | Meaning |
 |---------------------------|----------------------------|------------|---------|
-| `global_time_to_collapse_mks` | float | `> 0` | Global τ — most urgent non-collapse-source deadline (see §5). |
+| `global_time_to_collapse_mks` | float | `> 0` | Global τ — most urgent non-collapse-source deadline (see §5). **Deprecated in v0.9.1**: τ is now a `ResourceObservation` (see §3.2a). This field is kept for backward compatibility; implementations SHOULD migrate to `tau` in the resource map. |
 | `context_switch_cost`     | float                      | `>= 0.0`   | ΔT — penalty for changing the current process. |
 | `entities`                | map<`entity_id`,`EntityState`> | —     | The full set of observed entities. |
 | `psi`                     | object                        | —     | Frozen measurement declaration reference `{ id, digest }` (§3.4). |
-| `resources`               | map<`resource_id`, `ResourceObservation`> | — | Available means of the **acting agent** per resource, in the unit declared for that resource (§4.8). An empty map means the agent declares no means; then any option with non-zero consumption is inadmissible (§4.8). Each `ResourceObservation` carries its **metadata**: `value` (float or `null`), `unit`, `scale`, `source`, `last_measured_at`, `aging_time`, `estimated` (float or `null`), and `estimation_source`. A resource with `value = null` is **unmeasured**; it MAY be acted upon only with an `estimated` value and a mandatory fallback option (§4.8). |
+| `resources`               | map<`resource_id`, `ResourceObservation`> | — | Available means of the **acting agent** per resource, in the unit declared for that resource (§4.8). An empty map means the agent declares no means; then any option with non-zero consumption is inadmissible (§4.8). Each `ResourceObservation` carries its **metadata**: `value` (float or `null`), `unit`, `scale`, `source`, `last_measured_at`, `aging_time`, `estimated` (float or `null`), and `estimation_source`. A resource with `value = null` is **unmeasured**; it MAY be acted upon only with an `estimated` value and a mandatory fallback option (§4.8). **Since v0.9.1, τ is stored as a `ResourceObservation` with `resource_id = "tau"` in this map** (see §3.2b). |
 
-### 3.2a `ResourceObservation`
+### 3.2b `tau` — time-to-collapse as a resource
+
+Since v0.9.1, τ is a `ResourceObservation` stored under `resource_id = "tau"` in the state's `resources` map.
+
+| Field | Constraint | Meaning |
+|---|---|---|
+| `value` | float, `>= 0.0` or `null` | Estimated time until the nearest hard deadline, in microseconds. `null` = deadline unknown (catastrophe state or unmeasured). |
+| `unit` | `"us"` | Always microseconds. |
+| `scale` | `1.0` | Always 1.0. |
+| `source` | non-empty | Origin of the estimate: `"battery_sensor"`, `"medical_monitor"`, `"operator_limit"`, `"external_timer"`, … |
+| `last_measured_at` | `>= 0.0` | Time of last observation. |
+| `aging_time` | `> 0.0` | How long the estimate remains valid. 0 = never (not recommended for τ). |
+| `estimated` | float or `null` | Projected τ after executing the option (used for planning). |
+
+**Multiple deadlines.** When the system observes several deadlines (battery, brain death, operator limit, external timer), τ is the **minimum** of their estimates. Each deadline MAY be tracked as a separate `ResourceObservation` in the map; τ is then computed as `min(value_i)` over all active deadlines.
+
+**Behavior:**
+1. **Automatic decay.** τ decreases by real time elapsed between cycles.
+2. **Action consumption.** Every action with `estimated_duration_mks = d` consumes τ: `τ' = τ - d`.
+3. **Action effect.** An action MAY change τ via `projected_tau_delta`: `τ' = τ - d + projected_tau_delta`. CPR during clinical death: `projected_tau_delta > 0` (crisis averted).
+4. **Re-evaluation in S'.** τ is re-estimated from world observation in every S' transition. Even without action, τ may change (e.g., external event shortened or extended a deadline).
+
+**Parallel actions.** When N actions execute in parallel (purchased via machine-hours), τ is consumed by the **maximum** duration: `τ' = τ - max(d_i)`. Working time is consumed by the **sum** of durations across all parallel actions.
 
 | Field | Type | Constraint | Meaning |
 |---|---|---|---|
@@ -97,6 +119,7 @@ Choice between (1) and (2) depends on measurement duration vs τ (§4.8, §5).
 | `discovers` | list<`resource_id`> | — | Resources whose `value` becomes known after this option executes (a `measure`-type act; §3, §3.5). |
 | `is_reversible` | bool | — | `false` ⇒ irreversible ⇒ structural penalty (§4.4). |
 | `estimated_duration_mks` | float | `>= 0.0` | Estimated execution time in microseconds. |
+| `projected_tau_delta` | float | — | Projected change of τ (time-to-collapse) caused by this option. **Negative = τ decreases, positive = τ increases.** Used in S' simulation: `τ' = τ - estimated_duration_mks + projected_tau_delta`. A `measure`-type act that resolves τ has `projected_tau_delta` reflecting the new observation. |
 
 ### 3.4 `psi` — Measurement Declaration Reference
 
@@ -370,7 +393,8 @@ An action costs limited resources, and the action declares what it draws from th
 
 Rules that hold throughout:
 
-- **τ is not a resource.** Time-to-collapse is frozen on `S` (§4.6, R7) and is **never** obtainable by exchange; a postponement is granted only by an action that changes `τ` itself. Time appears twice and the two roles MUST NOT be conflated: `estimated_duration_mks` is the duration measured against `τ`, while working time / machine-hours is an ordinary resource in `projected_resource_delta`, purchasable at the observed rate.
+- **τ is a consumable resource.** Time-to-collapse `τ` is a `ResourceObservation` in the state (§3.2a) whose `value` is the estimated time until the nearest hard deadline, in microseconds. τ is **not** obtained by exchange (money buys *working time*, not τ itself). τ decreases by `estimated_duration_mks` of every action and MAY increase or decrease from action effects (§4.8b). τ < 0 is a catastrophe state.
+- **Working time is a resource.** Working time / machine-hours is an ordinary resource in `projected_resource_delta`, purchasable at the observed rate and usable for parallel execution.
 - **Every resource has a declared unit.** Name and scale (and, for money, the currency) are part of the hashed declaration content (§3.4.1); amounts are expressed in that unit. Two implementations that declare the same resource name with different scales are measurably different rulers and will produce different digests.
 - **Zero is declared, never omitted.** An absent resource key is indistinguishable from "nobody thought about it", so a resource the option does not consume is written as `0.0`.
 - **The agent's own means MUST be measured.** An unknown balance (`value = null` without a usable `estimated`) is an **invalid input** for the `insolvency` gate, not an evaluation mode. The agent's own means are self-measurable (balance, charge, remaining time), so "unknown" means "measure it first"; otherwise the decision is incomplete (§6.2).
@@ -382,7 +406,40 @@ Rules that hold throughout:
 
 ---
 
-### 4.9 The World Graph and Reachability Verdicts
+### 4.8b Viability gate (τ consumption)
+
+The viability gate decides whether an action fits within the remaining time budget τ. Unlike the resource gate of §4.8, this gate is **temporal**, not financial.
+
+**τ consumption:**
+- Every action consumes τ by `estimated_duration_mks`: `τ' = τ - d`.
+- If `τ' < 0`, the action is **not viable**: it cannot complete before the deadline.
+- If `τ = null`, τ is unknown: the action is not viable unless a measurement resolves τ first.
+
+**τ effects:**
+- An action MAY change τ via `projected_tau_delta` (§3.3): `τ' = τ - d + projected_tau_delta`.
+- The viability check uses the projected `τ'`: if `τ' >= 0` after the action, it passes.
+- An action with `projected_tau_delta > 0` (e.g., CPR averting brain death) can rescue a situation where `τ < d`.
+
+**Parallel actions:**
+- For N parallel actions with durations `d_1, …, d_N`:
+  - τ consumed = `max(d_i)` (all run simultaneously, deadline is the latest).
+  - Working time consumed = `sum(d_i)` (each parallel worker spends its time).
+- Parallel actions pass viability iff `τ - max(d_i) + min(projected_tau_delta_i) >= 0`.
+
+**Catastrophe state (τ < 0):**
+- τ < 0 is a catastrophe: all deadlines have passed.
+- Only actions that increase τ (`projected_tau_delta > |τ|`) are viable.
+- Measurement of τ is always viable (resolves uncertainty).
+
+**Relation to other gates:**
+1. Viability (§4.8b) is checked **first**: if τ < 0, option is removed.
+2. Structural admissibility (§4.5) is checked **second**.
+3. Resource gate (§4.8) is checked **third**: insolvency removes the option.
+4. Selection (§4.5) is applied to survivors.
+
+**Measure-type act:**
+- A `measure` act (§3.5) that resolves τ has `estimated_duration_mks = t_m` and `projected_tau_delta = new_tau - (τ - t_m)`.
+- It is always viable if `τ >= t_m` (measurement completes before deadline) OR if `τ = null` (we must measure to know).
 
 Reachability is decided over the observed world graph `G` (§3.5), frozen on `S` (R7). For every entity the verdict procedure returns exactly one of:
 
@@ -407,7 +464,7 @@ Rules that hold throughout:
 
 ## 5. Reactive Circuit (Time-Bounded Interrupter)
 
-To prevent *Analysis Paralysis*, compute cycles are bound to the physical time remaining before collapse (τ = `global_time_to_collapse_mks`). Define `FAST_PASS_THRESHOLD = 5000000.0` microseconds (normative).
+To prevent *Analysis Paralysis*, compute cycles are bound by τ (time-to-collapse). Since v0.9.1, τ is a `ResourceObservation` (§3.2b) stored under `resource_id = "tau"` in the state's resource map; `global_time_to_collapse_mks` is kept for backward compatibility and reflects the same value. Define `FAST_PASS_THRESHOLD = 5000000.0` microseconds (normative).
 
 - **If τ ≥ 5,000,000.0 μs → DEEP DIVERSIFICATION:** activate the LLM-backed Generator to search for hidden alternatives (3–5 distinct options).
 - **If τ < 5,000,000.0 μs → FAST PASS:** bypass the LLM; use the deterministic fallback generator (one minimal-risk option per cycle). The system preserves its structure instead of risking a late, poorly-verified decision.
@@ -551,7 +608,7 @@ The Generator's role is to produce `ActionOption` candidates. This spec does not
 
 ## 10. Versioning
 
-- This document is `DOF-SPEC` `v0.8`. The revision's normative text and the conformance evidence for the four reference ports are **complete** (see the `v0.8` entry below).
+- This document is `DOF-SPEC` `v0.9.1`. The revision's normative text is **complete**; conformance evidence for the four reference ports is **pending**.
 - `v0.3` — time is expressed in **microseconds**: `EntityState.time_to_collapse_mks`, `SystemStateMatrix.global_time_to_collapse_mks`, new `ActionOption.estimated_duration_mks`. The reactive-circuit threshold keeps its physical value: `FAST_PASS_THRESHOLD = 5000000.0` μs ⇔ `5.0` s of v0.2. `ActionOption.is_reversible` restored to the field table (it was dropped by the v0.2→v0.3 edit). §5 gains the **universal viability gate**: an option with `estimated_duration_mks > τ` is removed from the candidate set instead of being penalised.
 - `v0.4` — **the measurement layer becomes normative**: §3.4 (`psi` declaration reference and its canonical serialization), §4.1 (`DoF(e)` defined as the lens product), §4.6 (the three lenses, their normalization and the uniform degenerate-case guard), §4.7 (term level, unmeasured lenses, the ignorance penalty `u(t)` and its constants `α = 0.25`, `ρ = 0.9`, `U_MIN = ε^(1−ρ) ≈ 0.251`, `U_MAX = 0.5`), §6.1 (`lens_terms`, `binding_lens`), §6.2 (`psi_id`, `psi_digest`, declaration text, `removed_options`), §7 (items 7–9 and term-level equivalence). All four reference ports under `patterns/` implement this revision — conformance evidence below.
 - **`v0.4` text repair:** three places (`§3.4.1`, `§4.2`, `§4.5`) carried a cross-reference to a `§8.9` that does not exist in this document. They are replaced by an explicit **reserved** marker in §4.2 that states what implementations MUST do meanwhile, so the document no longer depends on anything outside itself. The normative behaviour of the reference ports is unchanged: recoverability was undefined before the repair and is undefined after it, but the rule is now decidable. Defining it — recovery horizon, admissible means, reachability verdicts over the world graph — is a versioned change and remains open.
@@ -578,8 +635,8 @@ The Generator's role is to produce `ActionOption` candidates. This spec does not
   - **C++** — `patterns/cpp/harness_v08.hpp` (36 checks), reached by `./dof_cpp v08` (the default).
   - **Rust** — `patterns/rust/harness_v08.rs` (36 checks), at `-O` **and** `-C opt-level=0`.
   All four produce the ruler digest `5126fd99641ffdc9c338d3d288fcf3cb6dcf093ca0a423f1cd265b3fcae4152a` and the observation digest `f3891c6ab622325fd6668893dd9f7450d39aa2d0a7ad2849634a4f59219f6a1c` — **unchanged from `v0.7`**, which is the release's own claim checked by running it rather than by asserting it — and the released fixture's index (`-35.314438370902`).
-- `v0.9` — **budget accounting: observable resources.** Resources are concrete observable quantities (battery charge, PROM parameters, bank balance, account access), not abstract units. §3.2a introduces `ResourceObservation` with metadata (`value` nullable, `unit`, `scale`, `source`, `last_measured_at`, `aging_time`, `estimated`, `estimation_source`). §3.3 adds `requires` and `discovers` to `ActionOption`. §3.5 introduces the `measure` act type that resolves a `value = null` resource. §4.8 extends the resource gate: `value = null` with `estimated` and a mandatory fallback is admissible (the estimate never satisfies insolvency — only `value` does), staleness is checked via `aging_time`, and measurement recursion is forbidden. §6.2/§6.3 add `unknown_resources`, `measurement_time_spent`, `discovers`, `fallback_for` to the audit. `τ` remains a rigid, non-convertible deadline; working time remains a convertible resource. Deliberately **not** in this revision: the `unknown_required` gate (separate discussion).
-- **Conformance evidence for `v0.9`:** pending — all four reference ports are to be extended with `ResourceObservation`, `measure`, the null-resource branch of §4.8, and the corresponding audit fields, then re-verified with a new fixture carrying at least one `value = null` resource with `estimated` and a fallback option. `patterns/tools/verify_ports.sh` reports **VERIFIED** only when every `v0.8` run shows both digests; it re-runs the `v0.7` row alongside, so both releases must agree on the fingerprints. What the fixture asserts, beyond the numbers: `t1_compensate` — no collapse charge, `NetDelta = +0.104`, i.e. every gate of `v0.5`–`v0.7` passes it — is **refused**; its mirror `t1_mirror`, the same gain with a closure that is a price rather than a path loss, is **selected**; `t1_help`, which cuts a *non-critical* path, is refused just the same, which is the proof that `D2` is a bar and not a comparison; and `D3 ≤ D2` holds for every candidate, which is the proof that the third dimension cannot separate two candidates.
+- `v0.9.1` — **budget accounting + τ as consumable resource.** (1) Observable resources: §3.2a introduces `ResourceObservation` with metadata (`value` nullable, `unit`, `scale`, `source`, `last_measured_at`, `aging_time`, `estimated`, `estimation_source`). §3.3 adds `requires` and `discovers` to `ActionOption`. §3.5 introduces the `measure` act type. §4.8 extends the resource gate: null-resource handling, staleness, forbidden recursion. §6.2/§6.3 add audit fields. (2) **τ is no longer a rigid deadline**: §3.2b makes τ a `ResourceObservation` stored in the state's resource map. §4.8b introduces the viability gate: τ is consumed by `estimated_duration_mks`, may increase or decrease via `projected_tau_delta` (§3.3), and is re-estimated on every S' transition. Parallel actions consume τ by `max(d_i)`. Catastrophe state (τ < 0) allows only τ-increasing actions. Working time is a separate, purchasable resource used for parallel execution. Deliberately **not** in this revision: the `unknown_required` gate (separate discussion).
+- **Conformance evidence for `v0.9.1`:** pending — all four reference ports are to be extended with `ResourceObservation`, `measure`, the null-resource branch of §4.8, τ-as-resource in §3.2b/§4.8b, and the corresponding audit fields, then re-verified with a new fixture carrying at least one `value = null` resource with `estimated` and a fallback option, plus a τ-measurement scenario. `patterns/tools/verify_ports.sh` reports **VERIFIED** only when every `v0.8` run shows both digests; it re-runs the `v0.7` row alongside, so both releases must agree on the fingerprints. What the fixture asserts, beyond the numbers: `t1_compensate` — no collapse charge, `NetDelta = +0.104`, i.e. every gate of `v0.5`–`v0.7` passes it — is **refused**; its mirror `t1_mirror`, the same gain with a closure that is a price rather than a path loss, is **selected**; `t1_help`, which cuts a *non-critical* path, is refused just the same, which is the proof that `D2` is a bar and not a comparison; and `D3 ≤ D2` holds for every candidate, which is the proof that the third dimension cannot separate two candidates.
   - Portability observations of this release: **(1)** the same struct is spelled differently per port — `CandidateVector` is at file scope in the C++ and Rust cores, which use no `dof::` namespace for these types — and what enforces the right spelling is the port's own convention, not the neighbouring port's: copying a name across ports is the error, and the compiler is what catches it. **(2)** `NetDelta` for the same candidate can differ in the last bits across ports (Go `0.10415067982725361`, Python `0.10415067982726071`), which is exactly why the selection groups ties with `NET_DELTA_TOLERANCE`: without it two ports could resolve the same tie differently, and §7's equivalence of *choice* would be unsatisfiable. **(3)** a rule a release retires must be **marked as retired where it lives** — `apply_structural_gate` in all four ports — or the next reader cannot tell which path is live. **(4)** a harness must **print** the fingerprints it asserts against, in full: the first `v0.8` harnesses compared the digests correctly but printed only their first sixteen characters, and passed every check while `verify_ports.sh` — rightly — refused to call the release verified. An assertion the log cannot show is not evidence.
 - Normative constants (ε = 1e-6, `FAST_PASS_THRESHOLD = 5000000.0` μs, the ignorance constants `α = 0.25`, `ρ = 0.9`, `U_MIN = ε^(1−ρ) ≈ 0.251`, `U_MAX = 0.5`, and the frozen three-lens set with its canonical order) are part of the versioned contract. `v0.7` **removes** the `0.5` rigidity coefficient — a closure is priced by §4.4 from the counters, so no constant remains there — and adds to the contract the canonical serialization of graph-derived values (§3.4.3) and the closed three-valued verdict dictionary of §4.9. `v0.8` adds the **structural admissibility test** of §4.5 (`D1 = D2 = D3 = 0`), the definition of `critical(S)`, and `NET_DELTA_TOLERANCE = 1e-9` — the tolerance that decides whether two candidates with different `NetDelta` are tied, which must be the same number in every port or §7's equivalence of *choice* is unsatisfiable. A test decides *which* of the measured numbers may win, so two implementations that test differently select differently on identical numbers. It belongs to the versioned contract even though it is not a measurement input and does not enter the digest — the hash carries what determines the numbers, the admissibility test determines the choice among the measured numbers. Changing any of them requires a new minor/major spec version and a re-verification of all conforming ports.
 - SHA-256 of this file SHOULD be published alongside releases to detect silent modification (consistent with the de-centralized publication plan).

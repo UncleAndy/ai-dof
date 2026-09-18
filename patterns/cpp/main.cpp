@@ -385,17 +385,17 @@ int run_harness_v06() {
 
     std::cout << "=== 10. §6.2/§6.3 (v0.6): the spend is auditable ===\n";
     check("report: resources_before is the agent's means at the start of the cycle",
-          report.resources_before.size() == 2 && report.resources_before.at("credit") == 6.0 &&
-              report.resources_before.at("energy") == 10.0);
+          report.resources_before.size() == 2 && report.resources_before.at("credit").value == 6.0 &&
+              report.resources_before.at("energy").value == 10.0);
     check("report: the deterministic fallback buys nothing, so the stock is unchanged",
-          report.resources_after == report.resources_before);
+          resource_map_equal(report.resources_after, report.resources_before));
     ReportInput in_funded;
     in_funded.groups = &groups;
     in_funded.rates = &rates;
     DofReport rep_funded = core.report(state, {funded}, funded, "FAST_PASS", in_funded);
     check("report: buying a deficit debits the resource that actually paid",
-          rep_funded.resources_after.at("credit") == 5.0 &&
-              rep_funded.resources_after.at("energy") == 0.0);
+          rep_funded.resources_after.at("credit").value == 5.0 &&
+              rep_funded.resources_after.at("energy").value == 0.0);
     check("report: the per-option row carries the draw and the conversions applied",
           rep_funded.options.size() == 1 &&
               rep_funded.options[0].conversion_applied.size() == 1 &&

@@ -775,6 +775,12 @@ pub fn run_harness_v07() -> Vec<String> {
             entities: HashMap::new(),
             psi: None,
             resources: HashMap::new(),
+            tau: Some(ResourceObservation {
+                value: Some(1000000.0),
+                unit: "us".to_string(),
+                aging_time: 0.0,
+                ..Default::default()
+            }),
         };
         let mut e = crate::dof_core::EntityState::new(
             "e".to_string(),

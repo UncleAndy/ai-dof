@@ -98,6 +98,21 @@ report_current() {
     fi
 }
 
+# --- v0.9.1 row: budget + τ-consumption harness --------------------------------
+report_v091() {
+    local name="$1" file="$2"
+    local ok fail
+    ok=$(grep -c '^  OK' "$file" || true)
+    fail=$(grep -c '^  FAIL' "$file" || true)
+    printf '%-14s checks=%-4s failed=%-3s   (v0.9.1, budget+τ)\n' \
+        "$name" "$ok" "$fail"
+    if [ "$fail" -ne 0 ]; then
+        printf '  FAIL lines:\n'
+        grep '^  FAIL' "$file" | sed 's/^/    /'
+        status=1
+    fi
+}
+
 # --- v0.7 row: historical, but it must still show the SAME two digests --------
 report_v07() {
     local name="$1" file="$2"
@@ -127,6 +142,9 @@ if [ -d "$REPO/patterns/python" ]; then
         --run "python3 world_graph.py; python3 smoke_test_v08.py" ) > "$OUT_DIR/python.out" 2>&1
     report_current python "$OUT_DIR/python.out"
     ( cd "$REPO/patterns/python" && nix-shell -p python3 -p python3Packages.pydantic \
+        --run "python3 harness_v091.py" ) > "$OUT_DIR/python_v091.out" 2>&1
+    report_v091 python-v091 "$OUT_DIR/python_v091.out"
+    ( cd "$REPO/patterns/python" && nix-shell -p python3 -p python3Packages.pydantic \
         --run "python3 smoke_test_v07.py" ) > "$OUT_DIR/python_v07.out" 2>&1
     report_v07 python-v07 "$OUT_DIR/python_v07.out"
     ( cd "$REPO/patterns/python" && nix-shell -p python3 -p python3Packages.pydantic \
@@ -137,6 +155,8 @@ fi
 if [ -d "$REPO/patterns/go" ]; then
     ( cd "$REPO/patterns/go" && nix-shell -p go --run "go run . v08" ) > "$OUT_DIR/go.out" 2>&1
     report_current go "$OUT_DIR/go.out"
+    ( cd "$REPO/patterns/go" && nix-shell -p go --run "go run . v091" ) > "$OUT_DIR/go_v091.out" 2>&1
+    report_v091 go-v091 "$OUT_DIR/go_v091.out"
     ( cd "$REPO/patterns/go" && nix-shell -p go --run "go run . v07" ) > "$OUT_DIR/go_v07.out" 2>&1
     report_v07 go-v07 "$OUT_DIR/go_v07.out"
     ( cd "$REPO/patterns/go" && nix-shell -p go --run "go run . v06" ) > "$OUT_DIR/go_v06.out" 2>&1
@@ -149,6 +169,8 @@ if [ -d "$REPO/patterns/cpp" ]; then
         > "$OUT_DIR/cpp.out" 2>&1
     report_current cpp "$OUT_DIR/cpp.out"
     if [ -x "$OUT_DIR/dof_cpp" ]; then
+        "$OUT_DIR/dof_cpp" v091 > "$OUT_DIR/cpp_v091.out" 2>&1
+        report_v091 cpp-v091 "$OUT_DIR/cpp_v091.out"
         "$OUT_DIR/dof_cpp" v07 > "$OUT_DIR/cpp_v07.out" 2>&1
         report_v07 cpp-v07 "$OUT_DIR/cpp_v07.out"
         "$OUT_DIR/dof_cpp" v06 > "$OUT_DIR/cpp_v06.out" 2>&1
@@ -158,14 +180,16 @@ fi
 
 if [ -d "$REPO/patterns/rust" ]; then
     ( cd "$REPO/patterns/rust" && nix-shell -p rustc --run \
-        "rustc -O -o $OUT_DIR/dof_rust main.rs && $OUT_DIR/dof_rust v08" ) \
+        "rustc -O --edition 2021 -o $OUT_DIR/dof_rust main.rs && $OUT_DIR/dof_rust v08" ) \
         > "$OUT_DIR/rust.out" 2>&1
     report_current rust "$OUT_DIR/rust.out"
     ( cd "$REPO/patterns/rust" && nix-shell -p rustc --run \
-        "rustc -C opt-level=0 -o $OUT_DIR/dof_rust0 main.rs && $OUT_DIR/dof_rust0 v08" ) \
+        "rustc -C opt-level=0 --edition 2021 -o $OUT_DIR/dof_rust0 main.rs && $OUT_DIR/dof_rust0 v08" ) \
         > "$OUT_DIR/rust_o0.out" 2>&1
     report_current rust-o0 "$OUT_DIR/rust_o0.out"
     if [ -x "$OUT_DIR/dof_rust" ]; then
+        "$OUT_DIR/dof_rust" v091 > "$OUT_DIR/rust_v091.out" 2>&1
+        report_v091 rust-v091 "$OUT_DIR/rust_v091.out"
         "$OUT_DIR/dof_rust" v07 > "$OUT_DIR/rust_v07.out" 2>&1
         report_v07 rust-v07 "$OUT_DIR/rust_v07.out"
         "$OUT_DIR/dof_rust" v06 > "$OUT_DIR/rust_v06.out" 2>&1

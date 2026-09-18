@@ -46,6 +46,8 @@ type SystemStateMatrix struct {
 	Entities                map[string]*EntityState `json:"entities"`
 	Psi                     *PsiReference           `json:"psi"`
 	Resources               map[string]*ResourceObservation `json:"resources"`
+	// §3.2b (v0.9.1): τ as ResourceObservation.
+	Tau *ResourceObservation `json:"tau"`
 }
 
 type ActionOption struct {
@@ -55,6 +57,7 @@ type ActionOption struct {
 	ProjectedResourceDelta map[string]map[string]float64 `json:"projected_resource_delta"`
 	IsReversible         bool                          `json:"is_reversible"`
 	EstimatedDurationMks float64                       `json:"estimated_duration_mks"`
+	ProjectedTauDelta    float64                       `json:"projected_tau_delta"`
 	// §3.3/§4.4 (v0.7): the transitions this option CLOSES — the acts and means
 	// that cease to exist once it executes. `is_reversible` is DERIVED from this
 	// list (true exactly when it is empty) and is kept only as a reported field:

@@ -495,5 +495,9 @@ func (m *GraphMapper) PollEnvironment(raw map[string]interface{}) *SystemStateMa
 		Entities:                entities,
 		Psi:                     &PsiReference{ID: declaration.PsiID, Digest: declaration.Digest()},
 		Resources:               means_obs,
+		Tau: &ResourceObservation{
+			Value: &globalTTC, Unit: "us", Scale: 1.0,
+			Source: "entity_min", LastMeasuredAt: 0.0, AgingTime: 0.0,
+		},
 	}
 }

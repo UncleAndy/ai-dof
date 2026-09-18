@@ -31,6 +31,15 @@ struct ResourceObservation {
     double aging_time = 0.0;
     std::optional<double> estimated;
     std::vector<std::string> estimation_source;
+
+    // §3.2a (v0.9.1): check if data has exceeded aging_time.
+    bool is_stale(double now) const {
+        if (aging_time <= 0.0) return false;
+        return (now - last_measured_at) > aging_time;
+    }
+
+    // §3.2a (v0.9.1): check if this observation is usable (has a value).
+    bool is_usable() const { return value.has_value(); }
 };
 
 // §4.8 (v0.9.1): resolve a resource's usable value for the gate.

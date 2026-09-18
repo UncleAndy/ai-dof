@@ -312,18 +312,15 @@ impl GraphMapper {
             obs.aging_time = 3600.0;
             resources.insert(rid.clone(), obs);
         }
-        // v0.9.1: τ is stored as ResourceObservation under "tau".
-        resources.insert(
-            "tau".to_string(),
-            ResourceObservation {
-                value: Some(global_ttc),
-                unit: "us".to_string(),
-                scale: 1.0,
-                source: "entity_min".to_string(),
-                aging_time: 0.0,
-                ..Default::default()
-            },
-        );
+        // v0.9.1: τ is stored as ResourceObservation under state.tau, not in resources.
+        let tau_obs = ResourceObservation {
+            value: Some(global_ttc),
+            unit: "us".to_string(),
+            scale: 1.0,
+            source: "entity_min".to_string(),
+            aging_time: 0.0,
+            ..Default::default()
+        };
 
         let state = SystemStateMatrix {
             global_time_to_collapse_mks: global_ttc,
@@ -331,6 +328,7 @@ impl GraphMapper {
             entities,
             psi: Some(reference),
             resources,
+            tau: Some(tau_obs),
         };
 
         // §3.5/§4.9: the observation itself, pinned by its own digest (§6.2), and the

@@ -173,11 +173,11 @@ pub struct SystemStateMatrix {
     pub global_time_to_collapse_mks: f64,
     pub context_switch_cost: f64,
     pub entities: HashMap<String, EntityState>,
-    /// The frozen measurement ruler (§3.4). `S'` keeps the ruler of `S`.
     pub psi: Option<PsiReference>,
-    /// §3.2 (v0.9.1): the acting agent's means per resource, as
-    /// ResourceObservation objects carrying metadata.
+    /// §3.2 (v0.9.1): resources per resource_id as ResourceObservation.
     pub resources: HashMap<String, ResourceObservation>,
+    /// §3.2b (v0.9.1): τ as ResourceObservation.
+    pub tau: Option<ResourceObservation>,
 }
 
 #[derive(Clone, Debug)]
@@ -748,6 +748,7 @@ impl DofCalculusCore {
                 // The agent's means travel unchanged: `simulate` scores the DoF
                 // consequences, and the resource side is decided by §4.8.
                 resources: current.resources.clone(),
+                tau: current.tau.clone(),
             },
             members,
         )

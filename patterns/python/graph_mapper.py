@@ -1,7 +1,6 @@
 from typing import Dict, List, Optional
 
-from calculus_core import (EntityState, ObservationContext, PsiReference,
-                           SystemStateMatrix)
+from calculus_core import EntityState, ObservationContext, PsiReference, ResourceObservation, SystemStateMatrix
 from measurement import (
     LensObservation,
     MeasurementDeclaration,
@@ -239,4 +238,12 @@ class GraphMapper:
             entities=entities,
             psi=PsiReference(id=declaration.psi_id, digest=declaration.digest()),
             resources=means_obs,
+            tau=ResourceObservation(
+                value=global_ttc,
+                unit="us",
+                scale=1.0,
+                source="entity_min",
+                last_measured_at=0.0,
+                aging_time=0.0,
+            ),
         )

@@ -70,6 +70,8 @@ struct ActEdge {
     std::map<std::string, double> effect;
     std::map<std::string, double> resources;
     double duration_mks = 0.0;
+    // §3.5 (v0.9.1): measure-type act resolves an unmeasured resource.
+    std::optional<std::string> discovers;
 };
 
 struct ExchangeEdge {

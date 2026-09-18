@@ -58,6 +58,8 @@ pub struct ActEdge {
     pub effect: BTreeMap<String, f64>,
     pub resources: BTreeMap<String, f64>,
     pub duration_mks: f64,
+    /// §3.5 (v0.9.1): measure-type act resolves an unmeasured resource.
+    pub discovers: Option<String>,
 }
 
 #[derive(Clone, Debug, Default)]

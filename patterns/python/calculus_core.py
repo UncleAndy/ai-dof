@@ -55,10 +55,10 @@ class SystemStateMatrix(BaseModel):
     entities: Dict[str, EntityState]
     psi: Optional[PsiReference] = None               # Frozen measurement ruler (§3.4)
     # §3.2 (v0.9): the acting agent's available means per resource, as
-    # ResourceObservation objects carrying metadata. An empty map means the agent
-    # declares no means, so any option with a non-zero consumption is
-    # inadmissible (§4.8).
+    # ResourceObservation objects carrying metadata.
     resources: Dict[str, 'ResourceObservation'] = {}
+    # §3.2b (v0.9.1): τ as ResourceObservation.
+    tau: Optional['ResourceObservation'] = None
 
 
 class ActionOption(BaseModel):
@@ -78,14 +78,26 @@ class ActionOption(BaseModel):
 
 # §3.2a (v0.9): a resource as an observable quantity with metadata.
 class ResourceObservation(BaseModel):
-    value: Optional[float] = None      # null = unmeasured
+    value: Optional[float] = None
     unit: str = ""
     scale: float = 1.0
-    source: str = ""                   # sensor / API / ROM / derived
+    source: str = ""
     last_measured_at: float = 0.0
     aging_time: float = 0.0
-    estimated: Optional[float] = None  # used when value is null
+    estimated: Optional[float] = None
     estimation_source: List[str] = []
+
+    def resource_value(self, use_estimated: bool = False) -> float:
+        if self.value is not None:
+            return self.value
+        if use_estimated and self.estimated is not None:
+            return self.estimated
+        return 0.0
+
+    def is_stale(self, now: float = 0.0) -> bool:
+        if self.aging_time <= 0.0:
+            return False
+        return (now - self.last_measured_at) > self.aging_time
 
 
 class DofReport(BaseModel):

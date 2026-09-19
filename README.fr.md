@@ -48,6 +48,21 @@ Une implémentation conforme DOIT pouvoir émettre un audit `report()` de chaque
 
 Les documents **normatifs** — `SKILL.md` (les axiomes) et `DOF-SPEC.md` (le contrat) — n'existent qu'en anglais : un seul texte faisant autorité, afin que les traductions ne puissent introduire d'ambiguïté dans le standard. Le matériel **illustratif** — ce README, `patterns/PATTERNS.*` et les ports de référence — est multilingue (anglais, russe, français, allemand, espagnol, espéranto) ; en cas de divergence entre une traduction et son original anglais, l'original anglais prévaut.
 
+## Fondements Académiques et Vérification Croisée
+
+Les principes mathématiques et thermodynamiques sous-jacents à DOF-Core sont ancrés dans la théorie de l'information et la recherche en physique établies. Pour une vérification approfondie, consultez les articles fondamentaux suivants :
+
+1. **Causal Entropic Forces** (Forces entropiques causales ; Dr. Alex D. Wissner-Gross & C. E. Freer)  
+   *Publié dans Physical Review Letters (2013).*  
+   * **Résumé et éditeur :** [APS Journal Link](https://link.aps.org/doi/10.1103/PhysRevLett.110.168702)  
+   * **PDF Open Access (Archive MIT DSpace) :** [MIT DSpace Permanent URL](https://dspace.mit.edu/entities/publication/52f1bf4e-04e4-4229-b321-92dc51feb66d)  
+   * *Aperçu fondamental (Core Insight) :* Démontre par des simulations informatiques que des systèmes guidés uniquement par l'exigence de maximiser l'espace d'option futur développent spontanément des comportements adaptatifs, intelligents et protecteurs.
+
+2. **Empowerment — an Introduction** (Empowerment — une introduction ; Dr. Daniel Polani, C. Salge, C. Glackin)  
+   *Fondements de l'utilité issus de la théorie de l'information.*  
+   * **Préimpression Open Access (Archive arXiv) :** [arXiv:1310.1863 PDF](https://arxiv.org/abs/1310.1863)  
+   * *Aperçu fondamental (Core Insight) :* Formule l'« Empowerment » comme la capacité de canal entre les actions et les capteurs d'un agent, démontrant que la maximisation du contrôle sur les états perceptibles assure une motivation intrinsèque robuste et indépendante de la tâche.
+
 ## Licence
 
 CC BY-SA 4.0 — voir `references/license.md`. Toute utilisation doit créditer l'auteur (Andrei Velikoredchanin) et toute œuvre dérivée doit être partagée sous la même licence. Les implémentations doivent satisfaire l'exigence Proof of Implementation.

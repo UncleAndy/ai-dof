@@ -48,6 +48,21 @@ Una implementación conforme DEBE poder emitir una auditoría `report()` de cada
 
 Los documentos **normativos** — `SKILL.md` (los axiomas) y `DOF-SPEC.md` (el contrato) — existen solo en inglés: un único texto autoritativo, para que las traducciones no puedan introducir ambigüedad en el estándar. El material **ilustrativo** — este README, `patterns/PATTERNS.*` y los ports de referencia — es multilingüe (inglés, ruso, francés, alemán, español, esperanto); en caso de discrepancia entre una traducción y su original inglés, prevalece el original inglés.
 
+## Fundamentos Académicos y Verificación Cruzada
+
+Los principios matemáticos y termodinámicos que subyacen a DOF-Core están arraigados en la teoría de la información y la investigación en física establecidas. Para una verificación más profunda, consulte los siguientes artículos fundamentales:
+
+1. **Causal Entropic Forces** (Fuerzas entrópicas causales; Dr. Alex D. Wissner-Gross & C. E. Freer)  
+   *Publicado en Physical Review Letters (2013).*  
+   * **Resumen y editor:** [APS Journal Link](https://link.aps.org/doi/10.1103/PhysRevLett.110.168702)  
+   * **PDF de acceso abierto (Archivo MIT DSpace):** [MIT DSpace Permanent URL](https://dspace.mit.edu/entities/publication/52f1bf4e-04e4-4229-b321-92dc51feb66d)  
+   * *Visión central (Core Insight):* Demuestra mediante simulaciones informáticas que sistemas impulsados únicamente por el requisito de maximizar el espacio de opciones futuras desarrollan espontáneamente comportamientos adaptativos, inteligentes y protectores.
+
+2. **Empowerment — an Introduction** (Empowerment — una introducción; Dr. Daniel Polani, C. Salge, C. Glackin)  
+   *Fundamentos de utilidad basados en la teoría de la información.*  
+   * **Preprint de acceso abierto (Archivo arXiv):** [arXiv:1310.1863 PDF](https://arxiv.org/abs/1310.1863)  
+   * *Visión central (Core Insight):* Formula el «Empowerment» como la capacidad de canal entre las acciones y los sensores de un agente, demostrando que maximizar el control sobre los estados perceptibles asegura una motivación intrínseca robusta e independiente de la tarea.
+
 ## Licencia
 
 CC BY-SA 4.0 — véase `references/license.md`. Cualquier uso debe acreditar al autor (Andrei Velikoredchanin) y cualquier obra derivada debe compartirse bajo la misma licencia. Las implementaciones deben satisfacer el requisito Proof of Implementation.

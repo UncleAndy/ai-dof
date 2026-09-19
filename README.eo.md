@@ -48,6 +48,21 @@ Konforma realigo DEVAS povi eligi `report()`-aŭditon de ĉiu decido (kontribuo 
 
 La **normigaj** dokumentoj — `SKILL.md` (la aksiomoj) kaj `DOF-SPEC.md` (la kontrakto) — ekzistas nur en la angla: unu sola aŭtoritata teksto, por ke tradukoj neniam enkonduku dusencecon en la normon. La **ilustra** materialo — ĉi tiu README, `patterns/PATTERNS.*` kaj la referencaj portoj — estas multlingva (la angla, rusa, franca, germana, hispana, esperanto); se traduko kaj ĝia angla originalo malkongruas, la angla originalo superregas.
 
+## Akademiaj Fundamentaj kaj Krucaj Kontroloj
+
+La matematikaj kaj termodinamikaj principoj, kiuj subtenas DOF-Core, radikas en establigita informadiko kaj fizika esplorado. Por pli profunda kontrolo, konsilu la sekvenajn fundamentajn artikolojn:
+
+1. **Causal Entropic Forces** (Kaŭzaj entropiaj fortoj; Dr. Alex D. Wissner-Gross & C. E. Freer)  
+   *Publikigita en Physical Review Letters (2013).*  
+   * **Resumo kajeldonanto:** [APS Journal Link](https://link.aps.org/doi/10.1103/PhysRevLett.110.168702)  
+   * **Malferma Aliro PDF (MIT DSpace Arkivo):** [MIT DSpace Permanent URL](https://dspace.mit.edu/entities/publication/52f1bf4e-04e4-4229-b321-92dc51feb66d)  
+   * *Kerna Eltrovo (Core Insight):* Pruvas per komputilaj simuladoj ke sistemoj pelataj sole de la postulo maksimigi estantan opcian spacon spontane evoluas adaptiĝemajn, inteligentajn kaj protektajn kutimojn.
+
+2. **Empowerment — an Introduction** (Empowerment — enkonduko; Dr. Daniel Polani, C. Salge, C. Glackin)  
+   *Informadikaj Utilaj Fundamentoj.*  
+   * **Malferma Aliro Preprint (arXiv Arkivo):** [arXiv:1310.1863 PDF](https://arxiv.org/abs/1310.1863)  
+   * *Kerna Eltrovo (Core Insight):* Formulas «Empowerment» kanalokapacito inter la agoj kaj sensiloj de agento, pruvante ke maksimigo de kontrolo super perceptebloj statoj sekuras fortikan, task-sendependan internan motivadon.
+
 ## Licenco
 
 CC BY-SA 4.0 — vidu `references/license.md`. Ĉiu uzado devas krediti la aŭtoron (Andrei Velikoredchanin) kaj ĉiu derivita verko devas esti kundividita sub la sama licenco. Realigoj devas plenumi la postulon Proof of Implementation.

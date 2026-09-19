@@ -50,6 +50,21 @@ A conforming implementation MUST be able to emit a `report()` audit of every dec
 
 The **normative** documents — `SKILL.md` (the axioms) and `DOF-SPEC.md` (the contract) — exist in English only: a single authoritative text, so that translations can never introduce ambiguity into the standard. The **illustrative** material — this README, `patterns/PATTERNS.*`, and the reference ports — is multilingual (English, Russian, French, German, Spanish, Esperanto); where a translation and its English original disagree, the English original prevails.
 
+## Academic Foundations & Cross-Verification
+
+The mathematical and thermodynamic principles underlying DOF-Core are rooted in established information theory and physics research. For deeper verification, consult the following foundational papers:
+
+1. **Causal Entropic Forces** (Dr. Alex D. Wissner-Gross & C. E. Freer)  
+   *Published in Physical Review Letters (2013).*  
+   * **Abstract & Publisher:** [APS Journal Link](https://link.aps.org/doi/10.1103/PhysRevLett.110.168702)  
+   * **Open Access PDF (MIT DSpace Archive):** [MIT DSpace Permanent URL](https://dspace.mit.edu/entities/publication/52f1bf4e-04e4-4229-b321-92dc51feb66d)  
+   * *Core Insight:* Proves via computer simulations that systems driven solely by the requirement to maximize future option space spontaneously develop adaptive, intelligent, and protective behaviors.
+
+2. **Empowerment — an Introduction** (Dr. Daniel Polani, C. Salge, C. Glackin)  
+   *Information-Theoretic Utility Foundations.*  
+   * **Open Access Preprint (arXiv Archive):** [arXiv:1310.1863 PDF](https://arxiv.org/abs/1310.1863)  
+   * *Core Insight:* Formulates "Empowerment" as the channel capacity between an agent's actions and sensors, proving that maximizing control over perceivable states ensures robust, non-task-dependent intrinsic motivation.
+
 ## License
 
 CC BY-SA 4.0 — see `references/license.md`. Any use must attribute the author (Andrei Velikoredchanin) and any derivative work must be shared under the same license. Implementations must satisfy the Proof of Implementation requirement.

@@ -48,6 +48,21 @@ Eine konforme Implementierung MUSS in der Lage sein, ein `report()`-Audit jeder 
 
 Die **normativen** Dokumente — `SKILL.md` (die Axiome) und `DOF-SPEC.md` (der Vertrag) — existieren nur auf Englisch: ein einziger maßgeblicher Text, damit Übersetzungen keine Mehrdeutigkeit in die Norm bringen können. Das **illustrative** Material — dieses README, `patterns/PATTERNS.*` und die Referenz-Ports — ist mehrsprachig (Englisch, Russisch, Französisch, Deutsch, Spanisch, Esperanto); bei Abweichung einer Übersetzung vom englischen Original gilt das englische Original.
 
+## Akademische Grundlagen und Kreuzvalidierung
+
+Die mathematischen und thermodynamischen Prinzipien, die DOF-Core zugrunde liegen, verwurzeln in der etablierten Informationstheorie und Physikforschung. Für tiefere Verifizierung konsultieren Sie die folgenden Grundlagenpapiere:
+
+1. **Causal Entropic Forces** (Kausale entropische Kräfte; Dr. Alex D. Wissner-Gross & C. E. Freer)  
+   *Veröffentlicht in Physical Review Letters (2013).*  
+   * **Zusammenfassung und Herausgeber:** [APS Journal Link](https://link.aps.org/doi/10.1103/PhysRevLett.110.168702)  
+   * **Open Access PDF (MIT DSpace Archive):** [MIT DSpace Permanent URL](https://dspace.mit.edu/entities/publication/52f1bf4e-04e4-4229-b321-92dc51feb66d)  
+   * *Kernaussage (Core Insight):* Beweist mittels Computersimulationen, dass Systeme, die einzig durch das Erfordernis zukünftigen Optionsraums zu maximieren angetrieben werden, spontan adaptive, intelligente und schützende Verhaltensweisen entwickeln.
+
+2. **Empowerment — an Introduction** (Empowerment — eine Einführung; Dr. Daniel Polani, C. Salge, C. Glackin)  
+   *Informationstheoretische Nutzenfundamente.*  
+   * **Open Access Preprint (arXiv Archive):** [arXiv:1310.1863 PDF](https://arxiv.org/abs/1310.1863)  
+   * *Kernaussage (Core Insight):* Formuliert «Empowerment» als die Kanalkapazität zwischen den Aktionen und Sensoren eines Agenten, und beweist, dass die Maximierung der Kontrolle über wahrnehmbare Zustände robuste, task-unabhängige intrinsische Motivation sichert.
+
 ## Lizenz
 
 CC BY-SA 4.0 — siehe `references/license.md`. Jede Nutzung muss den Autor (Andrei Velikoredchanin) nennen, und jedes abgeleitete Werk muss unter derselben Lizenz geteilt werden. Implementierungen müssen die Proof-of-Implementation-Anforderung erfüllen.
